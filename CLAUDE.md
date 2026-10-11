@@ -28,7 +28,7 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   tự tải lại toàn bộ khi CafeF điều chỉnh giá cũ) rồi in toàn bộ phân tích. Tham số `[auto]`.
   Biên độ/bước giá theo sàn qua `src/vnsa/market.py` (bảng `companies`; chưa biết sàn → HOSE), không
   dùng thẳng `band_hose`. Ngân hàng/CK/bảo hiểm (`model` ≠ general): `analysis.fa/valuation` báo
-  ValueError, khuyến nghị chỉ dùng TA + P/E, P/B. MCP: `analyze_symbol`, `update_symbol` (chuyển
+  ValueError; dùng `analysis.financial` (RI + P/B theo ROE, điểm FA riêng có chỉ số ngành). MCP: `analyze_symbol`, `update_symbol` (chuyển
   stdout sang stderr khi tải). Dashboard: ô "Mã bất kỳ" ở thanh bên.
 - Khuyến nghị HAI TRỤC (`recommend/engine.py`, `[recommend]`): xếp hạng MUA/KHẢ QUAN/NẮM GIỮ/KÉM KHẢ
   QUAN/BÁN theo lợi nhuận kỳ vọng = upside giá trị hợp lý + cổ tức 12 tháng (ngưỡng 15/5/−5/−15%);
@@ -39,8 +39,9 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   và 10% GTGD bình quân 20 phiên (`[plan]`).
 - `analyze` mặc định in THẺ BÁO CÁO (`report/card.py`, `--detail` để in thêm chi tiết): mọi số lấy
   từ `analysis.assess()` (tính một lần: FA, giá trị hợp lý kèm P10/P90 kịch bản, TA, vùng mua, rủi
-  ro, điểm Quant, khuyến nghị). Điểm tổng = FA 50% + TA 30% + Quant 20% (`[recommend]`,
-  `[recommend.quant]`); độ tin cậy 6 điều kiện (`[report]`); giá trị hợp lý = bình quân có trọng số
+  ro, điểm Quant, khuyến nghị, khối ngoại/tự doanh từ bảng `flows` — chỉ tham khảo). Điểm sắp xếp =
+  FA 60% + TA 40%; Quant `[recommend.quant]` chỉ tham khảo; độ tin cậy 6 điều kiện (`[report]`; "Cao"
+  cần kịch bản hẹp và upside ≤ max_abs_upside); giá trị hợp lý = bình quân có trọng số
   `[valuation.weights]`, loại phương pháp lệch > 2,5 lần trung vị. MCP `analyze_symbol` trả `report`.
 - Số liệu hiện tại: `fa/ttm.py` (`Data.current`) = TTM từ 4 quý gần nhất (bảng `fundamentals_q`) nếu
   mới hơn BCTC năm; EPS/BVPS chia số cp lưu hành hiện tại (`companies.shares_out` từ Company.overview,
