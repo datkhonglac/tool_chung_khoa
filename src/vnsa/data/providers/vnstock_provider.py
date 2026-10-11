@@ -33,6 +33,9 @@ MAPPING: dict[str, tuple[str, list[str], str]] = {
     "total_liabilities": ("balance_sheet", ["liabilities", "total_liabilities"], r"^liabilities$"),
     "equity": ("balance_sheet", ["owners_equity", "owner_s_equity", "equity"],
                r"^owner'?s'? equity$|^owners' equity$|^equity$"),
+    "minority_interest": ("balance_sheet", ["minority_interests", "non_controlling_interests",
+                                            "minority_interest"],
+                          r"^minority interests?$|non-controlling interest"),
     "short_debt": ("balance_sheet", ["short_term_borrowings"], r"^short-term borrowings$"),
     "long_debt": ("balance_sheet", ["long_term_borrowings"], r"^long-term borrowings$"),
     "cfo": ("cash_flow", ["net_cash_inflows_outflows_from_operating_activities"],
@@ -46,17 +49,20 @@ def _year_columns(df: pd.DataFrame) -> list[str]:
 
 
 def _pick(df: pd.DataFrame, ids: list[str], pattern: str) -> pd.Series | None:
-    """Dòng khớp item_id (theo thứ tự ưu tiên) hoặc tên tiếng Anh, có ít nhất một số liệu."""
+    """Dòng khớp item_id (theo thứ tự ưu tiên) hoặc tên tiếng Anh. Ưu tiên dòng có số khác 0
+    (VCI có các dòng cũ "trước 2015" toàn số 0), sau đó mới đến dòng có số liệu bất kỳ."""
     years = _year_columns(df)
     candidates = [df[df["item_id"] == i] for i in ids]
     if "item_en" in df:
         en = df["item_en"].astype(str).str.strip()
         candidates.append(df[en.str.contains(pattern, case=False, regex=True)])
-    for rows in candidates:
-        for _, row in rows.iterrows():
-            values = pd.to_numeric(row[years], errors="coerce")
-            if values.notna().any():
-                return values
+    rows = [pd.to_numeric(r[years], errors="coerce") for c in candidates for _, r in c.iterrows()]
+    for values in rows:
+        if values.fillna(0).ne(0).any():
+            return values
+    for values in rows:
+        if values.notna().any():
+            return values
     return None
 
 

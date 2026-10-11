@@ -19,6 +19,7 @@ def _fin():
         "total_assets": [2000 * B, 2200 * B],
         "total_liabilities": [1200 * B, 1300 * B],
         "equity": [800 * B, 900 * B],
+        "minority_interest": [0, 0],
         "short_debt": [300 * B, 250 * B],
         "long_debt": [100 * B, 200 * B],
         "cfo": [120 * B, 90 * B],
@@ -39,7 +40,16 @@ def test_ratios_match_hand_calculation():
     assert math.isclose(r.loc[2024, "liabilities_to_equity"], 1300 / 900)
     assert math.isclose(r.loc[2024, "cfo_to_net_income"], 90 / 150)
     assert math.isclose(r.loc[2024, "eps_growth"], 2500 / 2000 - 1)
+    assert math.isclose(r.loc[2024, "net_income_parent_growth"], 132 / 90 - 1)
     assert math.isnan(r.loc[2023, "eps_growth"])
+
+
+def test_roe_excludes_minority_interest():
+    fin = _fin()
+    fin["minority_interest"] = [100 * B, 150 * B]   # VCSH công ty mẹ: 700 rồi 750
+    r = compute_ratios(fin).set_index("year")
+    assert math.isclose(r.loc[2024, "roe"], 132 / ((700 + 750) / 2))
+    assert math.isclose(r.loc[2024, "roa"], 150 / ((2000 + 2200) / 2))   # ROA không đổi
 
 
 def test_missing_items_give_nan_not_guess():
@@ -96,6 +106,8 @@ def test_vnstock_vci_tables_are_standardized():
             ("short_term_borrowings", "Short-term borrowings", 19169.70 * B, 14446.24 * B),
             ("long_term_borrowings", "Long-term borrowings", 1903.79 * B, 501.12 * B),
             ("owners_equity", "OWNER'S EQUITY", 43748.04 * B, 35727.54 * B),
+            ("minority_interests_before_2015", "Minority interests", 0, 0),   # dòng cũ toàn 0
+            ("minority_interests", "Minority interests", 6900.0 * B, 5700.0 * B),
         ]),
         "cash_flow": _vci_frame([
             ("net_cash_inflows_outflows_from_operating_activities",
@@ -112,7 +124,8 @@ def test_vnstock_vci_tables_are_standardized():
     assert row["eps"] == 5216
     assert row["equity"] == 43748.04 * B
     r = compute_ratios(df).set_index("year")
-    assert math.isclose(r.loc[2025, "roe"], 9376.13 / ((43748.04 + 35727.54) / 2))
+    assert row["minority_interest"] == 6900.0 * B   # bỏ qua dòng toàn số 0
+    assert math.isclose(r.loc[2025, "roe"], 9376.13 / ((43748.04 - 6900 + 35727.54 - 5700) / 2))
 
 
 def test_missing_statement_items_are_reported():

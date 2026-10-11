@@ -4,14 +4,18 @@ Bảng đầu vào: cột `year` và các khoản mục trong FIELDS, đơn vị
 có thì để trống (NaN); chỉ số phụ thuộc vào khoản đó sẽ là NaN, không đoán.
 
 Quy ước (ghi rõ để đối chiếu với số công bố):
-- ROE = LNST của cổ đông công ty mẹ / vốn chủ sở hữu **bình quân** (đầu kỳ + cuối kỳ) / 2.
+- ROE = LNST của cổ đông công ty mẹ / vốn chủ của cổ đông công ty mẹ **bình quân** (đầu kỳ +
+  cuối kỳ) / 2. Vốn chủ công ty mẹ = vốn chủ sở hữu − lợi ích cổ đông không kiểm soát (theo VAS,
+  khoản này nằm trong vốn chủ). Thiếu số cổ đông thiểu số thì dùng toàn bộ vốn chủ.
   Năm đầu tiên không có số đầu kỳ thì dùng vốn chủ cuối kỳ.
 - ROA = LNST (toàn bộ) / tổng tài sản bình quân, cùng quy ước như trên.
 - Biên lợi nhuận gộp = lợi nhuận gộp / doanh thu thuần; biên ròng = LNST / doanh thu thuần.
 - D/E = (vay ngắn hạn + vay dài hạn) / vốn chủ sở hữu cuối kỳ (chỉ nợ vay, không gồm nợ phải trả
   khác). Nợ phải trả / vốn chủ để ở cột riêng.
 - CFO/LNST = lưu chuyển tiền thuần từ hoạt động kinh doanh / LNST: > 1 là lợi nhuận "có tiền về".
-- Tăng trưởng EPS = EPS năm nay / EPS năm trước − 1, chỉ tính khi EPS năm trước > 0.
+- Tăng trưởng EPS = EPS năm nay / EPS năm trước − 1, chỉ tính khi EPS năm trước > 0. Dùng EPS
+  công bố từng năm, KHÔNG điều chỉnh khi có cổ phiếu thưởng/chia tách, nên năm phát hành thêm
+  cổ phiếu sẽ thấp đi. Xem thêm tăng trưởng LNST công ty mẹ (không bị ảnh hưởng).
 """
 
 from __future__ import annotations
@@ -28,7 +32,8 @@ FIELDS = [
     "eps",                # lãi cơ bản trên cổ phiếu (đồng/cp)
     "total_assets",       # tổng tài sản
     "total_liabilities",  # nợ phải trả
-    "equity",             # vốn chủ sở hữu
+    "equity",             # vốn chủ sở hữu (gồm lợi ích cổ đông không kiểm soát)
+    "minority_interest",  # lợi ích cổ đông không kiểm soát (trong vốn chủ)
     "short_debt",         # vay và nợ thuê tài chính ngắn hạn
     "long_debt",          # vay và nợ thuê tài chính dài hạn
     "cfo",                # lưu chuyển tiền thuần từ HĐKD
@@ -36,7 +41,7 @@ FIELDS = [
 
 RATIO_COLUMNS = [
     "roe", "roa", "gross_margin", "net_margin", "debt_to_equity",
-    "liabilities_to_equity", "cfo_to_net_income", "eps_growth",
+    "liabilities_to_equity", "cfo_to_net_income", "eps_growth", "net_income_parent_growth",
 ]
 
 
@@ -57,11 +62,13 @@ def compute_ratios(fin: pd.DataFrame) -> pd.DataFrame:
     def prev_ok(s: pd.Series) -> pd.Series:
         return s.shift(1).where(~gap)
 
-    avg_equity = ((df["equity"] + prev_ok(df["equity"])) / 2).fillna(df["equity"])
+    parent_equity = df["equity"] - df["minority_interest"].fillna(0)
+    avg_equity = ((parent_equity + prev_ok(parent_equity)) / 2).fillna(parent_equity)
     avg_assets = ((df["total_assets"] + prev_ok(df["total_assets"])) / 2).fillna(df["total_assets"])
     debt = df["short_debt"].fillna(0) + df["long_debt"].fillna(0)
     debt = debt.where(df["short_debt"].notna() | df["long_debt"].notna())
     eps_prev = prev_ok(df["eps"])
+    ni_prev = prev_ok(df["net_income_parent"])
 
     out = pd.DataFrame({"year": df["year"].astype(int)})
     out["roe"] = _div(df["net_income_parent"], avg_equity)
@@ -71,7 +78,8 @@ def compute_ratios(fin: pd.DataFrame) -> pd.DataFrame:
     out["debt_to_equity"] = _div(debt, df["equity"])
     out["liabilities_to_equity"] = _div(df["total_liabilities"], df["equity"])
     out["cfo_to_net_income"] = _div(df["cfo"], df["net_income"])
-    out["eps_growth"] = (df["eps"] / eps_prev.where(eps_prev > 0) - 1)
+    out["eps_growth"] = df["eps"] / eps_prev.where(eps_prev > 0) - 1
+    out["net_income_parent_growth"] = df["net_income_parent"] / ni_prev.where(ni_prev > 0) - 1
     return out
 
 
@@ -81,9 +89,10 @@ def format_ratios(ratios: pd.DataFrame) -> pd.DataFrame:
         "roe": "ROE (%)", "roa": "ROA (%)", "gross_margin": "Biên gộp (%)",
         "net_margin": "Biên ròng (%)", "debt_to_equity": "Vay/VCSH (lần)",
         "liabilities_to_equity": "Nợ phải trả/VCSH (lần)", "cfo_to_net_income": "CFO/LNST (lần)",
-        "eps_growth": "Tăng trưởng EPS (%)",
+        "eps_growth": "Tăng trưởng EPS công bố (%)",
+        "net_income_parent_growth": "Tăng trưởng LNST cty mẹ (%)",
     }
-    pct = {"roe", "roa", "gross_margin", "net_margin", "eps_growth"}
+    pct = {"roe", "roa", "gross_margin", "net_margin", "eps_growth", "net_income_parent_growth"}
     t = ratios.set_index("year")[RATIO_COLUMNS].copy()
     for c in RATIO_COLUMNS:
         t[c] = (t[c] * 100).round(1) if c in pct else t[c].round(2)
