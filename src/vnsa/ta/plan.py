@@ -57,6 +57,7 @@ class TradePlan:
     capital: float
     risk_budget: float
     notes: list[str] = field(default_factory=list)
+    zone: object = None          # EntryZone (ta/entry.py) nếu giá vào lấy từ vùng mua khuyến nghị
 
     @property
     def risk_per_share(self) -> float:

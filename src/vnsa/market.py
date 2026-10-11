@@ -49,5 +49,5 @@ def financial_note(symbol: str) -> str | None:
     kind = FINANCIAL_MODELS.get(profile(symbol)["model"])
     if not kind:
         return None
-    return (f"{symbol.upper()} là {kind}: DCF-FCFF, Altman Z và điểm FA được thiết kế cho doanh "
-            "nghiệp thường nên không áp dụng; chỉ dùng kỹ thuật, P/E, P/B")
+    return (f"{symbol.upper()} là {kind}: không dùng DCF-FCFF, Altman Z; định giá bằng thu nhập "
+            "thặng dư và P/B theo ROE, điểm FA theo bộ chỉ tiêu riêng cho định chế tài chính")

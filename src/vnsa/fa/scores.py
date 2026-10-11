@@ -223,3 +223,44 @@ def fa_score(fin: pd.DataFrame, cfg: dict, pe: float = np.nan, pb: float = np.na
     total = (sum(groups[g] * w for g, w in weights.items()) / sum(weights.values())
              if weights else float("nan"))
     return FAScore(total=total, groups=groups, items=items, notes=notes)
+
+
+# Định chế tài chính (ngân hàng, chứng khoán, bảo hiểm): không có biên gộp, vòng quay, Altman Z...
+# nên chấm bằng bộ chỉ tiêu riêng ở [fa_score.financials]. Vốn chủ / tổng tài sản đo "đệm vốn"
+# (ngân hàng thấp tự nhiên, nên ngưỡng tách theo loại doanh nghiệp).
+FIN_GROUPS = {
+    "sinh_loi": ["roe"],
+    "tang_truong": ["ni_cagr"],
+    "an_toan": ["equity_to_assets"],
+    "dinh_gia": ["pb", "fair_upside"],
+}
+
+
+def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan,
+                    fair_upside: float = np.nan) -> FAScore:
+    """Điểm FA 0–100 cho định chế tài chính. cfg = mục [fa_score.financials] trong settings."""
+    df = fin.sort_values("year").reset_index(drop=True)
+    ratios = compute_ratios(df)
+    span = int(df["year"].iloc[-1] - df["year"].iloc[0])
+    last = df.iloc[-1]
+    values = {
+        "roe": ratios["roe"].iloc[-1],
+        "ni_cagr": cagr(df["net_income_parent"].iloc[0], df["net_income_parent"].iloc[-1], span),
+        "equity_to_assets": (last["equity"] / last["total_assets"]
+                             if last["total_assets"] > 0 else np.nan),
+        "pb": pb if pb > 0 else np.nan,
+        "fair_upside": fair_upside,
+    }
+    thresholds = dict(cfg["thresholds"])
+    thresholds["equity_to_assets"] = cfg["equity_to_assets"][model]
+    items = {k: (float(v), scale(v, *thresholds[k])) for k, v in values.items()}
+    groups = {}
+    for g, keys in FIN_GROUPS.items():
+        scores = [items[k][1] for k in keys if not pd.isna(items[k][1])]
+        groups[g] = float(np.mean(scores)) if scores else float("nan")
+    weights = {g: w for g, w in cfg["weights"].items() if not pd.isna(groups.get(g, np.nan))}
+    total = (sum(groups[g] * w for g, w in weights.items()) / sum(weights.values())
+             if weights else float("nan"))
+    notes = [("chưa có nợ xấu (NPL), NIM, CASA trong dữ liệu nguồn: điểm chỉ dựa vào ROE, tăng "
+              "trưởng, đệm vốn và định giá")] if model == "bank" else []
+    return FAScore(total=total, groups=groups, items=items, notes=notes)

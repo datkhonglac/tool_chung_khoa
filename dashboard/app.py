@@ -30,13 +30,15 @@ def recommendations(symbols: tuple[str, ...], _stamp: float):
     rows, errors = [], []
     for sym in symbols:
         try:
-            rec, _ = analysis.recommendation(sym)
+            rec, p = analysis.recommendation(sym)
         except (analysis.DataMissing, ValueError) as e:
             errors.append(str(e))
             continue
-        x = rec.inputs
-        rows.append({"Mã": rec.symbol, "Giá": x.price, "Điểm FA": x.fa_score,
-                     "Điểm TA": x.ta_score, "Điểm tổng": rec.score, "DCF": x.dcf_upside,
+        x, z = rec.inputs, (p.zone if p is not None else None)
+        zone = ("—" if z is None else f"≤ {z.high:,.0f} (chờ)" if z.status == "CHỜ GIÁ"
+                else f"{z.low:,.0f} – {z.high:,.0f}")
+        rows.append({"Mã": rec.symbol, "Giá": x.price, "Vùng mua": zone, "Điểm FA": x.fa_score,
+                     "Điểm TA": x.ta_score, "Điểm tổng": rec.score, "Hợp lý": x.fair_upside,
                      "P/E": x.pe, "P/B": x.pb, "Biến động/năm": x.vol_annual,
                      "Khuyến nghị": rec.action, "Lý do": "; ".join(rec.reasons)})
     return pd.DataFrame(rows), errors
@@ -94,8 +96,9 @@ with st.sidebar:
     st.caption("Kết quả là sàng lọc theo quy tắc trong config/settings.toml, "
                "không phải lời khuyên đầu tư.")
 
-tab_all, tab_ta, tab_fa, tab_val, tab_risk, tab_bt = st.tabs(
-    ["Tổng quan", "Kỹ thuật & kế hoạch", "Tài chính", "Định giá", "Rủi ro", "Backtest"])
+tab_all, tab_ta, tab_fa, tab_val, tab_risk, tab_bt, tab_hist = st.tabs(
+    ["Tổng quan", "Kỹ thuật & kế hoạch", "Tài chính", "Định giá", "Rủi ro", "Backtest",
+     "Lịch sử khuyến nghị"])
 
 with tab_all:
     st.subheader("Khuyến nghị danh sách theo dõi")
@@ -109,7 +112,8 @@ with tab_all:
                 "Điểm FA": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f"),
                 "Điểm TA": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f"),
                 "Điểm tổng": st.column_config.NumberColumn(format="%.0f"),
-                "DCF": st.column_config.NumberColumn(format="percent"),
+                "Hợp lý": st.column_config.NumberColumn(format="percent",
+                                                        help="Giá trị hợp lý so với giá hiện tại"),
                 "P/E": st.column_config.NumberColumn(format="%.1f"),
                 "P/B": st.column_config.NumberColumn(format="%.2f"),
                 "Biến động/năm": st.column_config.NumberColumn(format="percent"),
@@ -140,6 +144,22 @@ with tab_ta:
     c[4].metric(f"ATR14 ({fmt_pct(last['atr'] / last['close'])} giá)", fmt_num(last["atr"]))
     st.plotly_chart(charts.technical_chart(ind, sup, res, plan), width="stretch")
     st.caption(" · ".join(f"{k}: {fmt_num(v)}" for k, v in t.groups.items()))
+    if plan and plan.zone is not None:
+        z = plan.zone
+        st.subheader("Vùng mua khuyến nghị")
+        c = st.columns(4)
+        if z.status == "CHỜ GIÁ":
+            c[0].metric("Chờ giá về", f"≤ {z.high:,.0f}", fmt_pct(z.discount))
+        else:
+            c[0].metric("Vùng mua", f"{z.low:,.0f} – {z.high:,.0f}", fmt_pct(z.discount))
+        c[1].metric("Giá bình quân dự kiến (2 lệnh LO)", fmt_num(z.mid))
+        c[2].metric(f"Neo kỹ thuật ({z.anchor_source})", fmt_num(z.anchor))
+        c[3].metric(f"Trần giá trị (hợp lý − {z.margin_of_safety:.0%})", fmt_num(z.value_cap))
+        st.caption(f"Giá đóng cửa {z.close:,.0f} · VWAP20 {z.vwap20:,.0f} · giá trị hợp lý "
+                   f"{fmt_num(z.fair_value)}. Vùng mua neo theo hỗ trợ / VWAP20 / SMA20 và không "
+                   "vượt giá trị hợp lý trừ biên an toàn (config [entry]).")
+        for n in z.notes:
+            st.caption(f"! {n}")
     if plan:
         st.subheader("Kế hoạch mua tham khảo")
         rows = [{"Mục": "Giá vào", "Giá": plan.entry, "So với giá vào": 0.0, "Ghi chú": ""},
@@ -165,13 +185,30 @@ with tab_fa:
 
         fin_note = market.financial_note(symbol)
         if fin_note:
+            from vnsa.fa.scores import FIN_GROUPS
+
             pe, pb = analysis.multiples(data)
-            c = st.columns(2)
-            c[0].metric("P/E", fmt_num(pe, 1))
-            c[1].metric("P/B", fmt_num(pb, 2))
+            try:
+                fs, _ = analysis.financial(data)
+            except ValueError as e:
+                fs = None
+                st.error(str(e))
+            c = st.columns(3)
+            c[0].metric(f"Điểm FA ({fs.rating.lower() if fs else '—'})",
+                        fmt_num(fs.total if fs else float("nan")))
+            c[1].metric("P/E", fmt_num(pe, 1))
+            c[2].metric("P/B", fmt_num(pb, 2))
             st.info(fin_note)
             st.subheader("Chỉ số tài chính")
             st.dataframe(format_ratios(compute_ratios(data.fin)), width="stretch")
+            if fs:
+                st.subheader("Điểm FA theo nhóm (định chế tài chính)")
+                st.dataframe(pd.DataFrame([{"Nhóm": g, "Điểm": fs.groups[g],
+                                            "Chỉ tiêu": ", ".join(
+                                                f"{k} = {fmt_num(fs.items[k][0], 3)}" for k in keys)}
+                                           for g, keys in FIN_GROUPS.items()]), hide_index=True)
+                for n in fs.notes:
+                    st.caption(f"! {n}")
         else:
             f, z, s, _ = analysis.fa(data)
             c = st.columns(3)
@@ -194,7 +231,29 @@ with tab_val:
     if data.fin.empty:
         st.info(f"Chưa có BCTC. Chạy `python -m vnsa.cli fetch-bctc {symbol}`.")
     elif market.financial_note(symbol):
-        st.info(market.financial_note(symbol))
+        from vnsa.fa.fair_value import METHOD_NAMES
+
+        try:
+            _, fair = analysis.financial(data)
+        except ValueError as e:
+            st.error(str(e))
+        else:
+            ri = fair.ri
+            c = st.columns(4)
+            c[0].metric("Giá trị hợp lý (½ mô hình ROE + ½ P/B lịch sử)", fmt_num(fair.value),
+                        fmt_pct(fair.upside))
+            c[1].metric("Thu nhập thặng dư", fmt_num(ri.value_per_share))
+            c[2].metric("P/B hợp lý theo ROE", fmt_num(ri.justified_pb, 2))
+            c[3].metric("Chi phí vốn chủ k_e", fmt_pct(ri.cost_of_equity))
+            st.write(f"B0 = {ri.book0:,.0f} đ/cp · ROE bình quân {fmt_pct(ri.roe0)} → dài hạn "
+                     f"{fmt_pct(ri.roe_terminal)} · P/B lịch sử {fmt_num(fair.pb_target, 2)}")
+            st.dataframe(pd.DataFrame([{"Phương pháp": METHOD_NAMES[k], "Giá trị/cp": v}
+                                       for k, v in fair.methods.items()]), hide_index=True,
+                         column_config={"Giá trị/cp": st.column_config.NumberColumn(
+                             format="localized")})
+            for n in fair.notes:
+                st.warning(n)
+            st.caption(market.financial_note(symbol) + ". Giả định ở [valuation.financials].")
     else:
         from vnsa.fa import valuation as val
 
@@ -215,6 +274,20 @@ with tab_val:
             c[4].metric("P/B", fmt_num(v.pb, 2))
             for n in v.notes:
                 st.warning(n)
+            from vnsa.fa import fair_value as fvm
+
+            fair = fvm.combine(v.price, data.fin, data.prices, settings()["valuation"]["par_value"],
+                               dcf=v.value_per_share)
+            st.subheader("Giá trị hợp lý (trung vị DCF, P/E lịch sử, P/B lịch sử)")
+            c = st.columns(4)
+            c[0].metric("Giá trị hợp lý", fmt_num(fair.value), fmt_pct(fair.upside))
+            c[1].metric("DCF", fmt_num(fair.methods["dcf"]))
+            c[2].metric(f"P/E lịch sử ({fmt_num(fair.pe_target, 1)}x)",
+                        fmt_num(fair.methods["pe_hist"]))
+            c[3].metric(f"P/B lịch sử ({fmt_num(fair.pb_target, 2)}x)",
+                        fmt_num(fair.methods["pb_hist"]))
+            for n in fair.notes:
+                st.caption(f"! {n}")
             table = val.sensitivity(v, a)
             if table.notna().any().any():
                 st.subheader("Độ nhạy giá trị/cp (nghìn đồng)")
@@ -277,3 +350,33 @@ with tab_bt:
                                     "Giá mua": st.column_config.NumberColumn(format="localized"),
                                     "Giá bán": st.column_config.NumberColumn(format="localized")})
         st.caption("Kết quả quá khứ không đảm bảo tương lai; chưa tính trượt giá.")
+
+with tab_hist:
+    st.subheader("Chấm lại khuyến nghị đã lưu")
+    st.caption("Mỗi lần chạy recommend / analyze (dòng lệnh, Claude Desktop) đều được lưu. Sau 5, 20, "
+               "60 phiên tool so lãi/lỗ với VNINDEX. MUA tốt khi 'Vượt VNINDEX' dương.")
+    try:
+        ev, summary, n = analysis.review()
+    except Exception as e:  # noqa: BLE001
+        st.error(str(e))
+    else:
+        st.write(f"Đã lưu **{n}** khuyến nghị.")
+        if summary.empty:
+            st.info("Chưa có khuyến nghị nào đủ số phiên để chấm.")
+        else:
+            st.dataframe(summary.rename(columns={
+                "horizon": "Số phiên", "action": "Khuyến nghị", "n": "Mẫu",
+                "avg_ret": "Lãi/lỗ TB", "avg_excess": "Vượt VNINDEX", "win_rate": "Tỷ lệ thắng",
+                "target_first": "Chạm mục tiêu trước", "zone_fill": "Khớp vùng mua",
+                "avg_ret_from_zone": "Lãi từ vùng mua"}), hide_index=True,
+                column_config={c: st.column_config.NumberColumn(format="percent") for c in (
+                    "Lãi/lỗ TB", "Vượt VNINDEX", "Tỷ lệ thắng", "Chạm mục tiêu trước",
+                    "Khớp vùng mua", "Lãi từ vùng mua")})
+        from vnsa.data.store import Store
+
+        with Store(path("warehouse")) as store:
+            hist = store.signals(symbol)
+        if len(hist):
+            st.subheader(f"Các lần khuyến nghị {symbol}")
+            st.dataframe(hist.drop(columns=["params", "recorded_at"]), hide_index=True,
+                         column_config={"as_of": st.column_config.DateColumn(format="DD/MM/YYYY")})

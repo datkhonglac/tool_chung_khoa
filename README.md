@@ -38,6 +38,41 @@ Với mỗi mã, tool tự kiểm tra kho và chỉ tải phần còn thiếu (t
 nghiệp thường), tool chỉ dùng kỹ thuật cùng P/E, P/B và ghi rõ lý do.
 
 Trên dashboard: gõ mã vào ô **Mã bất kỳ** ở thanh bên rồi bấm **Lấy dữ liệu & phân tích**.
+
+## Giá mua khuyến nghị (vùng mua) và giá trị hợp lý
+
+Tool **không** lấy giá đóng cửa làm giá mua (giá ATC hay bị kéo/đạp, mua đuổi sau phiên tăng dễ kẹt
+T+2). Thay vào đó (`src/vnsa/ta/entry.py`, tham số `[entry]`):
+
+1. **Điểm neo kỹ thuật** = mức gần giá nhất (trong 2 ATR phía dưới) trong: hỗ trợ gần nhất,
+   **VWAP20** (giá vốn bình quân theo khối lượng 20 phiên), SMA20.
+2. **Vùng mua kỹ thuật** = [neo, neo + 0,5 ATR], không cao hơn giá hiện tại.
+3. **Trần giá trị** = giá trị hợp lý × (1 − 15%) (thêm 10% nếu điểm FA < 50).
+4. Vùng mua bị chặn bởi trần giá trị; giá đang quá cao thì **CHỜ GIÁ** về ≤ trần.
+5. Gợi ý 2 lệnh LO (½ ở đỉnh vùng, ½ ở đáy vùng); kế hoạch tính cắt lỗ/khối lượng theo giá bình quân.
+
+**Giá trị hợp lý** (`src/vnsa/fa/fair_value.py`) = trung vị các phương pháp ra số dương:
+- Doanh nghiệp thường: DCF-FCFF, **P/E lịch sử** và **P/B lịch sử** của chính mã (giá bình quân năm
+  chia EPS/BVPS theo số cổ phiếu hiện tại) — vì DCF không ra số khi FCFF âm (HPG, ACV...).
+- **Ngân hàng / chứng khoán / bảo hiểm**: ½ × trung bình của **thu nhập thặng dư** (ROE giảm dần về
+  chi phí vốn chủ) và **P/B hợp lý = (ROE − g) / (k_e − g)**, cộng ½ × **P/B lịch sử**; ROE xuất phát
+  là bình quân 3 năm có trọng số (năm gần nhất nặng nhất); điểm FA riêng (ROE, tăng trưởng, vốn chủ /
+  tổng tài sản, định giá). Tham số `[valuation.financials]`, `[fa_score.financials]`.
+
+## Lịch sử khuyến nghị — đo độ chính xác của tool
+
+Mỗi lần `recommend`, `analyze` (hoặc Claude Desktop) chạy, khuyến nghị được lưu vào bảng `signals`
+và file **`data/signals.csv`** (file này đưa lên Git được — commit định kỳ để không mất khi đổi
+Codespace; kho mới tự nạp lại từ file).
+
+```bash
+python -m vnsa.cli review-signals                 # chấm lại sau 5/20/60 phiên
+python -m vnsa.cli review-signals --update FPT HPG --detail
+```
+
+Bảng kết quả theo từng loại MUA/THEO DÕI/TRÁNH: lãi/lỗ bình quân, **vượt trội so với VNINDEX**,
+tỷ lệ thắng, tỷ lệ chạm mục tiêu trước cắt lỗ, tỷ lệ khớp vùng mua. MUA tốt khi vượt trội dương.
+Cần vài tháng và vài chục mẫu mới có ý nghĩa.
 Trên Claude Desktop: hỏi "phân tích mã SHS" — Claude gọi công cụ `analyze_symbol`, tự tải dữ liệu.
 
 ## 0. Chạy trên GitHub Codespaces (khuyến nghị)
