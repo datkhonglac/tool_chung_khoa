@@ -79,6 +79,19 @@ def validate_prices(df: pd.DataFrame, band: float = 0.07, max_gap_days: int = 10
     return issues
 
 
+def repair_ohlc(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Nguồn thỉnh thoảng ghi giá đóng/mở cửa nằm ngoài khoảng cao-thấp (CafeF: MWG 08/05/2025;
+    VCI: SHS 14–19/05/2025). Nới cao/thấp cho bao được mở/đóng cửa, không đụng tới giá đóng cửa.
+    Trả về (bảng đã sửa, các ngày đã sửa dạng dd/mm/yyyy) để báo cho người dùng."""
+    df = df.copy()
+    oc_max = df[["open", "close"]].max(axis=1)
+    oc_min = df[["open", "close"]].min(axis=1)
+    bad = (df["high"] < oc_max) | (df["low"] > oc_min)
+    df["high"] = df["high"].where(~bad, df["high"].combine(oc_max, max))
+    df["low"] = df["low"].where(~bad, df["low"].combine(oc_min, min))
+    return df, df.loc[bad, "date"].dt.strftime("%d/%m/%Y").tolist()
+
+
 def summarize(df: pd.DataFrame) -> dict:
     return {
         "so_phien": len(df),

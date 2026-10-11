@@ -19,6 +19,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from vnsa.data.cleaning import repair_ohlc
 from vnsa.data.providers.base import DataProvider
 from vnsa.data.providers.csv_provider import normalize_prices
 
@@ -136,13 +137,6 @@ class CafeFProvider(DataProvider):
         return self._repair_ohlc(df.reset_index(drop=True))
 
     def _repair_ohlc(self, df: pd.DataFrame) -> pd.DataFrame:
-        """CafeF thỉnh thoảng ghi giá đóng/mở cửa nằm ngoài khoảng cao-thấp (ví dụ MWG 08/05/2025:
-        đóng cửa 60,3 nhưng cao nhất 60,2). Nới cao/thấp cho bao được mở/đóng cửa và ghi lại ngày
-        đã sửa vào self.repaired để báo cho người dùng; không đụng tới giá đóng cửa."""
-        oc_max = df[["open", "close"]].max(axis=1)
-        oc_min = df[["open", "close"]].min(axis=1)
-        bad = (df["high"] < oc_max) | (df["low"] > oc_min)
-        self.repaired = df.loc[bad, "date"].dt.strftime("%d/%m/%Y").tolist()
-        df["high"] = df["high"].where(~bad, df["high"].combine(oc_max, max))
-        df["low"] = df["low"].where(~bad, df["low"].combine(oc_min, min))
+        """Sửa nến mâu thuẫn (xem cleaning.repair_ohlc); ngày đã sửa ghi vào self.repaired."""
+        df, self.repaired = repair_ohlc(df)
         return df

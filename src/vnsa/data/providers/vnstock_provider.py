@@ -19,6 +19,7 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
+from vnsa.data.cleaning import repair_ohlc
 from vnsa.data.providers.base import DataProvider
 from vnsa.data.providers.csv_provider import normalize_prices
 from vnsa.fa.ratios import FIELDS
@@ -244,7 +245,9 @@ class VnstockProvider(DataProvider):
         unit = "dong" if symbol.upper() in INDEX_SYMBOLS else "auto"
         df = normalize_prices(raw, symbol, price_unit=unit, adjust=False)
         df = df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))]
-        return df.sort_values("date").drop_duplicates("date").reset_index(drop=True)
+        df = df.sort_values("date").drop_duplicates("date").reset_index(drop=True)
+        df, self.repaired = repair_ohlc(df)
+        return df
 
     def fundamentals(self, symbol: str) -> pd.DataFrame:
         """BCTC năm chuẩn hoá: symbol, year + FIELDS. Khoản không có thì NaN (xem self.missing)."""

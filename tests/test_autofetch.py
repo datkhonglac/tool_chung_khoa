@@ -244,5 +244,9 @@ def test_vnstock_history_is_converted_to_dong():
     prov = VnstockProvider(get_history=lambda s, a, b: raw)
     df = prov.ohlcv("VCB", date(2026, 10, 1), date(2026, 10, 9))
     assert df["close"].tolist() == [56900, 56700] and df["symbol"].iloc[0] == "VCB"
+    bad = raw.assign(high=[56.8, 57.2])                 # nến VCI ghi sai: cao nhất < đóng cửa
+    fixed = VnstockProvider(get_history=lambda s, a, b: bad)
+    assert fixed.ohlcv("SHS", date(2026, 10, 1), date(2026, 10, 9))["high"].iloc[0] == 56900
+    assert fixed.repaired == ["08/10/2026"]
     idx = VnstockProvider(get_history=lambda s, a, b: raw.assign(close=[1290.5, 1301.2]))
     assert idx.ohlcv("VNINDEX", date(2026, 10, 1), date(2026, 10, 9))["close"].iloc[-1] == 1301   # chỉ số: điểm, làm tròn như CafeF
