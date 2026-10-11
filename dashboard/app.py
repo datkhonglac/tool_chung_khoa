@@ -80,7 +80,7 @@ with tab_all:
         table, errors = recommendations(tuple(watch), stamp)
     if len(table):
         st.dataframe(
-            table, hide_index=True, use_container_width=True,
+            table, hide_index=True, width="stretch",
             column_config={
                 "Giá": st.column_config.NumberColumn(format="localized"),
                 "Điểm FA": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f"),
@@ -115,7 +115,7 @@ with tab_ta:
     c[2].metric("RSI14", fmt_num(last["rsi"], 1))
     c[3].metric("ADX", fmt_num(last["adx"], 1))
     c[4].metric(f"ATR14 ({fmt_pct(last['atr'] / last['close'])} giá)", fmt_num(last["atr"]))
-    st.plotly_chart(charts.technical_chart(ind, sup, res, plan), use_container_width=True)
+    st.plotly_chart(charts.technical_chart(ind, sup, res, plan), width="stretch")
     st.caption(" · ".join(f"{k}: {fmt_num(v)}" for k, v in t.groups.items()))
     if plan:
         st.subheader("Kế hoạch mua tham khảo")
@@ -146,11 +146,11 @@ with tab_fa:
         c[1].metric("F-Score năm gần nhất", fmt_num(f["f_score"].iloc[-1]) + "/9")
         c[2].metric(f"Altman Z'' ({z_zone(z['z_em'].iloc[-1])})", fmt_num(z["z_em"].iloc[-1], 2))
         st.subheader("Chỉ số tài chính")
-        st.dataframe(format_ratios(compute_ratios(data.fin)), use_container_width=True)
+        st.dataframe(format_ratios(compute_ratios(data.fin)), width="stretch")
         st.subheader("Piotroski F-Score")
         ft = f.set_index("year")[[*FSCORE_CRITERIA, "f_score"]].T
         ft.index = [*FSCORE_CRITERIA.values(), "F-Score (/9)"]
-        st.dataframe(ft, use_container_width=True)
+        st.dataframe(ft, width="stretch")
         st.subheader("Điểm FA theo nhóm")
         st.dataframe(pd.DataFrame([{"Nhóm": g, "Điểm": s.groups[g],
                                     "Chỉ tiêu": ", ".join(f"{k} = {fmt_num(s.items[k][0], 2)}"
@@ -183,7 +183,7 @@ with tab_val:
             table = val.sensitivity(v, a)
             if table.notna().any().any():
                 st.subheader("Độ nhạy giá trị/cp (nghìn đồng)")
-                st.plotly_chart(charts.sensitivity_heatmap(table, v.price), use_container_width=True)
+                st.plotly_chart(charts.sensitivity_heatmap(table, v.price), width="stretch")
             st.caption("Giả định ở mục [valuation] trong config/settings.toml.")
 
 with tab_risk:
@@ -199,7 +199,7 @@ with tab_risk:
         c[2].metric(f"CVaR {q0:.0%}", fmt_pct(r.var[q0]["cvar"]))
         h = max(r.horizons)
         c[3].metric(f"Xác suất tăng sau {h} phiên", fmt_pct(r.sim.prob_above(day=h)))
-        st.plotly_chart(charts.fan_chart(r.sim, history=data.prices), use_container_width=True)
+        st.plotly_chart(charts.fan_chart(r.sim, history=data.prices), width="stretch")
         st.dataframe(pd.DataFrame([{"Kỳ": f"{k} phiên", **{f"P{p}": round(x) for p, x in
                                                             r.sim.percentiles(k).items()}}
                                    for k in r.horizons]), hide_index=True,
@@ -232,7 +232,7 @@ with tab_bt:
                     fmt_pct(s["max_drawdown"]))
         c[2].metric("Số lệnh / tỷ lệ thắng", f"{s['trades']} / {fmt_pct(s['win_rate'])}")
         c[3].metric("Thời gian cầm cp", fmt_pct(s["exposure"]))
-        st.plotly_chart(charts.equity_chart(res), use_container_width=True)
+        st.plotly_chart(charts.equity_chart(res), width="stretch")
         st.dataframe(pd.DataFrame([{"Mua": t.entry_date, "Giá mua": t.entry, "Bán": t.exit_date,
                                     "Giá bán": t.exit, "Lãi/lỗ": t.ret, "Lý do": t.reason}
                                    for t in res.trades]), hide_index=True,

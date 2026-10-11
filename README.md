@@ -1,8 +1,20 @@
-# VN Stock Analyzer — Ngày 1: tầng dữ liệu giá
+# VN Stock Analyzer
 
-Tool phân tích cổ phiếu Việt Nam cho cá nhân. Bản này mới có **tầng dữ liệu**:
-đọc file giá CSV → kiểm tra chất lượng → lưu vào kho DuckDB → vẽ biểu đồ nến.
-Các phần FA, TA, Quant, Claude sẽ thêm vào các ngày sau, đều đọc từ cùng một kho này.
+Tool phân tích cổ phiếu Việt Nam cho cá nhân (đủ 10 ngày của lộ trình):
+tải giá (CafeF) và BCTC (vnstock) → kho DuckDB → chỉ số tài chính, định giá DCF, F-Score/Altman Z,
+chỉ báo kỹ thuật, kế hoạch giao dịch, GARCH/Monte Carlo/VaR → khuyến nghị theo quy tắc, backtest →
+dùng qua dòng lệnh, dashboard web hoặc hỏi Claude Desktop qua MCP server.
+
+Mọi con số do Python tính; tham số nằm ở `config/settings.toml`. Kết quả là sàng lọc theo quy tắc,
+**không phải lời khuyên đầu tư**.
+
+Làm hằng ngày (Codespaces):
+
+```bash
+python -m vnsa.cli fetch && python -m vnsa.cli fetch-bctc   # cập nhật dữ liệu
+python -m vnsa.cli recommend                                # bảng khuyến nghị 5 mã
+streamlit run dashboard/app.py                              # mở dashboard (cổng 8501)
+```
 
 ## 0. Chạy trên GitHub Codespaces (khuyến nghị)
 
@@ -132,6 +144,61 @@ Ngưỡng chấm điểm, vốn, % rủi ro mỗi lệnh, hệ số ATR, số đ
 đầu từng file trong `src/vnsa/fa/scores.py`, `src/vnsa/ta/` và `src/vnsa/risk/`.
 Kế hoạch giao dịch là kết quả tính theo quy tắc, không phải khuyến nghị đầu tư.
 
+## 7. Khuyến nghị và backtest (ngày 7)
+
+```bash
+python -m vnsa.cli recommend                  # MUA / THEO DÕI / TRÁNH kèm lý do, cho danh sách theo dõi
+python -m vnsa.cli recommend FPT MWG
+python -m vnsa.cli backtest FPT               # chiến lược theo điểm TA so với mua và nắm giữ
+python -m vnsa.cli backtest FPT --entry 70 --exit 40
+```
+
+Điểm tổng = 60% điểm FA + 40% điểm TA. MUA cần điểm tổng ≥ 65, điểm TA ≥ 45 và giá không cao hơn
+giá trị DCF quá 10%; TRÁNH khi điểm tổng < 40 hoặc Altman Z'' ở vùng nguy cơ (mục `[recommend]`).
+Backtest chỉ dùng điểm TA (BCTC miễn phí quá ngắn để kiểm tra FA không "nhìn trước"); lệnh khớp ở
+giá mở cửa phiên sau tín hiệu, có cắt lỗ ATR, T+2, phí 0,15%/chiều và thuế bán 0,1% (`[backtest]`).
+
+## 8. Hỏi Claude Desktop qua MCP server (ngày 8)
+
+MCP server cho Claude Desktop gọi thẳng các phép tính của tool (10 công cụ: giá, chỉ số tài chính,
+định giá, điểm FA, kỹ thuật, kế hoạch, rủi ro, khuyến nghị, backtest, danh sách mã). Claude Desktop
+chạy trên **máy Windows**, nên dữ liệu phải có trong thư mục dự án trên máy đó:
+
+```powershell
+cd "C:\Users\admin\Documents\tool chứng khoan\vn-stock-analyzer\vn-stock-analyzer"
+git pull
+.venv\Scripts\activate
+pip install -e ".[dev,mcp]"
+pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+python -m vnsa.cli fetch
+python -m vnsa.cli fetch-bctc
+```
+
+Trong Claude Desktop: **Settings → Developer → Edit Config**, dán nội dung
+`docs/claude_desktop_config.example.json` (sửa đường dẫn nếu thư mục khác), lưu rồi khởi động lại
+Claude Desktop. Hỏi thử: "Dùng vn-stock-analyzer, cho tôi khuyến nghị 5 mã và giải thích".
+Kiểm tra server chạy được: `python -m vnsa.mcp_server` (đứng chờ, không in gì là đúng; Ctrl+C để thoát).
+
+## 9. Dashboard (ngày 9)
+
+```bash
+streamlit run dashboard/app.py
+```
+
+Codespaces tự mở cổng 8501 (tab **Ports** → biểu tượng 🌐 nếu trình duyệt chưa mở). Trên Windows:
+`pip install -e ".[dashboard]"` rồi chạy cùng lệnh, mở http://localhost:8501. Dashboard có 6 tab:
+tổng quan khuyến nghị, kỹ thuật & kế hoạch, tài chính, định giá (chỉnh g1/WACC), rủi ro (biểu đồ quạt
+Monte Carlo), backtest (thanh trượt ngưỡng). Dữ liệu chỉ thay đổi khi chạy `fetch`/`fetch-bctc`.
+
+## 10. Kiểm tra toàn bộ trên dữ liệu thật
+
+```bash
+python scripts/smoke_test.py      # gọi mọi công cụ MCP và mở dashboard cho từng mã
+```
+
+GitHub Actions (tab **Actions → Kiểm tra và tải dữ liệu → Run workflow**) chạy toàn bộ: tải dữ liệu,
+mọi lệnh phân tích, khuyến nghị, backtest và bước kiểm tra này; kết quả in trong log.
+
 ## Ý nghĩa các kết quả kiểm tra
 
 | Mã | Mức | Ý nghĩa |
@@ -166,6 +233,13 @@ src/vnsa/
   ta/plan.py                  kế hoạch giao dịch (cắt lỗ ATR, khối lượng, bước giá HOSE)
   risk/garch.py               GARCH(1,1)
   risk/simulate.py            Monte Carlo, VaR, CVaR
+  recommend/engine.py         khuyến nghị MUA / THEO DÕI / TRÁNH
+  recommend/backtest.py       backtest theo điểm TA
+  analysis.py                 lớp dịch vụ dùng chung cho CLI, MCP, dashboard
+  mcp_server.py               MCP server cho Claude Desktop
+dashboard/app.py              dashboard Streamlit
+docs/                         mẫu cấu hình Claude Desktop
+scripts/smoke_test.py         kiểm tra MCP + dashboard trên dữ liệu thật
   report/charts.py            biểu đồ nến
   cli.py                      dòng lệnh
 scripts/make_sample_data.py   sinh dữ liệu mẫu
@@ -176,6 +250,8 @@ tests/                        pytest
 Thêm nguồn mới (vnstock, DNSE, SSI…) = viết một lớp con của `DataProvider`
 trong `data/providers/`, không phải sửa phần còn lại.
 
-## Việc tiếp theo (ngày 7)
+## Hướng phát triển tiếp
 
-Engine khuyến nghị (kết hợp điểm FA, TA, định giá, rủi ro) và backtest đơn giản.
+- Đối chiếu BCTC với số công bố gốc; mua gói vnstock trả phí để có hơn 4 năm BCTC.
+- Duyệt lại giả định định giá (`[valuation]`) và ngưỡng chấm điểm theo kinh nghiệm của bạn.
+- Thêm mã vào `[watchlist]`; backtest nhiều mã cùng lúc; cảnh báo tự động khi khuyến nghị đổi.

@@ -8,7 +8,7 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   khi tạo Codespace; không cần `.venv`.
 - Phụ: máy Windows của người dùng (PowerShell, Python 3.13, môi trường ảo `.venv`; đường dẫn có
   dấu cách và chữ có dấu — luôn đặt trong ngoặc kép).
-- Cài/cập nhật: `pip install -e ".[dev]"`. Test: `pytest`.
+- Cài/cập nhật: `pip install -e ".[dev,mcp,dashboard]"`. Test: `pytest`.
 - `data/raw/` và `*.duckdb` không đưa lên Git (xem `.gitignore`): dữ liệu thật phải tải lại trong
   từng môi trường (`python -m vnsa.cli fetch`, hoặc vnstock: `python scripts/fetch_vnstock.py FPT HPG MWG VNM DGC --years 5`).
 - vnstock cài từ kho gói của nhà phát triển (PyPI đang cách ly gói này):
@@ -32,20 +32,26 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 - `fa-score FPT` (F-Score, Altman Z, điểm FA) · `ta FPT` (chỉ báo, hỗ trợ/kháng cự, điểm TA) ·
   `plan FPT` (cắt lỗ ATR, mục tiêu, khối lượng theo % rủi ro, bước giá HOSE) · `risk FPT [--days N]`
   (GARCH(1,1) tự viết bằng scipy, Monte Carlo lọc lịch sử chặn biên độ ±7%, VaR/CVaR).
+- `recommend [MÃ...]` (60% FA + 40% TA → MUA/THEO DÕI/TRÁNH) · `backtest FPT` (chỉ điểm TA, khớp mở
+  cửa phiên sau, T+2, phí + thuế). Mọi phép tính dùng chung qua `src/vnsa/analysis.py`.
+- MCP server: `python -m vnsa.mcp_server` (extra `[mcp]`, chạy được mcp 1.x và 2.x); cấu hình mẫu cho
+  Claude Desktop ở `docs/`. Dashboard: `streamlit run dashboard/app.py` (extra `[dashboard]`, cổng 8501).
+- `python scripts/smoke_test.py` gọi mọi công cụ MCP + dashboard trên kho thật. Test dùng fixture
+  `warehouse` (tests/conftest.py) và biến môi trường `VNSA_WAREHOUSE` để không đụng kho thật.
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
 - `python -m vnsa.cli load [--sample]` · `check FPT` · `list` · `chart FPT`
 
-## Lộ trình sprint 10 ngày (đang ở ngày 7)
+## Lộ trình sprint 10 ngày (đã xong cả 10 ngày)
 1. Dữ liệu giá ✔ — 5 năm cho FPT, HPG, MWG, VNM, DGC (lệnh `fetch`)
 2. BCTC + bộ chỉ số tài chính ✔ (4 năm 2022–2025; còn đối chiếu thêm với BCTC gốc)
 3. WACC, DCF-FCFF, P/E, P/B, ma trận độ nhạy ✔ (lệnh `value`; giả định cần người dùng duyệt)
 4. F-Score, Altman Z, điểm FA; chỉ báo TA ✔ (`fa-score`, `ta`)
 5. Hỗ trợ/kháng cự, điểm TA, kế hoạch giao dịch (cắt lỗ theo ATR) ✔ (`ta`, `plan`)
 6. GARCH, Monte Carlo P10–P90, VaR ✔ (`risk`)
-7. Engine khuyến nghị + backtest đơn giản
-8. MCP server cho Claude Desktop
-9. Dashboard Streamlit
-10. Dự phòng, sửa lỗi
+7. Engine khuyến nghị + backtest đơn giản ✔ (`recommend`, `backtest`)
+8. MCP server cho Claude Desktop ✔ (`src/vnsa/mcp_server.py`)
+9. Dashboard Streamlit ✔ (`dashboard/app.py`)
+10. Dự phòng, sửa lỗi ✔ (`scripts/smoke_test.py`, chạy thật trên GitHub Actions)
 
 Mỗi bước: viết test cho công thức tài chính, chạy `pytest` trước khi báo xong.
 Chạy thật trên máy chủ GitHub: workflow `.github/workflows/data.yml` (Actions → Run workflow; tuỳ chọn
