@@ -1,0 +1,21 @@
+# Cấu hình chung. Sửa ở đây, không sửa trong code.
+
+[data]
+raw_prices_dir = "data/raw/prices"     # đặt file CSV giá thật ở đây, mỗi mã một file: FPT.csv
+raw_excel_dir = "data/raw/excel"       # file Excel tải từ web: data/raw/excel/FPT/*.xlsx
+sample_prices_dir = "data/sample/prices"
+warehouse = "data/warehouse.duckdb"
+charts_dir = "data/charts"
+
+# Đơn vị giá trong file CSV: "auto" | "dong" | "nghin"
+# auto: nếu trung vị giá đóng cửa < 1000 thì coi là nghìn đồng và nhân 1000.
+price_unit = "auto"
+
+[market]
+# Biên độ dao động (kiểm tra lại khi quy định thay đổi)
+band_hose = 0.07
+band_hnx = 0.10
+band_upcom = 0.15
+
+[watchlist]
+symbols = ["FPT", "HPG", "MWG", "VNM", "DGC"]

@@ -1,0 +1,19 @@
+# Bí mật — KHÔNG BAO GIỜ commit
+.env
+
+# Môi trường ảo, cache
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Dữ liệu và kết quả sinh ra (giữ lại thư mục mẫu)
+data/raw/
+data/charts/
+data/*.duckdb
+data/*.duckdb.wal
+!data/sample/
+.venv-vnstock/
+*.egg-info/
