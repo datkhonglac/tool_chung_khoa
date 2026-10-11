@@ -39,7 +39,7 @@ def test_report_card_from_warehouse(warehouse):
     from vnsa import analysis
 
     card = analysis.report_card("DEMO_A")
-    assert card.action in {"MUA", "THEO DÕI", "TRÁNH"} and card.label
+    assert card.action in {"MUA", "KHẢ QUAN", "NẮM GIỮ", "KÉM KHẢ QUAN", "BÁN", "KHÔNG XẾP HẠNG"} and card.label
     assert card.confidence in {"Cao", "Trung bình", "Thấp"} and len(card.confidence_checks) == 6
     assert card.p10 <= card.p50 <= card.p90 and card.target == card.p50
     assert 0 <= card.quant <= 100 and not pd.isna(card.total)

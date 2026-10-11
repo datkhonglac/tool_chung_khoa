@@ -84,8 +84,8 @@ z_em = [1.1, 2.6]
 debt_to_equity = [1.5, 0.3]   # số nhỏ là tốt
 f_score = [2, 8]
 cfo_to_ni = [0.5, 1.0]        # CFO / LNST cộng dồn 3 năm
-pe = [25, 8]
-pb = [4.0, 1.0]
+pe_rel = [1.3, 0.7]           # P/E hiện tại / trung vị lịch sử của mã: cao hơn 30% = 0 điểm, thấp hơn 30% = 100
+pb_rel = [1.3, 0.7]
 dcf_upside = [-0.2, 0.3]
 
 [fa_score.financials]
@@ -98,7 +98,7 @@ dinh_gia = 30        # P/B, chênh lệch so với giá trị hợp lý
 [fa_score.financials.thresholds]
 roe = [0.08, 0.20]
 ni_cagr = [0.0, 0.20]
-pb = [3.0, 0.8]
+pb_rel = [1.3, 0.7]
 fair_upside = [-0.2, 0.3]
 [fa_score.financials.equity_to_assets]   # [mức xấu, mức tốt] theo loại doanh nghiệp
 bank = [0.05, 0.11]
@@ -136,6 +136,8 @@ support_buffer_atr = 0.5    # đặt cắt lỗ dưới hỗ trợ 0,5 ATR
 reward_multiples = [2.0, 3.0]
 min_reward_risk = 2.0
 lot_size = 100
+max_position_pct = 0.15     # trần tỷ trọng mỗi mã: 15% vốn
+max_adv_pct = 0.10          # vị thế không quá 10% giá trị giao dịch bình quân 20 phiên (thanh khoản)
 # Bước giá theo sàn nằm ở [market.ticks]
 
 [entry]
@@ -162,21 +164,32 @@ bootstrap = true            # rút phần dư thật (true) hay phân phối chu
 seed = 42
 
 [recommend]
-weight_fa = 0.5             # điểm tổng = 50% FA + 30% TA + 20% Quant
-weight_ta = 0.3
-weight_quant = 0.2
-buy_above = 65              # MUA khi điểm tổng ≥ 65 ...
-min_ta_buy = 45             # ... và điểm TA ≥ 45 (xu hướng không xấu)
-min_upside_buy = -0.10      # ... và giá không cao hơn giá trị DCF quá 10%
-sell_below = 40             # TRÁNH khi điểm tổng < 40 (hoặc Altman Z'' vùng nguy cơ)
+# Khuyến nghị hai trục (recommend/engine.py)
+# Trục 1 — xếp hạng theo lợi nhuận kỳ vọng 12 tháng = upside so với giá trị hợp lý + tỷ suất cổ tức:
+rating_thresholds = [0.15, 0.05, -0.05, -0.15]   # ≥ MUA · ≥ KHẢ QUAN · ≥ NẮM GIỮ · ≥ KÉM KHẢ QUAN · dưới: BÁN
+bear_market_extra = 0.05    # VNINDEX xu hướng giảm: mọi ngưỡng cao thêm 5%
+min_fa_quality = 50         # điểm FA dưới mức này: hạ một bậc xếp hạng
+# Trục 2 — thời điểm (điểm TA):
+timing_wait = 40            # TA < 40: chờ xu hướng cải thiện
+timing_go = 55              # TA ≥ 55: vào được trong vùng mua
+# Điểm sắp xếp (không quyết định xếp hạng) = 60% FA + 40% TA
+weight_fa = 0.6
+weight_ta = 0.4
 min_reward_risk = 2.0
 high_vol = 0.40             # biến động năm trên 40% thì nhắc giảm khối lượng
 
 [recommend.quant]
-# Điểm Quant 0–100 (recommend/engine.py): [mức xấu, mức tốt], quy tuyến tính như điểm FA
+# Điểm Quant 0–100 — CHỈ THAM KHẢO, không vào xếp hạng: [mức xấu, mức tốt], quy tuyến tính như FA
 prob_up = [0.40, 0.60]      # xác suất giá cao hơn hiện tại sau 60 phiên (Monte Carlo)
 vol_annual = [0.60, 0.20]   # biến động năm (GARCH) — thấp là tốt
 reward_risk = [1.0, 3.0]    # lãi/lỗ của mục tiêu 1 trong kế hoạch
+
+[regime]
+# Trạng thái thị trường chung theo VNINDEX (ta/regime.py)
+sma_long = 200
+sma_short = 50
+slope_sessions = 20         # MA50 đi lên/xuống so với 20 phiên trước
+bear_risk_factor = 0.5      # thị trường giảm: rủi ro mỗi lệnh còn 50% (khối lượng nhỏ lại)
 
 [report]
 # Độ tin cậy của khuyến nghị (report/card.py): đếm số điều kiện đạt

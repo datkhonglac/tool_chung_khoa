@@ -4,8 +4,8 @@ khuyến nghị, định giá, điểm số, cơ bản, kỹ thuật, dự báo 
 Mọi con số lấy từ Assessment (đã tính bằng Python); thẻ chỉ trình bày, không tính lại mô hình.
 
 Quy ước:
-- Khuyến nghị: MUA = Khả quan, THEO DÕI = Trung lập, TRÁNH = Kém khả quan. Khung: trung hạn (kế
-  hoạch, mô phỏng tính theo 20–60 phiên, định giá theo năm).
+- Khuyến nghị hai trục (recommend/engine.py): XẾP HẠNG theo lợi nhuận kỳ vọng (upside + cổ tức) và
+  THỜI ĐIỂM theo kỹ thuật + vùng mua. Khung: trung hạn (định giá 12 tháng, kế hoạch 20–60 phiên).
 - Độ tin cậy = số điều kiện đạt trong 6 điều kiện (ngưỡng ở mục [report]):
   1. có BCTC và điểm FA; 2. có ≥ 2 phương pháp định giá; 3. kịch bản định giá hẹp (P90 / P10 ≤
   `max_value_spread`); 4. giá trị hợp lý không lệch quá `max_abs_upside` so với giá (lệch quá xa
@@ -36,7 +36,8 @@ import pandas as pd
 
 from vnsa.config import settings
 
-LABELS = {"MUA": "Khả quan", "THEO DÕI": "Trung lập", "TRÁNH": "Kém khả quan"}
+LABELS = {"MUA": "lợi nhuận kỳ vọng ≥ 15%", "KHẢ QUAN": "5–15%", "NẮM GIỮ": "−5% đến 5%",
+          "KÉM KHẢ QUAN": "−15% đến −5%", "BÁN": "dưới −15%", "KHÔNG XẾP HẠNG": "thiếu BCTC"}
 
 
 def vn_num(x: float, digits: int = 0, unit: str = "") -> str:
@@ -74,6 +75,10 @@ class Card:
     ta: float
     quant: float
     total: float
+    timing: str = ""
+    expected_return: float = float("nan")
+    dividend_yield: float = 0.0
+    regime: str = ""
     fundamentals: list[str] = field(default_factory=list)
     red_flags: list[str] = field(default_factory=list)
     technical: list[str] = field(default_factory=list)
@@ -257,7 +262,11 @@ def build_card(a) -> Card:
                           f"Tỷ trọng gợi ý {vn_pct(p.position_value / p.capital, 0)} NAV")
 
     methods = " · ".join(f"{METHOD_NAMES[k]} {w:.0%}" for k, w in fair.weights.items()) if fair else "—"
-    notes = [n for n in rec.reasons if "mục tiêu gần nhất" in n or "biến động cao" in n]
+    notes = [n for n in rec.reasons if any(k in n for k in (
+        "mục tiêu gần nhất", "biến động cao", "hạ một bậc", "tối đa NẮM GIỮ",
+        "thị trường chung đang giảm"))]
+    if p is not None:
+        notes += [n for n in p.notes if "giới hạn bởi" in n]
     notes += [n for n in (fair.notes if fair else []) if n.startswith("bỏ ")]
     if p is not None and p.zone is not None:
         notes += [n for n in p.zone.notes if "đuổi giá" in n or "xu hướng yếu" in n]
@@ -273,24 +282,29 @@ def build_card(a) -> Card:
         p90=fair.p90 if fair else nan, target=fair.value if fair else nan,
         upside=fair.upside if fair else nan, methods=methods,
         fa=x.fa_score, ta=x.ta_score, quant=x.quant_score, total=rec.score,
+        timing=rec.timing, expected_return=rec.expected_return,
+        dividend_yield=x.dividend_yield, regime=x.regime,
         fundamentals=fundamentals, red_flags=flags, technical=technical, forecast=forecast,
         plan=plan_lines, notes=notes)
 
 
 def format_card(c: Card) -> str:
     lines = [
-        (f"{c.symbol} — Khuyến nghị: {c.action} ({c.label}) · Độ tin cậy: {c.confidence} · "
-         "Khung: trung hạn"),
+        (f"{c.symbol} — Xếp hạng: {c.action} · Thời điểm: {c.timing} · Độ tin cậy: "
+         f"{c.confidence} · Khung: trung hạn"),
         (f"Ngày phân tích: {c.analysis_date} · Giá hiện tại: {vn_num(c.price)}đ (phiên {c.price_date})"
          + (f" · Số liệu tài chính: {c.basis}" if c.basis else "")),
         "",
         "ĐỊNH GIÁ",
         f"  Giá trị nội tại (P10 / P50 / P90): {vn_num(c.p10)} / {vn_num(c.p50)} / {vn_num(c.p90)}đ",
-        f"  Giá mục tiêu 12 tháng: {vn_num(c.target)}đ → Upside {vn_pct(c.upside, 0, sign=True)}",
+        (f"  Giá mục tiêu 12 tháng: {vn_num(c.target)}đ → Upside {vn_pct(c.upside, 0, sign=True)}"
+         + (f" + cổ tức {vn_pct(c.dividend_yield)}" if c.dividend_yield > 0 else "")
+         + f" = lợi nhuận kỳ vọng {vn_pct(c.expected_return, 0, sign=True)}"),
         f"  Phương pháp: {c.methods}",
         "",
         "ĐIỂM SỐ (0-100)",
-        f"  FA {vn_num(c.fa)} · TA {vn_num(c.ta)} · Quant {vn_num(c.quant)} → Tổng hợp {vn_num(c.total)}",
+        (f"  FA (chất lượng) {vn_num(c.fa)} · TA (xu hướng) {vn_num(c.ta)} · "
+         f"Quant {vn_num(c.quant)} (tham khảo) · Thị trường: VNINDEX {c.regime}"),
         "",
         "CƠ BẢN",
         *[f"  {s}" for s in c.fundamentals],

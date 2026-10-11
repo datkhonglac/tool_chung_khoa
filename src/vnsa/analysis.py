@@ -142,7 +142,8 @@ def financial(d: Data):
     pb = price / ri.book0
     score = financial_score(d.fin, settings()["fa_score"]["financials"],
                             market.profile(d.symbol)["model"], pb=pb, fair_upside=fair.upside,
-                            roe=d.current.roe if d.current is not None else None)
+                            roe=d.current.roe if d.current is not None else None,
+                            pb_hist=fair.pb_target)
     return score, fair
 
 
@@ -213,13 +214,18 @@ def fa(d: Data):
             _, v, _ = valuation(d)
         except ValueError:
             v = None
-    caps = sc.year_end_market_caps(d.fin, d.prices, settings()["valuation"]["par_value"])
+    from vnsa.fa.fair_value import history_targets
+
+    par = settings()["valuation"]["par_value"]
+    caps = sc.year_end_market_caps(d.fin, d.prices, par)
     f = sc.piotroski(d.fin, cfg.get("issue_materiality", 0.01))
     z = sc.altman(d.fin, caps)
     nan = float("nan")
+    pe_hist, pb_hist = history_targets(d.fin, d.prices, par) if not d.prices.empty else (nan, nan)
     score = sc.fa_score(d.fin, cfg, pe=v.pe if v else nan, pb=v.pb if v else nan,
                         dcf_upside=v.upside if v else nan,
-                        roe=d.current.roe if d.current is not None else None)
+                        roe=d.current.roe if d.current is not None else None,
+                        pe_hist=pe_hist, pb_hist=pb_hist)
     return f, z, score, v
 
 
@@ -252,7 +258,38 @@ def _value_anchor(symbol: str) -> tuple[float, float]:
     return (fair.value if fair else nan), score
 
 
-def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | None = None):
+def adv_value(prices: pd.DataFrame, n: int = 20) -> float:
+    """Giá trị giao dịch bình quân n phiên gần nhất (đồng): giá khớp thật × khối lượng."""
+    tail = prices.tail(n)
+    px = tail["close_raw"].fillna(tail["close"]) if "close_raw" in tail else tail["close"]
+    return float((px * tail["volume"]).mean()) if len(tail) else float("nan")
+
+
+def market_regime(index: pd.DataFrame | None = None):
+    """Trạng thái VNINDEX (ta/regime.py); không truyền thì đọc từ kho."""
+    from vnsa.ta.regime import regime
+
+    if index is None:
+        from vnsa.data.store import Store
+
+        with Store(path("warehouse")) as store:
+            index = store.prices(settings()["valuation"]["index"])
+    return regime(index, settings().get("regime", {}))
+
+
+def dividend_yield(d: Data) -> float:
+    """Cổ tức tiền 12 tháng (GDKHQ trong 365 ngày trước phiên giá cuối) / giá."""
+    if d.dividends is None or d.dividends.empty or d.prices.empty:
+        return 0.0
+    last = d.prices["date"].iloc[-1]
+    div = d.dividends
+    recent = div[(div["exright_date"] > last - pd.Timedelta(days=365))
+                 & (div["exright_date"] <= last)]
+    return float(recent["cash_per_share"].sum() / d.prices["close"].iloc[-1])
+
+
+def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | None = None,
+         risk_scale: float = 1.0):
     """Kế hoạch mua với giá vào = đỉnh VÙNG MUA khuyến nghị (ta/entry.py: hỗ trợ / VWAP20 / SMA20,
     chặn bởi giá trị hợp lý trừ biên an toàn), không phải giá đóng cửa. Không truyền fair_value thì
     tự tính từ kho. ValueError nếu chưa đủ dữ liệu tính ATR."""
@@ -268,7 +305,8 @@ def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | N
         fair_value, fa_score = _value_anchor(sym) if sym else (float("nan"), float("nan"))
     zone = entry_zone(ind, sup, settings()["entry"], ticks, fair_value,
                       float("nan") if fa_score is None else fa_score)
-    p = trade_plan(zone.entry, float(last["atr"]), sup, res, settings()["plan"], ticks)
+    p = trade_plan(zone.entry, float(last["atr"]), sup, res, settings()["plan"], ticks,
+                   adv_value=adv_value(ind), risk_scale=risk_scale)
     p.zone = zone
     return p
 
@@ -363,8 +401,11 @@ def assess(symbol: str) -> Assessment:
         notes.append("chưa có BCTC: chỉ dựa vào kỹ thuật")
     ind = indicators(d.prices)
     t = ta(ind)
+    reg = market_regime(d.index)
+    scale = settings().get("regime", {}).get("bear_risk_factor", 1.0) if reg.state == "giảm" else 1.0
+    notes.append(str(reg))
     try:
-        p = plan(ind, fair.value if fair else nan, fa_score)
+        p = plan(ind, fair.value if fair else nan, fa_score, risk_scale=scale)
     except ValueError:
         p = None
     if p is not None and p.zone is not None:
@@ -387,7 +428,8 @@ def assess(symbol: str) -> Assessment:
         dcf_upside=upside, pe=pe, pb=pb, vol_annual=vol, prob_up=prob_up, first_target_rr=rr,
         horizon=max(r.horizons) if r else 60,
         fair_value=fair.value if fair else nan, fair_upside=fair.upside if fair else nan,
-        quant_score=q,
+        quant_score=q, dividend_yield=dividend_yield(d), regime=reg.state,
+        zone_status=p.zone.status if p is not None and p.zone is not None else "",
     )
     rec = recommend(inputs, settings()["recommend"], notes)
     return Assessment(d, fa_score, fair, pe, pb, z_em, upside, ind, t, p, r, q, rec)

@@ -9,7 +9,7 @@
   python -m vnsa.cli ta FPT           # chỉ báo kỹ thuật, hỗ trợ/kháng cự, điểm TA 0–100
   python -m vnsa.cli plan FPT         # kế hoạch mua: giá vào, cắt lỗ theo ATR, mục tiêu, khối lượng
   python -m vnsa.cli risk FPT         # GARCH, Monte Carlo P10–P90, VaR/CVaR
-  python -m vnsa.cli recommend        # khuyến nghị MUA/THEO DÕI/TRÁNH cho danh sách theo dõi (tự lưu)
+  python -m vnsa.cli recommend        # xếp hạng MUA…BÁN + thời điểm cho danh sách theo dõi (tự lưu)
   python -m vnsa.cli review-signals   # chấm lại khuyến nghị đã lưu sau 5/20/60 phiên
   python -m vnsa.cli backtest FPT     # backtest chiến lược theo điểm TA
   python -m vnsa.cli import-excel FPT  # ghép data/raw/excel/FPT/*.xlsx -> data/raw/prices/FPT.csv rồi nạp
@@ -181,6 +181,9 @@ def cmd_ratios(args) -> int:
     return 0
 
 
+nan = float("nan")
+
+
 def _nan(x) -> bool:
     return x is None or (isinstance(x, float) and math.isnan(x))
 
@@ -277,19 +280,24 @@ def cmd_value(args) -> int:
 
 def _print_fair(d, v) -> None:
     """Giá trị hợp lý gộp DCF + P/E, P/B lịch sử (fa/fair_value.py)."""
+    from vnsa import analysis
     from vnsa.fa import fair_value as fv
 
-    fair = fv.combine(v.price, d.fin, d.prices, settings()["valuation"]["par_value"],
-                      dcf=v.value_per_share)
+    fair = analysis.general_fair_value(d, v)
     hist = fv.historical_multiples(d.fin, d.prices, settings()["valuation"]["par_value"])
-    print("\nBội số lịch sử (giá bình quân năm, EPS/BVPS theo số cp hiện tại):")
+    c = d.current
+    print(f"\nBội số lịch sử (vốn hoá bình quân năm / LNST, vốn chủ; {hist['basis'].iloc[-1]}):")
     print("  " + " · ".join(f"{int(r.year)}: P/E {_num(r.pe, 1)}, P/B {_num(r.pb, 2)}"
                             for r in hist.itertuples()))
-    print(f"  P/E mục tiêu {_num(fair.pe_target, 1)} × EPS {_num(hist['eps'].iloc[-1])} = "
+    print(f"  P/E mục tiêu {_num(fair.pe_target, 1)} × EPS {_num(c.eps if c else nan)} = "
           f"{_num(fair.methods['pe_hist'])} · P/B mục tiêu {_num(fair.pb_target, 2)} × BVPS "
-          f"{_num(hist['bvps'].iloc[-1])} = {_num(fair.methods['pb_hist'])}")
-    print(f"⇒ Giá trị hợp lý (trung vị DCF, P/E, P/B lịch sử): {_num(fair.value)} đ/cp, "
-          f"{_pct(fair.upside)} so với giá")
+          f"{_num(c.bvps if c else nan)} = {_num(fair.methods['pb_hist'])}"
+          + (f" ({c.basis}, {c.shares / 1e6:,.1f} triệu cp)" if c else ""))
+    from vnsa.fa.fair_value import METHOD_NAMES
+
+    print("⇒ Giá trị hợp lý (bình quân có trọng số: "
+          + ", ".join(f"{METHOD_NAMES[k]} {w:.0%}" for k, w in fair.weights.items())
+          + f"): {_num(fair.value)} đ/cp, {_pct(fair.upside)} so với giá")
     for n in fair.notes:
         print(f"  ! {n}")
 
@@ -309,7 +317,8 @@ def _fin_score(d) -> int:
     names = {"sinh_loi": "Sinh lời", "tang_truong": "Tăng trưởng", "an_toan": "Đệm vốn",
              "dinh_gia": "Định giá"}
     labels = {"roe": ("ROE", "pct"), "ni_cagr": ("Tăng trưởng kép LNST cty mẹ", "pct"),
-              "equity_to_assets": ("Vốn chủ / tổng tài sản", "pct"), "pb": ("P/B", "x"),
+              "equity_to_assets": ("Vốn chủ / tổng tài sản", "pct"),
+              "pb_rel": ("P/B so với trung vị lịch sử (1 = bằng)", "x"),
               "fair_upside": ("Chênh lệch so với giá trị hợp lý", "pct")}
     print(f"\nĐiểm FA: {_num(s.total)}/100 — {s.rating}")
     for g, keys in FIN_GROUPS.items():
@@ -348,8 +357,9 @@ def _fin_value(d) -> int:
     print(f"P/B hợp lý theo ROE = (ROE − g) / (k_e − g) = {_num(ri.justified_pb, 2)} "
           f"→ {_num(ri.justified_pb * ri.book0)} đ/cp")
     print(f"P/B lịch sử (trung vị) {_num(fair.pb_target, 2)} → {_num(fair.pb_target * ri.book0)} đ/cp")
-    print(f"\n⇒ Giá trị hợp lý = ½ × trung bình (RI, P/B theo ROE) + ½ × P/B lịch sử: "
-          f"{_num(fair.value)} đ/cp, {_pct(fair.upside)} so với giá")
+    print("\n⇒ Giá trị hợp lý (bình quân có trọng số: "
+          + ", ".join(f"{METHOD_NAMES[k]} {w:.0%}" for k, w in fair.weights.items())
+          + f"): {_num(fair.value)} đ/cp, {_pct(fair.upside)} so với giá")
     print("  Phương pháp dùng: " + ", ".join(f"{METHOD_NAMES[k]} {v:,.0f}" for k, v in fair.used.items()))
     for n in fair.notes:
         print(f"  ! {n}")
@@ -402,7 +412,9 @@ def cmd_fa_score(args) -> int:
     labels = {"roe": ("ROE", "pct"), "ni_cagr": ("Tăng trưởng kép LNST cty mẹ", "pct"),
               "z_em": ("Altman Z''", "x"), "debt_to_equity": ("Vay/VCSH", "x"),
               "f_score": ("F-Score", "x0"), "cfo_to_ni": ("CFO/LNST cộng dồn 3 năm", "x"),
-              "pe": ("P/E", "x1"), "pb": ("P/B", "x"), "dcf_upside": ("Chênh lệch DCF", "pct")}
+              "pe_rel": ("P/E so với trung vị lịch sử (1 = bằng)", "x"),
+              "pb_rel": ("P/B so với trung vị lịch sử (1 = bằng)", "x"),
+              "dcf_upside": ("Chênh lệch DCF", "pct")}
     print(f"\nĐiểm FA: {_num(s.total)}/100 — {s.rating}")
     for g, keys in sc.GROUPS.items():
         w = settings()["fa_score"]["weights"][g]
@@ -588,20 +600,25 @@ def cmd_recommend(args) -> int:
         return code
     analysis.record_signals(list(zip(rows, plans, strict=True)))
     x0 = rows[0].inputs
-    print(f"Khuyến nghị theo quy tắc — giá đóng cửa {x0.date:%d/%m/%Y}")
+    print(f"Khuyến nghị theo quy tắc — giá đóng cửa {x0.date:%d/%m/%Y} · VNINDEX {x0.regime}")
     zones = {r.symbol: p.zone for r, p in zip(rows, plans, strict=True) if p is not None}
-    print(f"{'Mã':<6}{'Giá':>9}{'FA':>5}{'TA':>5}{'Tổng':>6}{'Hợp lý':>9}{'Biến động':>11}"
-          f"  {'Vùng mua':<17}Khuyến nghị")
-    for r in sorted(rows, key=lambda r: -r.score if r.score == r.score else 0):
+    print(f"{'Mã':<6}{'Giá':>9}{'FA':>5}{'TA':>5}{'LN kỳ vọng':>12}  {'Xếp hạng':<14}"
+          f"{'Vùng mua':<17}Thời điểm")
+    from vnsa.recommend.engine import RATINGS
+
+    def rank(r):
+        er = r.expected_return
+        return (RATINGS.index(r.action) if r.action in RATINGS else 9, 9 if _nan(er) else -er)
+
+    for r in sorted(rows, key=rank):
         x, z = r.inputs, zones.get(r.symbol)
         zone = ("—" if z is None else f"≤ {z.high:,.0f} (chờ)" if z.status == "CHỜ GIÁ"
                 else f"{z.low:,.0f}–{z.high:,.0f}")
         print(f"{r.symbol:<6}{x.price:>9,.0f}{_num(x.fa_score):>5}{_num(x.ta_score):>5}"
-              f"{_num(r.score):>6}{_pct(x.fair_upside, 0):>9}{_pct(x.vol_annual, 0):>11}"
-              f"  {zone:<17}{r.action}")
+              f"{_pct(r.expected_return, 0):>12}  {r.action:<14}{zone:<17}{r.timing}")
     print()
     for r in rows:
-        print(f"{r.symbol} — {r.action}: " + "; ".join(r.reasons))
+        print(f"{r.symbol} — {r.action} · {r.timing}: " + "; ".join(r.reasons))
     print("\nĐây là kết quả sàng lọc theo quy tắc trong settings.toml, không phải lời khuyên đầu tư.")
     return code
 
@@ -721,7 +738,8 @@ def cmd_review_signals(args) -> int:
         print(f"{r.horizon:>4} {r.action:<9}{r.n:>5}{_pct(r.avg_ret):>11}{_pct(r.avg_excess):>10}"
               f"{_pct(r.win_rate, 0):>7}{_pct(r.target_first, 0):>15}{_pct(r.zone_fill, 0):>11}"
               f"{_pct(r.avg_ret_from_zone):>13}")
-    print("\nMUA tốt khi 'Vượt VNI' dương, TRÁNH tốt khi âm. Dưới ~30 mẫu chỉ để tham khảo.")
+    print("\nMUA/KHẢ QUAN tốt khi 'Vượt VNI' dương, KÉM KHẢ QUAN/BÁN tốt khi âm. Dưới ~30 mẫu chỉ "
+          "để tham khảo.")
     if args.detail:
         print("\n" + ev.to_string(index=False))
     return 0
@@ -831,7 +849,7 @@ def main(argv: list[str] | None = None) -> int:
     prk.add_argument("--paths", type=int, help="Số đường mô phỏng (mặc định: n_paths trong settings)")
     prk.set_defaults(func=cmd_risk)
 
-    prc = sub.add_parser("recommend", help="Khuyến nghị MUA/THEO DÕI/TRÁNH cho danh sách mã")
+    prc = sub.add_parser("recommend", help="Xếp hạng MUA…BÁN và thời điểm mua cho danh sách mã")
     prc.add_argument("symbols", nargs="*", help="Bỏ trống = danh sách theo dõi trong settings.toml")
     prc.add_argument("--update", action="store_true",
                      help="Tự tải/cập nhật dữ liệu từng mã trước (như analyze)")

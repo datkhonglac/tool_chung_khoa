@@ -8,8 +8,8 @@ Với mỗi khuyến nghị (ngày D, mã, giá đóng cửa P) và mỗi kỳ h
 - Khớp vùng mua: trong D+1..D+h có phiên giá thấp nhất ≤ đỉnh vùng mua không (lệnh LO đặt ở đỉnh vùng
   có khớp được không); nếu khớp, lãi/lỗ tính từ đỉnh vùng (cho thấy mua theo vùng tốt hơn hay kém
   hơn mua ngay giá đóng cửa).
-Khuyến nghị chưa đủ h phiên sau đó thì chưa chấm. MUA tốt khi vượt trội bình quân > 0, TRÁNH tốt
-khi < 0. Ít mẫu (dưới ~30) thì kết quả chỉ mang tính tham khảo.
+Khuyến nghị chưa đủ h phiên sau đó thì chưa chấm. MUA/KHẢ QUAN tốt khi vượt trội bình quân > 0,
+KÉM KHẢ QUAN/BÁN tốt khi < 0. Ít mẫu (dưới ~30) thì kết quả chỉ mang tính tham khảo.
 """
 
 from __future__ import annotations

@@ -160,7 +160,6 @@ def get_valuation(symbol: str, growth: float | None = None, wacc: float | None =
     WACC, cột tăng trưởng dài hạn), P/E, P/B; growth/wacc ghi đè giả định. Ngân hàng/chứng khoán/
     bảo hiểm: thu nhập thặng dư, P/B hợp lý theo ROE, P/B lịch sử. Mọi mã đều có fair_value = trung
     vị các phương pháp (kể cả P/E, P/B lịch sử của chính mã)."""
-    from vnsa.fa import fair_value as fv
     from vnsa.fa import valuation as val
     from vnsa.market import financial_note
 
@@ -173,8 +172,7 @@ def get_valuation(symbol: str, growth: float | None = None, wacc: float | None =
                 "fair_value": fair.value, "upside": fair.upside, "methods": fair.methods,
                 "pb_hist_target": fair.pb_target, "notes": fair.notes + [financial_note(d.symbol)]}
     a, v, raw_beta = analysis.valuation(d, growth, wacc)
-    fair = fv.combine(v.price, d.fin, d.prices, settings()["valuation"]["par_value"],
-                      dcf=v.value_per_share)
+    fair = analysis.general_fair_value(d, v)
     table = val.sensitivity(v, a)
     return {
         "symbol": d.symbol, "price": v.price, "shares": v.shares, "pe": v.pe, "pb": v.pb,
@@ -272,7 +270,9 @@ def get_risk(symbol: str, sessions: int | None = None) -> dict:
 @mcp.tool()
 @_guard
 def get_recommendations(symbols: list[str] | None = None) -> dict:
-    """Khuyến nghị MUA / THEO DÕI / TRÁNH theo quy tắc (điểm FA, TA, định giá, rủi ro) kèm lý do.
+    """Khuyến nghị hai trục kèm lý do: xếp hạng MUA / KHẢ QUAN / NẮM GIỮ / KÉM KHẢ QUAN / BÁN theo lợi
+    nhuận kỳ vọng (upside so với giá trị hợp lý + cổ tức, có rào chắn chất lượng và thị trường
+    chung), và thời điểm mua (kỹ thuật + vùng mua).
     Bỏ trống symbols = danh sách theo dõi."""
     out, errors, recorded = [], [], []
     for sym in symbols or settings()["watchlist"]["symbols"]:
@@ -281,7 +281,8 @@ def get_recommendations(symbols: list[str] | None = None) -> dict:
         except (analysis.DataMissing, ValueError) as e:
             errors.append(str(e))
             continue
-        out.append({"symbol": rec.symbol, "action": rec.action, "score": rec.score,
+        out.append({"symbol": rec.symbol, "action": rec.action, "timing": rec.timing,
+                    "expected_return": rec.expected_return, "score": rec.score,
                     "reasons": rec.reasons, "inputs": rec.inputs,
                     "buy_zone": plan.zone if plan is not None else None})
         recorded.append((rec, plan))
@@ -317,7 +318,7 @@ def run_backtest(symbol: str, entry_score: float | None = None,
 def review_signals(horizons: list[int] | None = None) -> dict:
     """Chấm lại các khuyến nghị đã lưu (mỗi lần recommend/analyze tự lưu) sau N phiên (mặc định 5,
     20, 60): lãi/lỗ bình quân, vượt trội so với VNINDEX, tỷ lệ thắng, tỷ lệ chạm mục tiêu trước cắt
-    lỗ, tỷ lệ khớp vùng mua — theo từng loại MUA/THEO DÕI/TRÁNH. MUA tốt khi vượt trội dương."""
+    lỗ, tỷ lệ khớp vùng mua — theo từng xếp hạng. MUA/KHẢ QUAN tốt khi vượt trội dương."""
     ev, summary, n = analysis.review(horizons)
     return {"recorded_signals": n, "summary": summary, "evaluated": ev.tail(200),
             "note": "Dưới ~30 mẫu mỗi nhóm chỉ để tham khảo."}

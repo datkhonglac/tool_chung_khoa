@@ -28,7 +28,8 @@ Altman Z (dùng tổng tài sản TA cuối kỳ):
       > 2,99 an toàn · 1,81–2,99 vùng xám · < 1,81 nguy cơ.
 
 Điểm FA (0–100): mỗi chỉ tiêu được quy về 0–100 tuyến tính giữa mức "xấu" và mức "tốt" trong
-mục [fa_score] của config/settings.toml, trung bình trong từng nhóm, rồi bình quân gia quyền
+mục [fa_score] của config/settings.toml (định giá chấm TƯƠNG ĐỐI: P/E, P/B hiện tại chia trung vị
+lịch sử của chính mã — P/E 15 là rẻ với FPT nhưng đắt với HPG, nên không dùng ngưỡng tuyệt đối), trung bình trong từng nhóm, rồi bình quân gia quyền
 theo trọng số nhóm. Chỉ tiêu thiếu số bị bỏ qua và trọng số được chia lại cho phần còn lại.
 """
 
@@ -174,7 +175,7 @@ GROUPS = {
     "tang_truong": ["ni_cagr"],
     "suc_khoe": ["z_em", "debt_to_equity"],
     "chat_luong": ["f_score", "cfo_to_ni"],
-    "dinh_gia": ["pe", "pb", "dcf_upside"],
+    "dinh_gia": ["pe_rel", "pb_rel", "dcf_upside"],
 }
 
 
@@ -192,7 +193,8 @@ def _div_sum(a: pd.Series, b: pd.Series) -> float:
 
 
 def fa_score(fin: pd.DataFrame, cfg: dict, pe: float = np.nan, pb: float = np.nan,
-             dcf_upside: float = np.nan, roe: float | None = None) -> FAScore:
+             dcf_upside: float = np.nan, roe: float | None = None,
+             pe_hist: float = np.nan, pb_hist: float = np.nan) -> FAScore:
     """Điểm FA năm BCTC gần nhất. cfg = mục [fa_score] trong settings (trọng số + ngưỡng).
     roe: ROE hiện tại (TTM, fa/ttm.py) thay cho ROE năm gần nhất nếu có."""
     df = fin.sort_values("year").reset_index(drop=True)
@@ -207,8 +209,9 @@ def fa_score(fin: pd.DataFrame, cfg: dict, pe: float = np.nan, pb: float = np.na
         "debt_to_equity": ratios["debt_to_equity"].iloc[-1],
         "f_score": f["f_score"].iloc[-1],
         "cfo_to_ni": _div_sum(df["cfo"].tail(3), df["net_income"].tail(3)),
-        "pe": pe if pe is None or pe > 0 else np.nan,   # P/E âm (lỗ) không chấm theo thang này
-        "pb": pb if pb is None or pb > 0 else np.nan,
+        # P/E âm (lỗ) không chấm; thiếu mốc lịch sử thì bỏ chỉ tiêu (chia lại trọng số)
+        "pe_rel": pe / pe_hist if pe > 0 and pe_hist > 0 else np.nan,
+        "pb_rel": pb / pb_hist if pb > 0 and pb_hist > 0 else np.nan,
         "dcf_upside": dcf_upside,
     }
     thresholds = cfg["thresholds"]
@@ -233,12 +236,13 @@ FIN_GROUPS = {
     "sinh_loi": ["roe"],
     "tang_truong": ["ni_cagr"],
     "an_toan": ["equity_to_assets"],
-    "dinh_gia": ["pb", "fair_upside"],
+    "dinh_gia": ["pb_rel", "fair_upside"],
 }
 
 
 def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan,
-                    fair_upside: float = np.nan, roe: float | None = None) -> FAScore:
+                    fair_upside: float = np.nan, roe: float | None = None,
+                    pb_hist: float = np.nan) -> FAScore:
     """Điểm FA 0–100 cho định chế tài chính. cfg = mục [fa_score.financials] trong settings."""
     df = fin.sort_values("year").reset_index(drop=True)
     ratios = compute_ratios(df)
@@ -249,7 +253,7 @@ def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan
         "ni_cagr": cagr(df["net_income_parent"].iloc[0], df["net_income_parent"].iloc[-1], span),
         "equity_to_assets": (last["equity"] / last["total_assets"]
                              if last["total_assets"] > 0 else np.nan),
-        "pb": pb if pb > 0 else np.nan,
+        "pb_rel": pb / pb_hist if pb > 0 and pb_hist > 0 else np.nan,
         "fair_upside": fair_upside,
     }
     thresholds = dict(cfg["thresholds"])

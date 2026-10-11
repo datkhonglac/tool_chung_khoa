@@ -30,6 +30,13 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   dùng thẳng `band_hose`. Ngân hàng/CK/bảo hiểm (`model` ≠ general): `analysis.fa/valuation` báo
   ValueError, khuyến nghị chỉ dùng TA + P/E, P/B. MCP: `analyze_symbol`, `update_symbol` (chuyển
   stdout sang stderr khi tải). Dashboard: ô "Mã bất kỳ" ở thanh bên.
+- Khuyến nghị HAI TRỤC (`recommend/engine.py`, `[recommend]`): xếp hạng MUA/KHẢ QUAN/NẮM GIỮ/KÉM KHẢ
+  QUAN/BÁN theo lợi nhuận kỳ vọng = upside giá trị hợp lý + cổ tức 12 tháng (ngưỡng 15/5/−5/−15%);
+  rào chắn: VNINDEX giảm (`ta/regime.py`) nâng ngưỡng 5% và giảm rủi ro/lệnh 50%, FA < 50 hạ một bậc,
+  Altman Z'' < 1,1 tối đa NẮM GIỮ; thiếu giá trị hợp lý = KHÔNG XẾP HẠNG. Trục THỜI ĐIỂM theo TA +
+  vùng mua. Điểm FA/TA chỉ để sắp xếp; Quant chỉ tham khảo. Định giá trong điểm FA là TƯƠNG ĐỐI
+  (P/E, P/B ÷ trung vị lịch sử của mã: `pe_rel`, `pb_rel`). Khối lượng chặn bởi trần 15% vốn/mã
+  và 10% GTGD bình quân 20 phiên (`[plan]`).
 - `analyze` mặc định in THẺ BÁO CÁO (`report/card.py`, `--detail` để in thêm chi tiết): mọi số lấy
   từ `analysis.assess()` (tính một lần: FA, giá trị hợp lý kèm P10/P90 kịch bản, TA, vùng mua, rủi
   ro, điểm Quant, khuyến nghị). Điểm tổng = FA 50% + TA 30% + Quant 20% (`[recommend]`,

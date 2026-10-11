@@ -83,6 +83,13 @@ def historical_multiples(fin: pd.DataFrame, prices: pd.DataFrame,
     return pd.DataFrame(rows)
 
 
+def history_targets(fin: pd.DataFrame, prices: pd.DataFrame,
+                    par_value: float = 10_000) -> tuple[float, float]:
+    """(P/E, P/B) trung vị lịch sử của chính mã — mốc để chấm "rẻ hay đắt so với chính nó"."""
+    hist = historical_multiples(fin, prices, par_value)
+    return _median_positive(hist["pe"]), _median_positive(hist["pb"])
+
+
 def _median_positive(s: pd.Series) -> float:
     s = s[(s > 0) & s.notna()]
     return float(s.median()) if len(s) else float("nan")

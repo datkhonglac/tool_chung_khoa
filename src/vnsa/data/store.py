@@ -56,7 +56,7 @@ SCHEMA += """
 CREATE TABLE IF NOT EXISTS signals (
     as_of       DATE    NOT NULL,   -- phiên giá dùng để khuyến nghị
     symbol      VARCHAR NOT NULL,
-    action      VARCHAR,            -- MUA | THEO DÕI | TRÁNH
+    action      VARCHAR,            -- MUA | KHẢ QUAN | NẮM GIỮ | KÉM KHẢ QUAN | BÁN (bản cũ: THEO DÕI, TRÁNH)
     score       DOUBLE,
     fa_score    DOUBLE,
     ta_score    DOUBLE,

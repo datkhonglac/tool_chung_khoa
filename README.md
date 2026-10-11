@@ -38,6 +38,13 @@ DỰ BÁO 20 PHIÊN  Dải giá P10–P50–P90 · Xác suất tăng · VaR 95% 
 KẾ HOẠCH      Vùng mua · Cắt lỗ · Chốt lời · Tỷ trọng gợi ý % NAV
 ```
 
+**Khuyến nghị hai trục** (như các công ty chứng khoán): **xếp hạng** theo lợi nhuận kỳ vọng 12
+tháng = upside so với giá trị hợp lý + tỷ suất cổ tức (MUA ≥ 15% · KHẢ QUAN ≥ 5% · NẮM GIỮ ≥ −5% ·
+KÉM KHẢ QUAN ≥ −15% · BÁN), có rào chắn: VNINDEX xu hướng giảm thì cần thêm 5% và giảm khối lượng
+một nửa, FA yếu hạ một bậc, nguy cơ tài chính tối đa NẮM GIỮ. **Thời điểm** theo kỹ thuật và vùng
+mua ("Vào được", "Mua dần", "Chờ xu hướng", "Chờ giá"). Khối lượng không quá 15% vốn mỗi mã và 10%
+GTGD bình quân 20 phiên. Điểm FA chấm P/E, P/B so với lịch sử của chính mã (không dùng ngưỡng chung).
+
 Độ tin cậy = số điều kiện đạt trong 6 (có BCTC, ≥ 2 phương pháp định giá, kịch bản định giá hẹp,
 giá trị hợp lý không lệch quá ±60% so với giá, FA và TA cùng chiều, đủ ~2 năm giá): ≥ 5 Cao,
 ≥ 3 Trung bình. Điểm Quant = xác suất tăng (Monte Carlo), biến động năm, lãi/lỗ mục tiêu 1.

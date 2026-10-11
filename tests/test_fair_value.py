@@ -102,10 +102,11 @@ def test_financial_fair_value_balances_roe_models_and_history():
 
 def test_financial_score_uses_bank_thresholds():
     cfg = {"weights": {"sinh_loi": 35, "tang_truong": 20, "an_toan": 15, "dinh_gia": 30},
-           "thresholds": {"roe": [0.08, 0.20], "ni_cagr": [0.0, 0.20], "pb": [3.0, 0.8],
+           "thresholds": {"roe": [0.08, 0.20], "ni_cagr": [0.0, 0.20], "pb_rel": [1.3, 0.7],
                           "fair_upside": [-0.2, 0.3]},
            "equity_to_assets": {"bank": [0.05, 0.11], "securities": [0.25, 0.60]}}
-    s = financial_score(_bank(0.20), cfg, "bank", pb=0.8, fair_upside=0.3)
+    s = financial_score(_bank(0.20), cfg, "bank", pb=0.8, fair_upside=0.3, pb_hist=1.2)
+    assert s.items["pb_rel"][0] == pytest.approx(0.8 / 1.2)          # rẻ hơn lịch sử 33%
     assert s.items["equity_to_assets"][1] == pytest.approx((0.10 - 0.05) / 0.06 * 100)
     assert s.groups["sinh_loi"] == 100 and s.groups["dinh_gia"] == 100
     sec = financial_score(_bank(0.20), cfg, "securities", pb=0.8, fair_upside=0.3)
@@ -185,7 +186,7 @@ def test_recommend_records_signals_and_review_cli(warehouse, capsys, monkeypatch
 
     assert cli.main(["recommend", "DEMO_A", "DEMO_C"]) == 0
     out = capsys.readouterr().out
-    assert "Vùng mua" in out and "Hợp lý" in out
+    assert "Vùng mua" in out and "LN kỳ vọng" in out and "Thời điểm" in out
     with Store(warehouse) as store:
         sig = store.signals()
         px = store.prices("DEMO_A")

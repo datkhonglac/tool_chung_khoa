@@ -38,7 +38,8 @@ def recommendations(symbols: tuple[str, ...], _stamp: float):
         zone = ("—" if z is None else f"≤ {z.high:,.0f} (chờ)" if z.status == "CHỜ GIÁ"
                 else f"{z.low:,.0f} – {z.high:,.0f}")
         rows.append({"Mã": rec.symbol, "Giá": x.price, "Vùng mua": zone, "Điểm FA": x.fa_score,
-                     "Điểm TA": x.ta_score, "Điểm tổng": rec.score, "Hợp lý": x.fair_upside,
+                     "Điểm TA": x.ta_score, "LN kỳ vọng": rec.expected_return,
+                     "Thời điểm": rec.timing,
                      "P/E": x.pe, "P/B": x.pb, "Biến động/năm": x.vol_annual,
                      "Khuyến nghị": rec.action, "Lý do": "; ".join(rec.reasons)})
     return pd.DataFrame(rows), errors
@@ -124,9 +125,8 @@ with tab_all:
                 "Giá": st.column_config.NumberColumn(format="localized"),
                 "Điểm FA": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f"),
                 "Điểm TA": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f"),
-                "Điểm tổng": st.column_config.NumberColumn(format="%.0f"),
-                "Hợp lý": st.column_config.NumberColumn(format="percent",
-                                                        help="Giá trị hợp lý so với giá hiện tại"),
+                "LN kỳ vọng": st.column_config.NumberColumn(
+                    format="percent", help="Upside so với giá trị hợp lý + tỷ suất cổ tức 12 tháng"),
                 "P/E": st.column_config.NumberColumn(format="%.1f"),
                 "P/B": st.column_config.NumberColumn(format="%.2f"),
                 "Biến động/năm": st.column_config.NumberColumn(format="percent"),
@@ -287,11 +287,8 @@ with tab_val:
             c[4].metric("P/B", fmt_num(v.pb, 2))
             for n in v.notes:
                 st.warning(n)
-            from vnsa.fa import fair_value as fvm
-
-            fair = fvm.combine(v.price, data.fin, data.prices, settings()["valuation"]["par_value"],
-                               dcf=v.value_per_share)
-            st.subheader("Giá trị hợp lý (trung vị DCF, P/E lịch sử, P/B lịch sử)")
+            fair = analysis.general_fair_value(data, v)
+            st.subheader("Giá trị hợp lý (bình quân có trọng số DCF, P/E lịch sử, P/B lịch sử)")
             c = st.columns(4)
             c[0].metric("Giá trị hợp lý", fmt_num(fair.value), fmt_pct(fair.upside))
             c[1].metric("DCF", fmt_num(fair.methods["dcf"]))

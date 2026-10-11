@@ -5,37 +5,51 @@ import pytest
 from vnsa.recommend.backtest import backtest
 from vnsa.recommend.engine import Inputs, recommend
 
-CFG = {"weight_fa": 0.6, "weight_ta": 0.4, "buy_above": 65, "min_ta_buy": 45,
-       "min_upside_buy": -0.10, "sell_below": 40, "min_reward_risk": 2.0, "high_vol": 0.40}
+CFG = {"rating_thresholds": [0.15, 0.05, -0.05, -0.15], "bear_market_extra": 0.05,
+       "min_fa_quality": 50, "timing_wait": 40, "timing_go": 55, "weight_fa": 0.6,
+       "weight_ta": 0.4, "min_reward_risk": 2.0, "high_vol": 0.40}
 NAN = float("nan")
 
 
 def _inputs(**kw):
     base = {"symbol": "X", "price": 50_000, "date": pd.Timestamp("2026-10-09"), "fa_score": 80,
             "ta_score": 70, "z_em": 3.0, "dcf_upside": 0.2, "pe": 10, "pb": 1.5,
-            "vol_annual": 0.3, "prob_up": 0.55, "first_target_rr": 2.5}
+            "vol_annual": 0.3, "prob_up": 0.55, "first_target_rr": 2.5,
+            "fair_value": 60_000, "fair_upside": 0.20, "dividend_yield": 0.0,
+            "zone_status": "MUA TRONG VÙNG"}
     return Inputs(**{**base, **kw})
 
 
-def test_buy_when_fa_and_ta_agree():
-    r = recommend(_inputs(), CFG)
-    assert r.action == "MUA"
-    assert r.score == pytest.approx(0.6 * 80 + 0.4 * 70)
+@pytest.mark.parametrize("upside, expected", [(0.20, "MUA"), (0.10, "KHẢ QUAN"), (0.0, "NẮM GIỮ"),
+                                              (-0.10, "KÉM KHẢ QUAN"), (-0.30, "BÁN")])
+def test_rating_by_expected_return(upside, expected):
+    assert recommend(_inputs(fair_upside=upside), CFG).action == expected
 
 
-def test_strong_fa_but_weak_trend_is_watch_with_reason():
-    r = recommend(_inputs(fa_score=95, ta_score=30), CFG)     # tổng 69 nhưng TA < 45
-    assert r.action == "THEO DÕI"
-    assert any("xu hướng" in s for s in r.reasons)
-    r = recommend(_inputs(dcf_upside=-0.3), CFG)              # giá cao hơn DCF 30%
-    assert r.action == "THEO DÕI"
+def test_dividend_adds_to_expected_return_and_bear_market_raises_bar():
+    r = recommend(_inputs(fair_upside=0.12, dividend_yield=0.04), CFG)
+    assert r.action == "MUA" and r.expected_return == pytest.approx(0.16)
+    bear = recommend(_inputs(fair_upside=0.12, dividend_yield=0.04, regime="giảm"), CFG)
+    assert bear.action == "KHẢ QUAN"                            # cần ≥ 20% khi thị trường giảm
+    assert any("thị trường chung đang giảm" in s for s in bear.reasons)
 
 
-def test_avoid_on_low_score_or_distress_and_ta_only_fallback():
-    assert recommend(_inputs(fa_score=30, ta_score=30), CFG).action == "TRÁNH"
-    assert recommend(_inputs(z_em=0.9), CFG).action == "TRÁNH"
-    r = recommend(_inputs(fa_score=NAN, ta_score=70), CFG)
-    assert r.score == 70 and r.action == "MUA"
+def test_quality_gates_and_score_is_only_for_sorting():
+    weak = recommend(_inputs(fa_score=40), CFG)
+    assert weak.action == "KHẢ QUAN" and any("hạ một bậc" in s for s in weak.reasons)
+    trap = recommend(_inputs(fair_upside=0.5, z_em=0.9), CFG)
+    assert trap.action == "NẮM GIỮ"                             # rẻ nhưng nguy cơ tài chính
+    r = recommend(_inputs(fa_score=80, ta_score=10), CFG)       # FA tốt, TA xấu: vẫn MUA ...
+    assert r.action == "MUA" and r.timing == "Chờ xu hướng cải thiện"   # ... nhưng chờ thời điểm
+    assert r.score == pytest.approx(0.6 * 80 + 0.4 * 10)
+
+
+def test_timing_axis_and_not_rated_without_fair_value():
+    assert recommend(_inputs(ta_score=70), CFG).timing == "Vào được trong vùng mua"
+    assert recommend(_inputs(ta_score=50), CFG).timing == "Mua dần trong vùng mua"
+    assert recommend(_inputs(zone_status="CHỜ GIÁ"), CFG).timing == "Chờ giá về vùng mua"
+    r = recommend(_inputs(fair_upside=NAN, fa_score=NAN), CFG)
+    assert r.action == "KHÔNG XẾP HẠNG" and r.score == 70
     r = recommend(_inputs(first_target_rr=1.2, vol_annual=0.5), CFG)
     assert any("1.2R" in s for s in r.reasons) and any("biến động cao" in s for s in r.reasons)
 

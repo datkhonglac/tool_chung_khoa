@@ -243,7 +243,7 @@ def test_cli_analyze(warehouse, monkeypatch, capsys):
     assert cli.main(["analyze", "demo_a"]) == 0
     out = capsys.readouterr().out
     assert calls == ["DEMO_A"]
-    for title in ("Khuyến nghị:", "Độ tin cậy:", "ĐỊNH GIÁ", "ĐIỂM SỐ", "CƠ BẢN", "KỸ THUẬT",
+    for title in ("Xếp hạng:", "Thời điểm:", "Độ tin cậy:", "ĐỊNH GIÁ", "ĐIỂM SỐ", "CƠ BẢN", "KỸ THUẬT",
                   "DỰ BÁO 20 PHIÊN", "KẾ HOẠCH GIAO DỊCH"):
         assert title in out
     assert "chưa rõ sàn" in out and "── RỦI RO" not in out          # chi tiết chỉ khi --detail
