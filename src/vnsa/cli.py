@@ -348,7 +348,8 @@ def _fin_value(d) -> int:
     print(f"P/B hợp lý theo ROE = (ROE − g) / (k_e − g) = {_num(ri.justified_pb, 2)} "
           f"→ {_num(ri.justified_pb * ri.book0)} đ/cp")
     print(f"P/B lịch sử (trung vị) {_num(fair.pb_target, 2)} → {_num(fair.pb_target * ri.book0)} đ/cp")
-    print(f"\n⇒ Giá trị hợp lý (trung vị): {_num(fair.value)} đ/cp, {_pct(fair.upside)} so với giá")
+    print(f"\n⇒ Giá trị hợp lý = ½ × trung bình (RI, P/B theo ROE) + ½ × P/B lịch sử: "
+          f"{_num(fair.value)} đ/cp, {_pct(fair.upside)} so với giá")
     print("  Phương pháp dùng: " + ", ".join(f"{METHOD_NAMES[k]} {v:,.0f}" for k, v in fair.used.items()))
     for n in fair.notes:
         print(f"  ! {n}")

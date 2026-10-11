@@ -240,7 +240,8 @@ with tab_val:
         else:
             ri = fair.ri
             c = st.columns(4)
-            c[0].metric("Giá trị hợp lý (trung vị)", fmt_num(fair.value), fmt_pct(fair.upside))
+            c[0].metric("Giá trị hợp lý (½ mô hình ROE + ½ P/B lịch sử)", fmt_num(fair.value),
+                        fmt_pct(fair.upside))
             c[1].metric("Thu nhập thặng dư", fmt_num(ri.value_per_share))
             c[2].metric("P/B hợp lý theo ROE", fmt_num(ri.justified_pb, 2))
             c[3].metric("Chi phí vốn chủ k_e", fmt_pct(ri.cost_of_equity))

@@ -47,6 +47,9 @@ def test_residual_income_fades_roe_and_rejects_bad_inputs():
     cfg = {"forecast_years": 5, "roe_persistence": 0.5, "retention": 0.8}
     ri = fv.residual_income(_bank(0.20), ke=0.12, g=0.03, cfg=cfg)
     assert ri.roe_terminal == pytest.approx(0.16)                  # 12% + 50% × (20% − 12%)
+    rising = _bank().assign(net_income_parent=[0.08e13, 0.10e13, 0.12e13, 0.14e13])
+    r2 = fv.residual_income(rising, ke=0.12, g=0.03, cfg=cfg)
+    assert r2.roe0 == pytest.approx((0.10 * 1 + 0.12 * 2 + 0.14 * 3) / 6)   # năm gần nặng hơn
     assert ri.roe_path[0] == pytest.approx(0.20) and ri.roe_path[-1] == pytest.approx(0.16)
     assert ri.value_per_share > ri.book0                            # ROE > ke -> P/B > 1
     low = fv.residual_income(_bank(0.08), ke=0.12, g=0.03, cfg=cfg)
@@ -73,6 +76,15 @@ def test_combine_takes_median_of_positive_methods():
     no_dcf = fv.combine(40_000, fin, px, dcf=-5.0)                  # DCF âm bị bỏ
     assert set(no_dcf.used) == {"pe_hist", "pb_hist"}
     assert no_dcf.upside == pytest.approx(no_dcf.value / 40_000 - 1)
+
+
+def test_financial_fair_value_balances_roe_models_and_history():
+    cfg = {"forecast_years": 5, "roe_persistence": 0.5, "retention": 0.8}
+    ri = fv.residual_income(_bank(0.15), ke=0.12, g=0.03, cfg=cfg)
+    fair = fv.combine(15_000, _bank(0.15), _prices(price=15_000), ri=ri)
+    m = fair.methods
+    assert m["pb_hist"] == pytest.approx(1.5 * 10_000)              # P/B lịch sử 1,5 × B0
+    assert fair.value == pytest.approx(((m["ri"] + m["pb_roe"]) / 2 + m["pb_hist"]) / 2)
 
 
 def test_financial_score_uses_bank_thresholds():

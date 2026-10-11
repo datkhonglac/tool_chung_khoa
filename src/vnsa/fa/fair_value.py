@@ -12,11 +12,14 @@ Doanh nghiệp thường — giá trị hợp lý = TRUNG VỊ các phương ph�
   EPS và BVPS các năm đều chia cho số cổ phiếu HIỆN TẠI, vì giá đã điều chỉnh về cơ sở cổ phiếu
   hiện tại (sau cổ tức cổ phiếu/thưởng) — chia số cổ phiếu cũ sẽ làm P/E quá khứ bị méo.
 
-Ngân hàng / chứng khoán / bảo hiểm — giá trị hợp lý = trung vị của:
+Ngân hàng / chứng khoán / bảo hiểm — giá trị hợp lý = ½ × (giá trị theo ROE = trung bình của 1 và 2)
++ ½ × (3). Hai phương pháp 1–2 cùng dựa vào ROE và k_e nên gộp thành một "phiếu", cân bằng với
+mức P/B thị trường vẫn trả cho mã (chạy thật: SSI ROE tăng nhanh, mô hình ROE thuần cho −29%):
   1. Thu nhập thặng dư (Residual Income, mô hình chuẩn cho định chế tài chính):
        V0 = B0 + Σ_{t=1..N} (ROE_t − k_e) × B_{t−1} / (1 + k_e)^t
               + (ROE_T − k_e) × B_N / ((k_e − g) × (1 + k_e)^N)
-     B0 = vốn chủ công ty mẹ / số cổ phiếu; ROE_0 = ROE bình quân `roe_years` năm gần nhất;
+     B0 = vốn chủ công ty mẹ / số cổ phiếu; ROE_0 = ROE bình quân có trọng số `roe_years` năm gần
+     nhất, năm gần hơn nặng hơn (3 năm: 1:2:3) để bắt xu hướng ROE đang tăng/giảm;
      ROE_t giảm tuyến tính từ ROE_0 về ROE_T = k_e + `roe_persistence` × (ROE_0 − k_e)
      (lợi thế cạnh tranh mòn dần, chỉ giữ một phần chênh lệch so với chi phí vốn);
      B_t = B_{t−1} × (1 + ROE_t × `retention`) (ngân hàng VN giữ lại phần lớn lợi nhuận).
@@ -98,7 +101,8 @@ def residual_income(fin: pd.DataFrame, ke: float, g: float, cfg: dict,
     roe_hist = compute_ratios(df)["roe"].dropna().tail(int(cfg.get("roe_years", 3)))
     if b0 <= 0 or roe_hist.empty:
         raise ValueError("thiếu vốn chủ hoặc ROE, không định giá thu nhập thặng dư được")
-    roe0 = float(roe_hist.mean())
+    weights = np.arange(1, len(roe_hist) + 1, dtype=float)       # năm gần nhất nặng nhất
+    roe0 = float(np.average(roe_hist, weights=weights))
     notes = []
     if roe0 <= g:
         notes.append(f"ROE bình quân {roe0:.1%} ≤ tăng trưởng dài hạn: P/B hợp lý theo ROE không "
@@ -155,6 +159,15 @@ def combine(price: float, fin: pd.DataFrame, prices: pd.DataFrame, par_value: fl
         methods = {"ri": ri.value_per_share, "pb_roe": ri.justified_pb * ri.book0,
                    "pb_hist": pb_t * ri.book0}
         notes += ri.notes
+        roe_based = [v for v in (methods["ri"], methods["pb_roe"]) if not pd.isna(v) and v > 0]
+        parts = [float(np.mean(roe_based))] if roe_based else []
+        if not pd.isna(methods["pb_hist"]) and methods["pb_hist"] > 0:
+            parts.append(methods["pb_hist"])
+        value = float(np.mean(parts)) if parts else float("nan")
+        if not parts:
+            notes.append("không phương pháp nào ra giá trị dương")
+        return FairValue(price=price, methods=methods, value=value, pe_target=pe_t,
+                         pb_target=pb_t, ri=ri, notes=notes)
     if hist["pe"].notna().sum() + hist["pb"].notna().sum() < 4:
         notes.append("ít năm có đủ giá để tính bội số lịch sử: P/E, P/B lịch sử kém tin cậy")
     used = [v for v in methods.values() if not pd.isna(v) and v > 0]
