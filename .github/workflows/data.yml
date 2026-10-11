@@ -30,12 +30,20 @@ jobs:
     needs: test
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
+      - name: Thử kết nối CafeF
+        continue-on-error: true
+        run: |
+          curl -sS -m 20 -o /dev/null -w "HTTP %{http_code}, %{time_total}s\n" \
+            -A "Mozilla/5.0" "https://cafef.vn/du-lieu/Ajax/PageNew/DataHistory/PriceHistory.ashx?Symbol=FPT&StartDate=&EndDate=&PageIndex=1&PageSize=2"
       - run: python -m vnsa.cli fetch ${{ inputs.symbols }} --years ${{ inputs.years }}
       - run: python -m vnsa.cli list
       - uses: actions/upload-artifact@v4

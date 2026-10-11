@@ -43,7 +43,7 @@ WINDOW_DAYS = 365   # CafeF cắt mỗi lần gọi còn khoảng 1 năm tính l
 PAGE_SIZE = 300     # > số phiên trong 1 năm, thường chỉ cần 1 trang mỗi đoạn
 
 
-def _http_get_json(url: str, timeout: float = 30) -> dict:
+def _http_get_json(url: str, timeout: float = 20) -> dict:
     req = urllib.request.Request(url, headers=HEADERS)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8-sig"))
@@ -56,7 +56,7 @@ class CafeFProvider(DataProvider):
         self,
         pause: float = 1.0,
         get_json: Callable[[str], dict] = _http_get_json,
-        retries: int = 3,
+        retries: int = 2,
     ):
         self.pause = pause          # giây nghỉ giữa các lần gọi, để không bị chặn
         self.get_json = get_json    # thay được trong test, không cần mạng
