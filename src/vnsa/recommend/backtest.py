@@ -76,7 +76,8 @@ class BacktestResult:
 def backtest(ind: pd.DataFrame, score: pd.Series, cfg: dict) -> BacktestResult:
     """ind: bảng giá + chỉ báo (cần open, low, close, atr); score: điểm TA từng phiên."""
     df = ind.assign(score=score.values).reset_index(drop=True)
-    start = df["score"].first_valid_index()
+    start = (df["score"].notna() & df["atr"].notna()).idxmax() if df["score"].notna().any() \
+        else None
     if start is None or len(df) - start < 30:
         raise ValueError("chưa đủ dữ liệu để backtest (cần điểm TA cho ít nhất 30 phiên)")
     df = df.iloc[start:].reset_index(drop=True)

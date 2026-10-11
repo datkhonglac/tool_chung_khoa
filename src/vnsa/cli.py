@@ -492,7 +492,7 @@ def cmd_backtest(args) -> int:
         cfg["exit_score"] = args.exit
     ind = analysis.indicators(loaded[1])
     try:
-        res = backtest(ind, ta_score_series(ind, settings()["ta_score"]["weights"]), cfg)
+        res = backtest(ind, ta_score_series(ind, settings()["ta_score"]["weights"], require_all=True), cfg)
     except ValueError as e:
         print(f"  ✗ {sym}: {e}")
         return 1

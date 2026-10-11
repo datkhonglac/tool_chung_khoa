@@ -19,6 +19,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5", "ipykernel>=6"]
+mcp = ["mcp>=1.2"]                 # MCP server cho Claude Desktop
+dashboard = ["streamlit>=1.35"]    # giao diện web
+
+[project.scripts]
+vnsa = "vnsa.cli:main"
+vnsa-mcp = "vnsa.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

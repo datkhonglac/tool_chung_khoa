@@ -84,13 +84,19 @@ def group_scores(ind: pd.DataFrame) -> pd.DataFrame:
                          "dong_tien": flow})
 
 
-def ta_score_series(ind: pd.DataFrame, weights: dict[str, float]) -> pd.Series:
-    """Điểm TA tổng cho từng phiên; nhóm thiếu số thì chia lại trọng số cho nhóm còn lại."""
+def ta_score_series(ind: pd.DataFrame, weights: dict[str, float],
+                    require_all: bool = False) -> pd.Series:
+    """Điểm TA tổng cho từng phiên; nhóm thiếu số thì chia lại trọng số cho nhóm còn lại.
+    require_all=True: chỉ chấm khi đủ cả 4 nhóm (dùng cho backtest, tránh giai đoạn đầu chưa có
+    SMA200)."""
     g = group_scores(ind)
     w = pd.Series({k: float(weights[k]) for k in g.columns})
     num = (g * w).sum(axis=1, min_count=1)
     den = g.notna().mul(w).sum(axis=1)
-    return (num / den.where(den > 0)).rename("ta_score")
+    total = num / den.where(den > 0)
+    if require_all:
+        total = total.where(g.notna().all(axis=1))
+    return total.rename("ta_score")
 
 
 def ta_score(ind: pd.DataFrame, weights: dict[str, float]) -> TAScore:

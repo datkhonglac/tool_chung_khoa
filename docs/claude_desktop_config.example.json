@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vn-stock-analyzer": {
+      "command": "C:\\Users\\admin\\Documents\\tool chứng khoan\\vn-stock-analyzer\\vn-stock-analyzer\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "vnsa.mcp_server"]
+    }
+  }
+}
