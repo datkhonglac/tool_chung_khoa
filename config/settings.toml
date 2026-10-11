@@ -2,7 +2,8 @@
 
 [data]
 raw_prices_dir = "data/raw/prices"     # đặt file CSV giá thật ở đây, mỗi mã một file: FPT.csv
-raw_excel_dir = "data/raw/excel"       # file Excel tải từ web: data/raw/excel/FPT/*.xlsx
+raw_excel_dir = "data/raw/excel"
+raw_bctc_dir = "data/raw/bctc"         # BCTC năm đã chuẩn hoá, mỗi mã một file (để đối chiếu)       # file Excel tải từ web: data/raw/excel/FPT/*.xlsx
 sample_prices_dir = "data/sample/prices"
 warehouse = "data/warehouse.duckdb"
 charts_dir = "data/charts"

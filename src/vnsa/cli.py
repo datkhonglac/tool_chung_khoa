@@ -1,6 +1,8 @@
 """Dòng lệnh của tool.
 
   python -m vnsa.cli fetch            # tải 5 năm giá của danh sách theo dõi từ CafeF rồi nạp
+  python -m vnsa.cli fetch-bctc       # tải BCTC năm (vnstock/VCI) của danh sách theo dõi vào kho
+  python -m vnsa.cli ratios FPT       # bộ chỉ số tài chính năm: ROE, ROA, biên LN, D/E, CFO/LNST, EPS
   python -m vnsa.cli import-excel FPT  # ghép data/raw/excel/FPT/*.xlsx -> data/raw/prices/FPT.csv rồi nạp
   python -m vnsa.cli load            # nạp mọi CSV trong data/raw/prices vào DuckDB
   python -m vnsa.cli load --sample   # nạp dữ liệu MẪU (giả lập) để chạy thử
@@ -119,6 +121,52 @@ def cmd_fetch(args) -> int:
     return cmd_load(args) or code
 
 
+def cmd_fetch_bctc(args) -> int:
+    import time
+
+    from vnsa.data.providers.vnstock_provider import VnstockProvider
+    from vnsa.data.store import Store
+
+    symbols = [s.upper() for s in args.symbols] or settings()["watchlist"]["symbols"]
+    out_dir = path("raw_bctc_dir")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prov = VnstockProvider()
+    code = 0
+    with Store(path("warehouse")) as store:
+        for i, sym in enumerate(symbols):
+            if i:
+                time.sleep(args.pause)   # bản miễn phí giới hạn số lượt gọi mỗi phút
+            try:
+                df = prov.fundamentals(sym)
+            except Exception as e:  # noqa: BLE001
+                print(f"  ✗ {sym}: {e}")
+                code = 1
+                continue
+            df.to_csv(out_dir / f"{sym}.csv", index=False)
+            store.write_fundamentals(df, source=prov.name)
+            years = df["year"].tolist()
+            print(f"  ✓ {sym}: BCTC năm {years[0]}–{years[-1]} ({len(years)} năm)"
+                  + (f", thiếu khoản mục: {', '.join(prov.missing)}" if prov.missing else ""))
+    return code
+
+
+def cmd_ratios(args) -> int:
+    import pandas as pd
+
+    from vnsa.data.store import Store
+    from vnsa.fa.ratios import compute_ratios, format_ratios
+
+    with Store(path("warehouse")) as store:
+        fin = store.fundamentals(args.symbol)
+    if fin.empty:
+        print(f"{args.symbol.upper()} chưa có BCTC trong kho. Chạy 'fetch-bctc {args.symbol}' trước.")
+        return 1
+    with pd.option_context("display.width", 200, "display.max_columns", 20):
+        print(f"{args.symbol.upper()} — chỉ số tài chính năm (nguồn: BCTC hợp nhất, VCI)")
+        print(format_ratios(compute_ratios(fin)).to_string())
+    return 0
+
+
 def cmd_check(args) -> int:
     from vnsa.data.store import Store
 
@@ -187,6 +235,15 @@ def main(argv: list[str] | None = None) -> int:
     pf.add_argument("--pause", type=float, default=0.3, help="Giây nghỉ giữa các lần gọi")
     pf.add_argument("--no-load", action="store_true", help="Chỉ tạo CSV, không nạp vào kho")
     pf.set_defaults(func=cmd_fetch)
+
+    pb = sub.add_parser("fetch-bctc", help="Tải BCTC năm qua vnstock (VCI) rồi nạp vào kho")
+    pb.add_argument("symbols", nargs="*", help="Bỏ trống = danh sách theo dõi trong settings.toml")
+    pb.add_argument("--pause", type=float, default=3.0, help="Giây nghỉ giữa các mã")
+    pb.set_defaults(func=cmd_fetch_bctc)
+
+    pr = sub.add_parser("ratios", help="Bộ chỉ số tài chính năm từ BCTC trong kho")
+    pr.add_argument("symbol")
+    pr.set_defaults(func=cmd_ratios)
 
     pc = sub.add_parser("check", help="Kiểm tra chất lượng dữ liệu")
     pc.add_argument("symbol")

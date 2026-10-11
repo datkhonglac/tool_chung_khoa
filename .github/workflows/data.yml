@@ -1,6 +1,6 @@
 name: Kiểm tra và tải dữ liệu
 
-# Chạy test và tải 5 năm giá từ CafeF trên máy chủ GitHub.
+# Chạy test, tải 5 năm giá (CafeF) và BCTC năm (vnstock/VCI) trên máy chủ GitHub.
 # Kết quả (CSV + kho DuckDB) nằm ở mục Artifacts của mỗi lần chạy.
 on:
   push:
@@ -14,6 +14,10 @@ on:
         description: "Số năm"
         required: false
         default: "5"
+      skip_prices:
+        description: "Bỏ qua bước tải giá (chỉ tải BCTC)"
+        type: boolean
+        default: false
 
 jobs:
   test:
@@ -39,20 +43,30 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
+      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - name: Thử kết nối CafeF
+        if: ${{ !inputs.skip_prices }}
         continue-on-error: true
         run: |
           curl -sS -m 20 -o /dev/null -w "HTTP %{http_code}, %{time_total}s\n" \
             -A "Mozilla/5.0" "https://cafef.vn/du-lieu/Ajax/PageNew/DataHistory/PriceHistory.ashx?Symbol=FPT&StartDate=&EndDate=&PageIndex=1&PageSize=2"
-      - run: python -m vnsa.cli fetch ${{ inputs.symbols }} --years ${{ inputs.years }}
-      - run: python -m vnsa.cli list
+      - if: ${{ !inputs.skip_prices }}
+        run: python -m vnsa.cli fetch ${{ inputs.symbols }} --years ${{ inputs.years }}
+      - if: ${{ !inputs.skip_prices }}
+        run: python -m vnsa.cli list
       - name: Kiểm tra chất lượng từng mã
+        if: ${{ !inputs.skip_prices }}
         run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli check $s; echo; done
+      - name: Tải BCTC năm (vnstock/VCI)
+        run: python -m vnsa.cli fetch-bctc ${{ inputs.symbols }}
+      - name: Chỉ số tài chính từng mã
+        run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli ratios $s; echo; done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: du-lieu-gia
           path: |
             data/raw/prices/*.csv
+            data/raw/bctc/*.csv
             data/warehouse.duckdb
           if-no-files-found: ignore

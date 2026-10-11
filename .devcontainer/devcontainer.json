@@ -11,5 +11,5 @@
       ]
     }
   },
-  "postCreateCommand": "pip install -e \".[dev]\" && python scripts/make_sample_data.py && python -m vnsa.cli load --sample"
+  "postCreateCommand": "pip install -e \".[dev]\" && pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai && python scripts/make_sample_data.py && python -m vnsa.cli load --sample"
 }
