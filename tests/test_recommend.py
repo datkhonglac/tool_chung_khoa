@@ -116,8 +116,9 @@ def test_backtests_compares_two_formulas(warehouse):
 
     d = analysis.load("DEMO_A", need_fin=False)
     res = analysis.backtests(d)
-    assert set(res) == {"TA thuần", "TA + VNINDEX + thanh khoản"}
-    assert len(res["TA thuần"].equity) == len(res["TA + VNINDEX + thanh khoản"].equity)
+    assert set(res) == {"Điểm TA (hiện tại)", "Điểm TA + VNINDEX"}
+    a, b = res.values()
+    assert len(a.equity) == len(b.equity) and a.equity.index[0] == b.equity.index[0]
 
 
 def test_timing_rule_modes():

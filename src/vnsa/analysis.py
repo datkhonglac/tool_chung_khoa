@@ -477,11 +477,13 @@ def backtest_config(symbol: str) -> dict:
 
 
 def backtests(d: Data, entry: float | None = None, exit_: float | None = None) -> dict:
-    """So sánh hai công thức trên cùng dữ liệu: {"TA thuần": kết quả, "TA + VNINDEX + thanh khoản":
-    kết quả}. Công thức mới dùng trạng thái VNINDEX từng phiên (ta/regime.regime_series) và chặn
-    giá trị lệnh ≤ max_adv_pct × GTGD 20 phiên với vốn mỗi mã = capital × max_position_pct.
-    ValueError nếu chưa đủ dữ liệu."""
-    from vnsa.recommend.backtest import backtest
+    """So sánh các quy tắc thời điểm trên cùng dữ liệu bằng máy mô phỏng chung
+    (recommend/strategies.simulate: khớp mở cửa phiên sau, không mua khi mở cửa giá trần, không
+    bán khi cả phiên nằm sàn, T+2, phí + thuế): "Điểm TA", "Điểm TA + VNINDEX" và quy tắc đang
+    dùng cho trục thời điểm (`[recommend] timing_rule`, nếu khác hai quy tắc trên). Trả về
+    {tên: BacktestResult}; mua & giữ nằm ở .benchmark_stats. ValueError nếu chưa đủ dữ liệu."""
+    from vnsa import market
+    from vnsa.recommend.strategies import NAMES, rule_set, simulate
     from vnsa.ta.regime import regime_series
     from vnsa.ta.score import ta_score_series
 
@@ -492,12 +494,22 @@ def backtests(d: Data, entry: float | None = None, exit_: float | None = None) -
         cfg["exit_score"] = exit_
     ind = indicators(d.prices)
     score = ta_score_series(ind, settings()["ta_score"]["weights"], require_all=True)
-    plan_cfg = settings()["plan"]
-    new_cfg = dict(cfg, capital=plan_cfg["capital"] * plan_cfg.get("max_position_pct", 1.0),
-                   max_adv_pct=plan_cfg.get("max_adv_pct", 0.1))
-    return {"TA thuần": backtest(ind, score, cfg),
-            "TA + VNINDEX + thanh khoản": backtest(ind, score, new_cfg,
-                                                   regime_series(d.index, settings().get("regime", {})))}
+    ok = (score.notna() & ind["atr"].notna()).to_numpy()
+    if not ok.any():
+        raise ValueError("chưa đủ dữ liệu để backtest (cần điểm TA cho ít nhất 30 phiên)")
+    start = pd.Timestamp(ind["date"].iloc[int(ok.argmax())])
+    rec = settings()["recommend"]
+    rules = rule_set(ind, score, regime_series(d.index, settings().get("regime", {})),
+                     rec.get("timing_atr_k", 3.0), cfg)
+    names = ["ta", "ta_vni"]
+    if rec.get("timing_rule", "ta") in rules and rec["timing_rule"] not in names:
+        names.append(rec["timing_rule"])
+    band = market.band(d.symbol)
+    try:
+        return {NAMES[n]: simulate(ind, rules[n], band, cfg["fee"], cfg["sell_tax"], start)
+                for n in names}
+    except ValueError as e:
+        raise ValueError("chưa đủ dữ liệu để backtest (cần điểm TA cho ít nhất 30 phiên)") from e
 
 
 @dataclass

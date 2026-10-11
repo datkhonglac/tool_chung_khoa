@@ -645,7 +645,7 @@ def cmd_recommend(args) -> int:
 
 
 def cmd_backtest(args) -> int:
-    """So sánh công thức cũ (chỉ điểm TA) và mới (TA + lọc VNINDEX + thanh khoản) với mua & giữ."""
+    """So sánh các quy tắc thời điểm (điểm TA, + VNINDEX, quy tắc đang dùng) với mua & giữ."""
     from vnsa import analysis
 
     sym = args.symbol.upper()
@@ -660,25 +660,27 @@ def cmd_backtest(args) -> int:
     cfg = analysis.backtest_config(sym)
     entry = cfg["entry_score"] if args.entry is None else args.entry
     exit_ = cfg["exit_score"] if args.exit is None else args.exit
-    old, new = results["TA thuần"], results["TA + VNINDEX + thanh khoản"]
-    first, last = old.equity.index[0], old.equity.index[-1]
-    print(f"{sym} — backtest {first:%d/%m/%Y} → {last:%d/%m/%Y} (mua khi điểm TA ≥ {entry:g}, bán "
-          f"khi < {exit_:g}, cắt lỗ {cfg['atr_stop']:g} ATR, T+2, phí {cfg['fee']:.2%}/chiều + "
-          f"thuế bán {cfg['sell_tax']:.1%})")
-    print(f"Công thức mới: VNINDEX xu hướng giảm thì cần điểm TA +{cfg.get('bear_entry_extra', 0):g} "
-          f"và chỉ dùng {cfg.get('bear_position', 1):.0%} vốn; lệnh ≤ "
-          f"{settings()['plan'].get('max_adv_pct', 0.1):.0%} GTGD bình quân 20 phiên")
-    cols = [("TA thuần", old.stats), ("TA+VNINDEX", new.stats), ("Mua & giữ", old.benchmark_stats)]
-    print(f"{'':<22}" + "".join(f"{c:>13}" for c, _ in cols))
+    first = next(iter(results.values()))
+    d0, d1 = first.equity.index[0], first.equity.index[-1]
+    print(f"{sym} — backtest {d0:%d/%m/%Y} → {d1:%d/%m/%Y} (khớp mở cửa phiên sau, không mua ở giá "
+          f"trần / không bán khi nằm sàn, T+2, phí {cfg['fee']:.2%}/chiều + thuế bán "
+          f"{cfg['sell_tax']:.1%}; điểm TA: mua ≥ {entry:g}, bán < {exit_:g}, cắt lỗ "
+          f"{cfg['atr_stop']:g} ATR)")
+    cols = [(name, r.stats) for name, r in results.items()]
+    cols.append(("Mua & giữ", first.benchmark_stats))
+    width = max(14, *(len(n) + 2 for n, _ in cols))
+    print(f"{'':<22}" + "".join(f"{c:>{width}}" for c, _ in cols))
     for key, label in (("total", "Lợi nhuận cả kỳ"), ("cagr", "Lợi nhuận/năm (CAGR)"),
                        ("max_drawdown", "Sụt giảm tối đa")):
-        print(f"{label:<22}" + "".join(f"{st[key]:>13.1%}" for _, st in cols))
-    print(f"{'Sharpe (r_f = 0)':<22}" + "".join(f"{st['sharpe']:>13.2f}" for _, st in cols))
-    for name, st in cols[:2]:
+        print(f"{label:<22}" + "".join(f"{st[key]:>{width}.1%}" for _, st in cols))
+    print(f"{'Sharpe (r_f = 0)':<22}" + "".join(f"{st['sharpe']:>{width}.2f}" for _, st in cols))
+    for name, st in cols[:-1]:
         print(f"{name}: {st['trades']} lệnh, thắng {_pct(st['win_rate'], 0)}, lãi/lỗ TB mỗi lệnh "
               f"{_pct(st['avg_trade'])}, thời gian cầm cổ phiếu {st['exposure']:.0%}")
-    print("Lệnh gần nhất (công thức mới):")
-    for t in new.trades[-args.last:]:
+    rule = settings()["recommend"].get("timing_rule", "ta")
+    last_name = list(results)[-1]
+    print(f"Lệnh gần nhất ({last_name}; trục thời điểm đang dùng: {rule}):")
+    for t in results[last_name].trades[-args.last:]:
         print(f"  {t.entry_date:%d/%m/%Y} mua {t.entry:,.0f} → {t.exit_date:%d/%m/%Y} bán "
               f"{t.exit:,.0f} ({t.ret:+.1%}, {t.reason})")
     print("Kết quả quá khứ không đảm bảo tương lai; chưa tính trượt giá. Trục xếp hạng (giá trị hợp "

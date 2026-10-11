@@ -342,21 +342,22 @@ with tab_bt:
     except ValueError as e:
         st.error(str(e))
     else:
+        hold = next(iter(results.values())).benchmark_stats
         st.dataframe(pd.DataFrame(
             [{"Công thức": k, "Lợi nhuận/năm": r.stats["cagr"],
               "Sụt giảm tối đa": r.stats["max_drawdown"], "Sharpe": r.stats["sharpe"],
               "Số lệnh": r.stats["trades"], "Thời gian cầm cp": r.stats["exposure"]}
              for k, r in results.items()]
-            + [{"Công thức": "Mua & giữ", 
-                "Lợi nhuận/năm": results["TA thuần"].benchmark_stats["cagr"],
-                "Sụt giảm tối đa": results["TA thuần"].benchmark_stats["max_drawdown"],
-                "Sharpe": results["TA thuần"].benchmark_stats["sharpe"]}]),
+            + [{"Công thức": "Mua & giữ",
+                "Lợi nhuận/năm": hold["cagr"], "Sụt giảm tối đa": hold["max_drawdown"],
+                "Sharpe": hold["sharpe"]}]),
             hide_index=True,
             column_config={c: st.column_config.NumberColumn(format="percent")
                            for c in ("Lợi nhuận/năm", "Sụt giảm tối đa", "Thời gian cầm cp")})
-        st.caption("Công thức mới: VNINDEX xu hướng giảm thì cần điểm TA cao hơn và dùng ít vốn "
-                   "hơn; lệnh không quá 10% GTGD bình quân 20 phiên. Bên dưới: công thức mới.")
-        res = results["TA + VNINDEX + thanh khoản"]
+        rule = settings()["recommend"].get("timing_rule", "ta")
+        st.caption("Khớp mở cửa phiên sau, không mua ở giá trần / không bán khi nằm sàn, T+2, phí + "
+                   f"thuế. Trục thời điểm đang dùng: {rule}. Bên dưới: {list(results)[-1]}.")
+        res = list(results.values())[-1]
         s, b = res.stats, res.benchmark_stats
         c = st.columns(4)
         c[0].metric(f"Lợi nhuận/năm (mua & giữ {fmt_pct(b['cagr'])})", fmt_pct(s["cagr"]))

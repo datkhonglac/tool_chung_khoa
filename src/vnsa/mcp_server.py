@@ -297,16 +297,18 @@ def get_recommendations(symbols: list[str] | None = None) -> dict:
 @_guard
 def run_backtest(symbol: str, entry_score: float | None = None,
                  exit_score: float | None = None) -> dict:
-    """Backtest theo điểm TA (mua khi điểm ≥ entry_score, bán khi < exit_score, cắt lỗ ATR, T+2,
-    phí và thuế) với hai công thức: "TA thuần" và "TA + VNINDEX + thanh khoản" (VNINDEX giảm thì
-    cần điểm cao hơn và dùng ít vốn hơn; lệnh ≤ 10% GTGD 20 phiên), so với mua và nắm giữ."""
+    """Backtest các quy tắc thời điểm (điểm TA ≥ entry_score mua / < exit_score bán; + lọc
+    VNINDEX; quy tắc đang dùng cho trục thời điểm) với khớp lệnh sát thực tế VN (mở cửa phiên sau,
+    trần/sàn, T+2, phí và thuế), so với mua và nắm giữ."""
     d = analysis.load(symbol, need_fin=False)
     results = analysis.backtests(d, entry_score, exit_score)
+    first = next(iter(results.values()))
+    last = list(results.values())[-1]
     return {"symbol": d.symbol, "rules": analysis.backtest_config(d.symbol),
+            "timing_rule": settings()["recommend"].get("timing_rule", "ta"),
             "strategies": {k: r.stats for k, r in results.items()},
-            "buy_and_hold": results["TA thuần"].benchmark_stats,
-            "trades": [dict(asdict(t), ret=t.ret)
-                       for t in results["TA + VNINDEX + thanh khoản"].trades]}
+            "buy_and_hold": first.benchmark_stats,
+            "trades": [dict(asdict(t), ret=t.ret) for t in last.trades]}
 
 
 @mcp.tool()
