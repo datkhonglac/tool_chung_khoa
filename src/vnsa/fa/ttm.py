@@ -20,7 +20,8 @@ import numpy as np
 import pandas as pd
 
 FLOW = ["revenue", "gross_profit", "net_income", "net_income_parent", "cfo", "pbt",
-        "tax_expense", "interest_expense", "capex", "equity_issued"]
+        "tax_expense", "interest_expense", "capex", "equity_issued",
+        "nii", "toi", "bank_opex", "credit_provision", "brokerage_revenue", "operating_revenue"]
 
 
 def ttm(quarterly: pd.DataFrame) -> pd.Series | None:

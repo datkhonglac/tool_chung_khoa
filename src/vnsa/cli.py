@@ -304,6 +304,8 @@ def _print_fair(d, v) -> None:
 
 def _fin_score(d) -> int:
     """Điểm FA của định chế tài chính (scores.financial_score)."""
+    import pandas as pd
+
     from vnsa import analysis
     from vnsa.fa.scores import FIN_GROUPS
 
@@ -315,19 +317,32 @@ def _fin_score(d) -> int:
     print(f"{d.symbol} — chất lượng tài chính, bộ chỉ tiêu cho định chế tài chính "
           f"(BCTC năm {int(d.fin['year'].iloc[0])}–{int(d.fin['year'].iloc[-1])})")
     names = {"sinh_loi": "Sinh lời", "tang_truong": "Tăng trưởng", "an_toan": "Đệm vốn",
-             "dinh_gia": "Định giá"}
+             "hieu_qua": "Hiệu quả", "rui_ro": "Rủi ro", "dinh_gia": "Định giá"}
     labels = {"roe": ("ROE", "pct"), "ni_cagr": ("Tăng trưởng kép LNST cty mẹ", "pct"),
               "equity_to_assets": ("Vốn chủ / tổng tài sản", "pct"),
+              "nim": ("NIM (xấp xỉ)", "pct"), "cir": ("CIR (chi phí/thu nhập)", "pct"),
+              "credit_cost": ("Chi phí tín dụng", "pct"),
+              "margin_to_equity": ("Cho vay ký quỹ / vốn chủ (lần)", "x"),
               "pb_rel": ("P/B so với trung vị lịch sử (1 = bằng)", "x"),
               "fair_upside": ("Chênh lệch so với giá trị hợp lý", "pct")}
     print(f"\nĐiểm FA: {_num(s.total)}/100 — {s.rating}")
     for g, keys in FIN_GROUPS.items():
+        shown = [k for k in keys if not pd.isna(s.items[k][0])]
+        if not shown:
+            continue
         w = settings()["fa_score"]["financials"]["weights"][g]
         print(f"  {names[g]} ({w}%): {_num(s.groups[g])}")
-        for k in keys:
+        for k in shown:
             val_, pts = s.items[k]
             label, kind = labels[k]
             print(f"      {label}: {_pct(val_) if kind == 'pct' else _num(val_, 2)} → {_num(pts)} điểm")
+    sm = analysis.sector(d)
+    if sm is not None:
+        from vnsa.fa.sector import LABELS
+
+        print(f"\n  Chỉ số ngành ({sm.basis}): " + " · ".join(
+            f"{LABELS[k]} {_num(v, 2) if k == 'margin_to_equity' else _pct(v)}"
+            for k, v in sm.values.items() if not pd.isna(v)))
     for n in s.notes:
         print(f"  ! {n}")
     return 0
@@ -624,41 +639,44 @@ def cmd_recommend(args) -> int:
 
 
 def cmd_backtest(args) -> int:
+    """So sánh công thức cũ (chỉ điểm TA) và mới (TA + lọc VNINDEX + thanh khoản) với mua & giữ."""
     from vnsa import analysis
-    from vnsa.recommend.backtest import backtest
-    from vnsa.ta.score import ta_score_series
 
     sym = args.symbol.upper()
-    loaded = _load(sym, need_fin=False)
-    if loaded is None:
+    if _load(sym, need_fin=False) is None:
         return 1
-    cfg = analysis.backtest_config(sym)
-    if args.entry is not None:
-        cfg["entry_score"] = args.entry
-    if args.exit is not None:
-        cfg["exit_score"] = args.exit
-    ind = analysis.indicators(loaded[1])
+    d = analysis.load(sym, need_fin=False)
     try:
-        res = backtest(ind, ta_score_series(ind, settings()["ta_score"]["weights"], require_all=True), cfg)
+        results = analysis.backtests(d, args.entry, args.exit)
     except ValueError as e:
         print(f"  ✗ {sym}: {e}")
         return 1
-    s, b = res.stats, res.benchmark_stats
-    first, last = res.equity.index[0], res.equity.index[-1]
-    print(f"{sym} — backtest điểm TA {first:%d/%m/%Y} → {last:%d/%m/%Y} "
-          f"(mua khi ≥ {cfg['entry_score']:g}, bán khi < {cfg['exit_score']:g}, "
-          f"cắt lỗ {cfg['atr_stop']:g} ATR, phí {cfg['fee']:.2%}/chiều + thuế bán {cfg['sell_tax']:.1%})")
-    print(f"{'':<22}{'Chiến lược':>12}{'Mua & giữ':>12}")
+    cfg = analysis.backtest_config(sym)
+    entry = cfg["entry_score"] if args.entry is None else args.entry
+    exit_ = cfg["exit_score"] if args.exit is None else args.exit
+    old, new = results["TA thuần"], results["TA + VNINDEX + thanh khoản"]
+    first, last = old.equity.index[0], old.equity.index[-1]
+    print(f"{sym} — backtest {first:%d/%m/%Y} → {last:%d/%m/%Y} (mua khi điểm TA ≥ {entry:g}, bán "
+          f"khi < {exit_:g}, cắt lỗ {cfg['atr_stop']:g} ATR, T+2, phí {cfg['fee']:.2%}/chiều + "
+          f"thuế bán {cfg['sell_tax']:.1%})")
+    print(f"Công thức mới: VNINDEX xu hướng giảm thì cần điểm TA +{cfg.get('bear_entry_extra', 0):g} "
+          f"và chỉ dùng {cfg.get('bear_position', 1):.0%} vốn; lệnh ≤ "
+          f"{settings()['plan'].get('max_adv_pct', 0.1):.0%} GTGD bình quân 20 phiên")
+    cols = [("TA thuần", old.stats), ("TA+VNINDEX", new.stats), ("Mua & giữ", old.benchmark_stats)]
+    print(f"{'':<22}" + "".join(f"{c:>13}" for c, _ in cols))
     for key, label in (("total", "Lợi nhuận cả kỳ"), ("cagr", "Lợi nhuận/năm (CAGR)"),
                        ("max_drawdown", "Sụt giảm tối đa")):
-        print(f"{label:<22}{s[key]:>12.1%}{b[key]:>12.1%}")
-    print(f"{'Sharpe (r_f = 0)':<22}{s['sharpe']:>12.2f}{b['sharpe']:>12.2f}")
-    print(f"Số lệnh {s['trades']}, thắng {_pct(s['win_rate'], 0)}, lãi/lỗ TB mỗi lệnh "
-          f"{_pct(s['avg_trade'])}, thời gian cầm cổ phiếu {s['exposure']:.0%}")
-    for t in res.trades[-args.last:]:
+        print(f"{label:<22}" + "".join(f"{st[key]:>13.1%}" for _, st in cols))
+    print(f"{'Sharpe (r_f = 0)':<22}" + "".join(f"{st['sharpe']:>13.2f}" for _, st in cols))
+    for name, st in cols[:2]:
+        print(f"{name}: {st['trades']} lệnh, thắng {_pct(st['win_rate'], 0)}, lãi/lỗ TB mỗi lệnh "
+              f"{_pct(st['avg_trade'])}, thời gian cầm cổ phiếu {st['exposure']:.0%}")
+    print("Lệnh gần nhất (công thức mới):")
+    for t in new.trades[-args.last:]:
         print(f"  {t.entry_date:%d/%m/%Y} mua {t.entry:,.0f} → {t.exit_date:%d/%m/%Y} bán "
               f"{t.exit:,.0f} ({t.ret:+.1%}, {t.reason})")
-    print("Kết quả quá khứ không đảm bảo tương lai; chưa tính trượt giá và giới hạn thanh khoản.")
+    print("Kết quả quá khứ không đảm bảo tương lai; chưa tính trượt giá. Trục xếp hạng (giá trị hợp "
+          "lý) không backtest được trung thực với 4 năm BCTC miễn phí: theo dõi bằng review-signals.")
     return 0
 
 

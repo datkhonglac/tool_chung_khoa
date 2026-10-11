@@ -330,19 +330,30 @@ with tab_risk:
         st.caption("Mô phỏng dựa trên biến động quá khứ, không dự báo được sự kiện bất thường.")
 
 with tab_bt:
-    from vnsa.recommend.backtest import backtest
-    from vnsa.ta.score import ta_score_series
-
     cfg = analysis.backtest_config(symbol)
     c = st.columns(2)
-    cfg["entry_score"] = c[0].slider("Mua khi điểm TA ≥", 40, 90, int(cfg["entry_score"]))
-    cfg["exit_score"] = c[1].slider("Bán khi điểm TA <", 10, 70, int(cfg["exit_score"]))
+    entry = c[0].slider("Mua khi điểm TA ≥", 40, 90, int(cfg["entry_score"]))
+    exit_ = c[1].slider("Bán khi điểm TA <", 10, 70, int(cfg["exit_score"]))
     try:
-        res = backtest(ind, ta_score_series(ind, settings()["ta_score"]["weights"],
-                                            require_all=True), cfg)
+        results = analysis.backtests(analysis.load(symbol, need_fin=False), entry, exit_)
     except ValueError as e:
         st.error(str(e))
     else:
+        st.dataframe(pd.DataFrame(
+            [{"Công thức": k, "Lợi nhuận/năm": r.stats["cagr"],
+              "Sụt giảm tối đa": r.stats["max_drawdown"], "Sharpe": r.stats["sharpe"],
+              "Số lệnh": r.stats["trades"], "Thời gian cầm cp": r.stats["exposure"]}
+             for k, r in results.items()]
+            + [{"Công thức": "Mua & giữ", 
+                "Lợi nhuận/năm": results["TA thuần"].benchmark_stats["cagr"],
+                "Sụt giảm tối đa": results["TA thuần"].benchmark_stats["max_drawdown"],
+                "Sharpe": results["TA thuần"].benchmark_stats["sharpe"]}]),
+            hide_index=True,
+            column_config={c: st.column_config.NumberColumn(format="percent")
+                           for c in ("Lợi nhuận/năm", "Sụt giảm tối đa", "Thời gian cầm cp")})
+        st.caption("Công thức mới: VNINDEX xu hướng giảm thì cần điểm TA cao hơn và dùng ít vốn "
+                   "hơn; lệnh không quá 10% GTGD bình quân 20 phiên. Bên dưới: công thức mới.")
+        res = results["TA + VNINDEX + thanh khoản"]
         s, b = res.stats, res.benchmark_stats
         c = st.columns(4)
         c[0].metric(f"Lợi nhuận/năm (mua & giữ {fmt_pct(b['cagr'])})", fmt_pct(s["cagr"]))

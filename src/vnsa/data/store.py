@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from vnsa.data.providers.base import PRICE_COLUMNS
-from vnsa.fa.ratios import FIELDS
+from vnsa.fa.ratios import STORED_FIELDS as FIELDS
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS prices (
@@ -110,7 +110,8 @@ class Store:
         self.con = duckdb.connect(str(self.db_path))
         self.con.execute(SCHEMA)
         for f in FIELDS:  # kho tạo từ bản cũ: thêm cột khoản mục mới nếu còn thiếu
-            self.con.execute(f"ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS {f} DOUBLE")
+            for table in ("fundamentals", "fundamentals_q"):
+                self.con.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {f} DOUBLE")
         # giá đóng cửa chưa điều chỉnh (NULL nếu nguồn không có)
         self.con.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS close_raw DOUBLE")
         for c, t in [*PROFILE_TYPES.items(), ("profile_at", "TIMESTAMP")]:

@@ -91,3 +91,30 @@ def test_backtest_stop_waits_for_t2_and_includes_fees():
     assert res.stats["total"] == pytest.approx(expected)
     with pytest.raises(ValueError):
         backtest(df.head(10), score.head(10), BT)
+
+
+def test_backtest_regime_filter_and_liquidity_cap():
+    df = _frame([10_000] * 3 + [12_000] * 33).assign(volume=1_000)
+    score = pd.Series([70] * 36)                           # luôn đủ điểm mua, không bán
+    bear = pd.Series("giảm", index=df["date"])
+    # VNINDEX giảm: cần điểm ≥ 75 -> không mua
+    assert backtest(df, score, {**BT, "bear_entry_extra": 10}, bear).trades == []
+    # VNINDEX giảm, điểm đủ: chỉ dùng 50% vốn -> lãi 20% × 50%
+    res = backtest(df, score, {**BT, "bear_entry_extra": 0, "bear_position": 0.5}, bear)
+    assert res.stats["total"] == pytest.approx(0.5 * 0.2)
+    # Thanh khoản: GTGD 20 phiên ~10-12 triệu, vốn mỗi mã 50 triệu, lệnh ≤ 10% GTGD -> ~2% vốn < 10%
+    df = _frame([10_000] * 23 + [12_000] * 40).assign(volume=1_000)
+    score = pd.Series([np.nan] * 20 + [70] * 43)           # điểm TA có sau khi đủ 20 phiên GTGD
+    liq = {**BT, "capital": 50_000_000, "max_adv_pct": 0.1, "min_position": 0.1}
+    assert backtest(df, score, liq).trades == []
+    loose = backtest(df, score, {**liq, "min_position": 0.0})
+    assert loose.stats["total"] == pytest.approx(0.1 * 10_000_000 / 50_000_000 * 0.2)
+
+
+def test_backtests_compares_two_formulas(warehouse):
+    from vnsa import analysis
+
+    d = analysis.load("DEMO_A", need_fin=False)
+    res = analysis.backtests(d)
+    assert set(res) == {"TA thuần", "TA + VNINDEX + thanh khoản"}
+    assert len(res["TA thuần"].equity) == len(res["TA + VNINDEX + thanh khoản"].equity)

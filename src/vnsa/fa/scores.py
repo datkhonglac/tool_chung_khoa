@@ -236,14 +236,18 @@ FIN_GROUPS = {
     "sinh_loi": ["roe"],
     "tang_truong": ["ni_cagr"],
     "an_toan": ["equity_to_assets"],
+    "hieu_qua": ["nim", "cir"],                         # ngân hàng (fa/sector.py)
+    "rui_ro": ["credit_cost", "margin_to_equity"],      # ngân hàng | công ty chứng khoán
     "dinh_gia": ["pb_rel", "fair_upside"],
 }
 
 
 def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan,
                     fair_upside: float = np.nan, roe: float | None = None,
-                    pb_hist: float = np.nan) -> FAScore:
-    """Điểm FA 0–100 cho định chế tài chính. cfg = mục [fa_score.financials] trong settings."""
+                    pb_hist: float = np.nan, sector=None) -> FAScore:
+    """Điểm FA 0–100 cho định chế tài chính. cfg = mục [fa_score.financials] trong settings.
+    sector = fa.sector.SectorMetrics (NIM, CIR, chi phí tín dụng, ký quỹ/vốn chủ) nếu có; chỉ tiêu
+    thiếu thì nhóm đó bị bỏ, trọng số chia lại cho các nhóm còn lại."""
     df = fin.sort_values("year").reset_index(drop=True)
     ratios = compute_ratios(df)
     span = int(df["year"].iloc[-1] - df["year"].iloc[0])
@@ -256,9 +260,13 @@ def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan
         "pb_rel": pb / pb_hist if pb > 0 and pb_hist > 0 else np.nan,
         "fair_upside": fair_upside,
     }
+    sv = sector.values if sector is not None else {}
+    for k in ("nim", "cir", "credit_cost", "margin_to_equity"):
+        values[k] = sv.get(k, np.nan)
     thresholds = dict(cfg["thresholds"])
     thresholds["equity_to_assets"] = cfg["equity_to_assets"][model]
-    items = {k: (float(v), scale(v, *thresholds[k])) for k, v in values.items()}
+    items = {k: (float(v), scale(v, *thresholds[k]) if k in thresholds else np.nan)
+             for k, v in values.items()}
     groups = {}
     for g, keys in FIN_GROUPS.items():
         scores = [items[k][1] for k in keys if not pd.isna(items[k][1])]
@@ -266,6 +274,12 @@ def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan
     weights = {g: w for g, w in cfg["weights"].items() if not pd.isna(groups.get(g, np.nan))}
     total = (sum(groups[g] * w for g, w in weights.items()) / sum(weights.values())
              if weights else float("nan"))
-    notes = [("chưa có nợ xấu (NPL), NIM, CASA trong dữ liệu nguồn: điểm chỉ dựa vào ROE, tăng "
-              "trưởng, đệm vốn và định giá")] if model == "bank" else []
+    notes = []
+    if model == "bank":
+        missing = sector.missing if sector else ["NPL", "CASA", "CAR"]
+        notes.append(f"nguồn miễn phí không có {', '.join(missing)}: chưa chấm chất lượng tài sản "
+                     "theo nợ xấu — cần xem BCTC gốc")
+        if sector is None:
+            notes.append("chưa có khoản mục ngân hàng (NIM, CIR, chi phí tín dụng): chạy lại "
+                         "fetch-bctc để tải")
     return FAScore(total=total, groups=groups, items=items, notes=notes)

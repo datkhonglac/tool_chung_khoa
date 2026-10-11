@@ -112,6 +112,16 @@ def _weights(kind: str) -> dict:
     return settings()["valuation"].get("weights", {}).get(kind)
 
 
+def sector(d: Data):
+    """Chỉ số riêng ngân hàng / công ty chứng khoán (fa/sector.py) hoặc None."""
+    from vnsa import market
+    from vnsa.fa import sector as sec
+
+    if d.fin.empty:
+        return None
+    return sec.metrics(market.profile(d.symbol)["model"], d.fin, d.quarterly)
+
+
 def financial(d: Data):
     """Định chế tài chính: (FAScore, FairValue) bằng thu nhập thặng dư + P/B theo ROE + P/B lịch
     sử (fa/fair_value.py) và điểm FA riêng (scores.financial_score). ValueError nếu thiếu số.
@@ -143,7 +153,7 @@ def financial(d: Data):
     score = financial_score(d.fin, settings()["fa_score"]["financials"],
                             market.profile(d.symbol)["model"], pb=pb, fair_upside=fair.upside,
                             roe=d.current.roe if d.current is not None else None,
-                            pb_hist=fair.pb_target)
+                            pb_hist=fair.pb_target, sector=sector(d))
     return score, fair
 
 
@@ -316,6 +326,30 @@ def backtest_config(symbol: str) -> dict:
     from vnsa import market
 
     return dict(settings()["backtest"], ticks=market.ticks(symbol))
+
+
+def backtests(d: Data, entry: float | None = None, exit_: float | None = None) -> dict:
+    """So sánh hai công thức trên cùng dữ liệu: {"TA thuần": kết quả, "TA + VNINDEX + thanh khoản":
+    kết quả}. Công thức mới dùng trạng thái VNINDEX từng phiên (ta/regime.regime_series) và chặn
+    giá trị lệnh ≤ max_adv_pct × GTGD 20 phiên với vốn mỗi mã = capital × max_position_pct.
+    ValueError nếu chưa đủ dữ liệu."""
+    from vnsa.recommend.backtest import backtest
+    from vnsa.ta.regime import regime_series
+    from vnsa.ta.score import ta_score_series
+
+    cfg = backtest_config(d.symbol)
+    if entry is not None:
+        cfg["entry_score"] = entry
+    if exit_ is not None:
+        cfg["exit_score"] = exit_
+    ind = indicators(d.prices)
+    score = ta_score_series(ind, settings()["ta_score"]["weights"], require_all=True)
+    plan_cfg = settings()["plan"]
+    new_cfg = dict(cfg, capital=plan_cfg["capital"] * plan_cfg.get("max_position_pct", 1.0),
+                   max_adv_pct=plan_cfg.get("max_adv_pct", 0.1))
+    return {"TA thuần": backtest(ind, score, cfg),
+            "TA + VNINDEX + thanh khoản": backtest(ind, score, new_cfg,
+                                                   regime_series(d.index, settings().get("regime", {})))}
 
 
 @dataclass

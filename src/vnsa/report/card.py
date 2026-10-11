@@ -189,6 +189,23 @@ def build_card(a) -> Card:
             eta = fin["equity"].iloc[-1] / fin["total_assets"].iloc[-1]
             fundamentals.append(f"Vốn chủ/tổng tài sản {vn_pct(eta)} · P/B {vn_num(x.pb, 2)} · "
                                 f"P/E {vn_num(x.pe, 1)}")
+            from vnsa.analysis import sector
+            from vnsa.fa.sector import LABELS as SECTOR_LABELS
+
+            sm = sector(d)
+            if sm is not None:
+                vals = [f"{SECTOR_LABELS[k]} {vn_num(v, 2) + ' lần' if k == 'margin_to_equity' else vn_pct(v)}"
+                        for k, v in sm.values.items() if not pd.isna(v)]
+                if vals:
+                    fundamentals.append(f"{' · '.join(vals)} ({sm.basis})")
+                if sm.missing:
+                    fundamentals.append(f"Không có trong nguồn miễn phí: {', '.join(sm.missing)}")
+                v = sm.values
+                if v.get("credit_cost", 0) > 0.025:
+                    flags.append(f"chi phí tín dụng cao ({vn_pct(v['credit_cost'])} dư nợ)")
+                if v.get("margin_to_equity", 0) > 1.8:
+                    flags.append(f"cho vay ký quỹ sát trần ({vn_num(v['margin_to_equity'], 2)} "
+                                 "lần vốn chủ)")
         else:
             f_score = sc.piotroski(fin)["f_score"].iloc[-1]
             cfo3, ni3 = fin["cfo"].tail(3).sum(), fin["net_income"].tail(3).sum()
@@ -197,7 +214,7 @@ def build_card(a) -> Card:
                 f"{vn_num(cfo3 / ni3 if ni3 > 0 else nan, 2)} · F-Score "
                 f"{'—' if pd.isna(f_score) else f'{f_score:.0f}'}/9 · P/E {vn_num(x.pe, 1)} · "
                 f"P/B {vn_num(x.pb, 2)}")
-        flags = red_flags(fin, financial, a.z_em, f_score)
+        flags = red_flags(fin, financial, a.z_em, f_score) + flags
     else:
         fundamentals.append("Chưa có BCTC")
     extra = []

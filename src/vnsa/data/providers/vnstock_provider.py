@@ -22,7 +22,7 @@ import pandas as pd
 from vnsa.data.cleaning import repair_ohlc
 from vnsa.data.providers.base import DataProvider
 from vnsa.data.providers.csv_provider import normalize_prices
-from vnsa.fa.ratios import FIELDS
+from vnsa.fa.ratios import FIELDS, SECTOR_FIELDS
 
 # Khoản mục chuẩn -> (báo cáo, các item_id có thể gặp, mẫu tên tiếng Anh dự phòng).
 # Lấy dòng đầu tiên khớp và có số liệu.
@@ -71,8 +71,31 @@ MAPPING: dict[str, tuple[str, list[str], str]] = {
                       (r"^proceeds from (?:the )?issu\w* (?:of )?(?:shares|stocks|equity)"
                        r"|capital contribution")),
 }
+# Khoản mục ngân hàng / công ty chứng khoán: chỉ khớp item_id (đã dò thật VCB, SSI qua
+# scripts/probe_vnstock.py --items). Không có trong nguồn miễn phí: nợ xấu (NPL), CASA, CAR.
+SECTOR_MAPPING: dict[str, tuple[str, list[str]]] = {
+    "nii": ("income_statement", ["net_interest_income"]),
+    "toi": ("income_statement", ["total_operating_income"]),
+    "bank_opex": ("income_statement", ["general_and_admin_expenses"]),
+    "credit_provision": ("income_statement", ["provision_for_credit_losses"]),
+    "loans_gross": ("balance_sheet", ["loans_and_advances_to_customers"]),
+    "loan_loss_reserve": ("balance_sheet",
+                          ["less_provision_for_losses_on_loans_and_advances_to_customers"]),
+    "customer_deposits": ("balance_sheet", ["deposits_from_customers"]),
+    "sbv_balances": ("balance_sheet", ["balances_with_the_sbv"]),
+    "interbank_placements": ("balance_sheet",
+                             ["placements_with_and_loans_to_other_credit_institutions"]),
+    "trading_securities": ("balance_sheet", ["trading_securities"]),
+    "investment_securities": ("balance_sheet", ["investment_securities"]),
+    "margin_loans": ("balance_sheet", ["loans"]),
+    "fvtpl_assets": ("balance_sheet",
+                     ["financial_assets_at_fair_value_through_profit_or_loss_fvtpl"]),
+    "brokerage_revenue": ("income_statement", ["revenue_in_brokerage_services"]),
+    "operating_revenue": ("income_statement", ["operating_sales"]),
+}
 # VCI ghi chi phí/khoản chi bằng số âm; lưu số dương cho dễ dùng.
-POSITIVE = {"tax_expense", "interest_expense", "capex", "equity_issued"}
+POSITIVE = {"tax_expense", "interest_expense", "capex", "equity_issued", "bank_opex",
+            "credit_provision", "loan_loss_reserve"}
 STATEMENTS = ["income_statement", "balance_sheet", "cash_flow"]
 
 
@@ -82,13 +105,13 @@ def _year_columns(df: pd.DataFrame, quarterly: bool = False) -> list[str]:
     return [c for c in df.columns if re.fullmatch(pattern, str(c))]
 
 
-def _pick(df: pd.DataFrame, ids: list[str], pattern: str,
+def _pick(df: pd.DataFrame, ids: list[str], pattern: str | None,
           quarterly: bool = False) -> pd.Series | None:
     """Dòng khớp item_id (theo thứ tự ưu tiên) hoặc tên tiếng Anh. Ưu tiên dòng có số khác 0
     (VCI có các dòng cũ "trước 2015" toàn số 0), sau đó mới đến dòng có số liệu bất kỳ."""
     years = _year_columns(df, quarterly)
     candidates = [df[df["item_id"] == i] for i in ids]
-    if "item_en" in df:
+    if pattern and "item_en" in df:
         en = df["item_en"].astype(str).str.strip()
         candidates.append(df[en.str.contains(pattern, case=False, regex=True)])
     rows = [pd.to_numeric(r[years], errors="coerce") for c in candidates for _, r in c.iterrows()]
@@ -116,6 +139,14 @@ def standardize(statements: dict[str, pd.DataFrame], symbol: str,
         values = _pick(statements[stmt], ids, pattern, quarterly) if stmt in statements else None
         if values is None:
             missing.append(field)
+            out[field] = np.nan
+            continue
+        values.index = values.index.astype(str)
+        out[field] = out["period"].map(values.abs() if field in POSITIVE else values)
+    for field in SECTOR_FIELDS:                     # không báo thiếu (doanh nghiệp thường không có)
+        stmt, ids = SECTOR_MAPPING[field]
+        values = _pick(statements[stmt], ids, None, quarterly) if stmt in statements else None
+        if values is None:
             out[field] = np.nan
             continue
         values.index = values.index.astype(str)

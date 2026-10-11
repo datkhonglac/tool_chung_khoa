@@ -295,22 +295,16 @@ def get_recommendations(symbols: list[str] | None = None) -> dict:
 @_guard
 def run_backtest(symbol: str, entry_score: float | None = None,
                  exit_score: float | None = None) -> dict:
-    """Backtest chiến lược theo điểm TA (mua khi điểm ≥ entry_score, bán khi < exit_score, cắt lỗ
-    ATR, T+2, phí và thuế), so với mua và nắm giữ."""
-    from vnsa.recommend.backtest import backtest
-    from vnsa.ta.score import ta_score_series
-
+    """Backtest theo điểm TA (mua khi điểm ≥ entry_score, bán khi < exit_score, cắt lỗ ATR, T+2,
+    phí và thuế) với hai công thức: "TA thuần" và "TA + VNINDEX + thanh khoản" (VNINDEX giảm thì
+    cần điểm cao hơn và dùng ít vốn hơn; lệnh ≤ 10% GTGD 20 phiên), so với mua và nắm giữ."""
     d = analysis.load(symbol, need_fin=False)
-    cfg = analysis.backtest_config(d.symbol)
-    if entry_score is not None:
-        cfg["entry_score"] = entry_score
-    if exit_score is not None:
-        cfg["exit_score"] = exit_score
-    ind = analysis.indicators(d.prices)
-    res = backtest(ind, ta_score_series(ind, settings()["ta_score"]["weights"], require_all=True), cfg)
-    return {"symbol": d.symbol, "rules": cfg, "strategy": res.stats,
-            "buy_and_hold": res.benchmark_stats,
-            "trades": [dict(asdict(t), ret=t.ret) for t in res.trades]}
+    results = analysis.backtests(d, entry_score, exit_score)
+    return {"symbol": d.symbol, "rules": analysis.backtest_config(d.symbol),
+            "strategies": {k: r.stats for k, r in results.items()},
+            "buy_and_hold": results["TA thuần"].benchmark_stats,
+            "trades": [dict(asdict(t), ret=t.ret)
+                       for t in results["TA + VNINDEX + thanh khoản"].trades]}
 
 
 @mcp.tool()
