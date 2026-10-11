@@ -45,6 +45,13 @@ def recommendations(symbols: tuple[str, ...], _stamp: float):
 
 
 @st.cache_data(show_spinner=False)
+def report_text(symbol: str, _stamp: float) -> str:
+    from vnsa.report.card import build_card, format_card
+
+    return format_card(build_card(analysis.assess(symbol)))
+
+
+@st.cache_data(show_spinner=False)
 def load(symbol: str, _stamp: float):
     return analysis.load(symbol, need_fin=False)
 
@@ -101,6 +108,12 @@ tab_all, tab_ta, tab_fa, tab_val, tab_risk, tab_bt, tab_hist = st.tabs(
      "Lịch sử khuyến nghị"])
 
 with tab_all:
+    st.subheader(f"Báo cáo nhanh {symbol}")
+    try:
+        with st.spinner("Đang phân tích..."):
+            st.code(report_text(symbol, stamp), language=None)
+    except (analysis.DataMissing, ValueError) as e:
+        st.warning(str(e))
     st.subheader("Khuyến nghị danh sách theo dõi")
     with st.spinner("Đang tính..."):
         table, errors = recommendations(tuple(watch), stamp)

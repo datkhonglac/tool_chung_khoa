@@ -54,6 +54,11 @@ beta_years = 3
 adjust_beta = true             # beta Blume = 0,67 × beta thô + 0,33
 par_value = 10000              # mệnh giá cổ phiếu (đồng)
 
+[valuation.weights]
+# Trọng số các phương pháp tính giá trị hợp lý (fa/fair_value.py); thiếu phương pháp nào thì chia lại
+general = { dcf = 0.4, pe_hist = 0.3, pb_hist = 0.3 }
+financial = { ri = 0.25, pb_roe = 0.25, pb_hist = 0.5 }
+
 [valuation.financials]
 # Ngân hàng / chứng khoán / bảo hiểm: thu nhập thặng dư + P/B hợp lý theo ROE (fa/fair_value.py)
 forecast_years = 5
@@ -156,14 +161,29 @@ bootstrap = true            # rút phần dư thật (true) hay phân phối chu
 seed = 42
 
 [recommend]
-weight_fa = 0.6             # điểm tổng = 60% FA + 40% TA
-weight_ta = 0.4
+weight_fa = 0.5             # điểm tổng = 50% FA + 30% TA + 20% Quant
+weight_ta = 0.3
+weight_quant = 0.2
 buy_above = 65              # MUA khi điểm tổng ≥ 65 ...
 min_ta_buy = 45             # ... và điểm TA ≥ 45 (xu hướng không xấu)
 min_upside_buy = -0.10      # ... và giá không cao hơn giá trị DCF quá 10%
 sell_below = 40             # TRÁNH khi điểm tổng < 40 (hoặc Altman Z'' vùng nguy cơ)
 min_reward_risk = 2.0
 high_vol = 0.40             # biến động năm trên 40% thì nhắc giảm khối lượng
+
+[recommend.quant]
+# Điểm Quant 0–100 (recommend/engine.py): [mức xấu, mức tốt], quy tuyến tính như điểm FA
+prob_up = [0.40, 0.60]      # xác suất giá cao hơn hiện tại sau 60 phiên (Monte Carlo)
+vol_annual = [0.60, 0.20]   # biến động năm (GARCH) — thấp là tốt
+reward_risk = [1.0, 3.0]    # lãi/lỗ của mục tiêu 1 trong kế hoạch
+
+[report]
+# Độ tin cậy của khuyến nghị (report/card.py): đếm số điều kiện đạt
+high_confidence = 5         # ≥ 5/6 điều kiện: Cao; ≥ 3: Trung bình; còn lại: Thấp
+medium_confidence = 3
+max_abs_upside = 0.6        # giá trị hợp lý lệch quá ±60% so với giá -> nghi mô hình không hợp với mã
+max_value_spread = 1.6      # dải P90 / P10 giá trị nội tại hẹp hơn mức này thì tính là "định giá đồng thuận"
+min_sessions = 500          # có ít nhất ~2 năm giá
 
 [backtest]
 entry_score = 65            # mua khi điểm TA ≥ 65

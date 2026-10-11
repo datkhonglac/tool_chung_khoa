@@ -30,6 +30,11 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   dùng thẳng `band_hose`. Ngân hàng/CK/bảo hiểm (`model` ≠ general): `analysis.fa/valuation` báo
   ValueError, khuyến nghị chỉ dùng TA + P/E, P/B. MCP: `analyze_symbol`, `update_symbol` (chuyển
   stdout sang stderr khi tải). Dashboard: ô "Mã bất kỳ" ở thanh bên.
+- `analyze` mặc định in THẺ BÁO CÁO (`report/card.py`, `--detail` để in thêm chi tiết): mọi số lấy
+  từ `analysis.assess()` (tính một lần: FA, giá trị hợp lý kèm P10/P90 kịch bản, TA, vùng mua, rủi
+  ro, điểm Quant, khuyến nghị). Điểm tổng = FA 50% + TA 30% + Quant 20% (`[recommend]`,
+  `[recommend.quant]`); độ tin cậy 6 điều kiện (`[report]`); giá trị hợp lý = bình quân có trọng số
+  `[valuation.weights]`, loại phương pháp lệch > 2,5 lần trung vị. MCP `analyze_symbol` trả `report`.
 - Giá mua: `ta/entry.py` vùng mua (neo hỗ trợ/VWAP20/SMA20, chặn bởi giá trị hợp lý × (1 − biên an
   toàn), "CHỜ GIÁ" nếu quá cao; `[entry]`); `analysis.plan` dùng giữa vùng làm giá vào, KHÔNG dùng
   giá đóng cửa. Giá trị hợp lý `fa/fair_value.py` = trung vị DCF + P/E, P/B lịch sử (EPS/BVPS theo

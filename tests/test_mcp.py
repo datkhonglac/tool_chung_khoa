@@ -65,6 +65,7 @@ def test_analyze_symbol_updates_first_and_keeps_stdout_clean(warehouse, monkeypa
     json.dumps(out, allow_nan=False)
     assert out["action"] in {"MUA", "THEO DÕI", "TRÁNH"} and out["profile"]["exchange"] == "HOSE"
     assert out["data_update"] == ["✓ giá: thêm 1 phiên"]
+    assert "ĐỊNH GIÁ" in out["report"] and out["confidence"] in {"Cao", "Trung bình", "Thấp"}
     up = srv.update_symbol("DEMO_A")
     assert up["ready"] and up["steps"][0]["status"] == "ok"
     captured = capsys.readouterr()

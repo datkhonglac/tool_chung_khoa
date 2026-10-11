@@ -94,17 +94,25 @@ def update_symbol(symbol: str, refresh: bool = False) -> dict:
 @mcp.tool()
 @_guard
 def analyze_symbol(symbol: str) -> dict:
-    """Phân tích nhanh MỘT MÃ BẤT KỲ: tự cập nhật dữ liệu nếu thiếu/cũ, rồi trả khuyến nghị
-    (MUA/THEO DÕI/TRÁNH, lý do), điểm FA/TA, định giá, rủi ro, kế hoạch giao dịch và sàn/ngành.
-    Xem chi tiết hơn bằng get_valuation, get_technical, get_risk..."""
+    """Phân tích nhanh MỘT MÃ BẤT KỲ: tự cập nhật dữ liệu nếu thiếu/cũ, rồi trả `report` — thẻ báo
+    cáo đã định dạng (khuyến nghị, độ tin cậy, giá trị nội tại P10/P50/P90, điểm FA/TA/Quant, cơ bản,
+    cờ đỏ, kỹ thuật, dự báo 20 phiên, vùng mua, cắt lỗ, chốt lời, tỷ trọng). Hãy trình bày nguyên
+    văn `report` cho người dùng rồi mới diễn giải. Chi tiết hơn: get_valuation, get_technical..."""
     from vnsa import market
+    from vnsa.report.card import build_card, format_card
 
     rep = _update(symbol)
     if not rep.ok:
         return {"symbol": rep.symbol, "error": "không có giá để phân tích: " + "; ".join(rep.errors)}
-    rec, plan = analysis.recommendation(rep.symbol)
+    a = analysis.assess(rep.symbol)
+    rec, plan = a.rec, a.plan
     analysis.record_signals([(rec, plan)])
-    return {"symbol": rec.symbol, "profile": market.profile(rec.symbol),
+    card = build_card(a)
+    return {"symbol": rec.symbol, "report": format_card(card),
+            "confidence": card.confidence, "confidence_checks": card.confidence_checks,
+            "intrinsic_value": {"p10": card.p10, "p50": card.p50, "p90": card.p90},
+            "scores": {"fa": card.fa, "ta": card.ta, "quant": card.quant, "total": card.total},
+            "red_flags": card.red_flags, "profile": market.profile(rec.symbol),
             "band": market.band(rec.symbol), "action": rec.action, "score": rec.score,
             "reasons": rec.reasons, "inputs": rec.inputs, "plan": plan,
             "data_update": [str(s).strip() for s in rep.steps],

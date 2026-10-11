@@ -1,7 +1,10 @@
 """Engine khuyến nghị: gộp điểm FA, điểm TA, định giá và rủi ro thành MUA / THEO DÕI / TRÁNH.
 
 Quy tắc (ngưỡng ở mục [recommend] trong settings):
-- Điểm tổng = w_fa × điểm FA + w_ta × điểm TA (thiếu BCTC thì chỉ dùng điểm TA).
+- Điểm Quant 0–100 = trung bình các chỉ tiêu định lượng quy về 0–100 ([recommend.quant]): xác suất
+  giá cao hơn sau 60 phiên (Monte Carlo), biến động năm (thấp là tốt), lãi/lỗ của mục tiêu 1.
+- Điểm tổng = bình quân gia quyền FA, TA, Quant (w_fa, w_ta, w_quant); thành phần nào thiếu thì
+  chia lại trọng số cho phần còn lại (thiếu BCTC thì chỉ còn TA và Quant).
 - TRÁNH nếu điểm tổng < `sell_below`, hoặc Altman Z'' < 1,1 (vùng nguy cơ).
 - MUA nếu điểm tổng ≥ `buy_above` VÀ điểm TA ≥ `min_ta_buy` (xu hướng không xấu) VÀ chênh lệch so
   với giá trị hợp lý (fa/fair_value.py; thiếu thì dùng DCF) ≥ `min_upside_buy` (nếu có định giá).
@@ -15,6 +18,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from vnsa.fa.scores import scale
 from vnsa.ta.score import rating as ta_rating
 
 
@@ -35,6 +39,7 @@ class Inputs:
     horizon: int = 60
     fair_value: float = float("nan")    # giá trị hợp lý/cp (fa/fair_value.py)
     fair_upside: float = float("nan")   # giá trị hợp lý so với giá hiện tại
+    quant_score: float = float("nan")   # điểm Quant 0–100 (quant_score)
 
 
 @dataclass
@@ -52,20 +57,27 @@ def _fa_rating(x: float) -> str:
     return "tốt" if x >= 70 else ("trung bình" if x >= 50 else "yếu")
 
 
+def quant_score(prob_up: float, vol_annual: float, reward_risk: float, cfg: dict) -> float:
+    """Điểm Quant 0–100 (cfg = mục [recommend.quant]); chỉ tiêu thiếu thì bỏ qua."""
+    pts = [scale(prob_up, *cfg["prob_up"]), scale(vol_annual, *cfg["vol_annual"]),
+           scale(reward_risk, *cfg["reward_risk"])]
+    pts = [p for p in pts if not pd.isna(p)]
+    return float(sum(pts) / len(pts)) if pts else float("nan")
+
+
 def recommend(x: Inputs, cfg: dict, notes: list[str] | None = None) -> Recommendation:
-    w_fa, w_ta = float(cfg["weight_fa"]), float(cfg["weight_ta"])
-    if pd.isna(x.fa_score):
-        score = x.ta_score
-    elif pd.isna(x.ta_score):
-        score = x.fa_score
-    else:
-        score = (w_fa * x.fa_score + w_ta * x.ta_score) / (w_fa + w_ta)
+    parts = [(float(cfg["weight_fa"]), x.fa_score), (float(cfg["weight_ta"]), x.ta_score),
+             (float(cfg.get("weight_quant", 0.0)), x.quant_score)]
+    parts = [(w, v) for w, v in parts if w > 0 and not pd.isna(v)]
+    score = sum(w * v for w, v in parts) / sum(w for w, _ in parts) if parts else float("nan")
 
     reasons = []
     if not pd.isna(x.fa_score):
         reasons.append(f"điểm FA {x.fa_score:.0f}/100 ({_fa_rating(x.fa_score)})")
     if not pd.isna(x.ta_score):
         reasons.append(f"điểm TA {x.ta_score:.0f}/100 ({ta_rating(x.ta_score).lower()})")
+    if not pd.isna(x.quant_score) and cfg.get("weight_quant", 0) > 0:
+        reasons.append(f"điểm Quant {x.quant_score:.0f}/100")
     upside = x.fair_upside if not pd.isna(x.fair_upside) else x.dcf_upside
     if not pd.isna(x.fair_upside):
         reasons.append(f"giá trị hợp lý {x.fair_value:,.0f} ({x.fair_upside:+.0%} so với giá)")

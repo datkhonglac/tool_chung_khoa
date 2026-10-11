@@ -646,8 +646,10 @@ def cmd_backtest(args) -> int:
 
 
 def cmd_analyze(args) -> int:
-    """Một mã bất kỳ: tự tải dữ liệu còn thiếu/cũ rồi in toàn bộ phân tích."""
+    """Một mã bất kỳ: tự tải dữ liệu còn thiếu/cũ rồi in thẻ báo cáo (report/card.py);
+    --detail in thêm từng phần chi tiết."""
     from vnsa import analysis, market
+    from vnsa.report.card import build_card, format_card
 
     code = 0
     for i, raw in enumerate(args.symbols):
@@ -666,21 +668,28 @@ def cmd_analyze(args) -> int:
         where = (f"sàn {prof['exchange']} (biên độ ±{market.band(sym):.0%})" if prof["known"] else
                  f"chưa rõ sàn, tạm tính như {prof['exchange']} (±{market.band(sym):.0%})")
         print("\n" + " · ".join(x for x in (f"{sym}", prof["name"], where, prof["industry"]) if x))
+        try:
+            a = analysis.assess(sym)
+        except (analysis.DataMissing, ValueError) as e:
+            print(f"  ✗ {e}")
+            code = 1
+            continue
+        analysis.record_signals([(a.rec, a.plan)])
+        print("\n" + format_card(build_card(a)))
+        if not args.detail:
+            continue
         fin_note = market.financial_note(sym)
         one = argparse.Namespace(symbol=sym, symbols=[sym], days=None, paths=None, growth=None,
                                  wacc=None, update=False)
-        sections = [("KHUYẾN NGHỊ", cmd_recommend)]
-        if not args.brief:
-            sections += [("KỸ THUẬT", cmd_ta), ("KẾ HOẠCH GIAO DỊCH", cmd_plan),
-                         ("RỦI RO", cmd_risk)]
-            if analysis.load(sym, need_fin=False).fin.empty:
-                fin_note = None
-                sections.append(("TÀI CHÍNH", lambda a: print(
-                    "  Chưa có BCTC (nguồn vnstock lỗi hoặc chưa cài): bỏ qua chỉ số, điểm FA và "
-                    f"định giá. Thử lại: analyze {a.symbol} --refresh") or 0))
-            else:
-                sections += ([("CHỈ SỐ TÀI CHÍNH", cmd_ratios)] if fin_note else [])
-                sections += [("CHẤT LƯỢNG TÀI CHÍNH", cmd_fa_score), ("ĐỊNH GIÁ", cmd_value)]
+        sections = [("KỸ THUẬT", cmd_ta), ("KẾ HOẠCH GIAO DỊCH", cmd_plan), ("RỦI RO", cmd_risk)]
+        if analysis.load(sym, need_fin=False).fin.empty:
+            fin_note = None
+            sections.append(("TÀI CHÍNH", lambda a: print(
+                "  Chưa có BCTC (nguồn vnstock lỗi hoặc chưa cài): bỏ qua chỉ số, điểm FA và "
+                f"định giá. Thử lại: analyze {a.symbol} --refresh") or 0))
+        else:
+            sections += ([("CHỈ SỐ TÀI CHÍNH", cmd_ratios)] if fin_note else [])
+            sections += [("CHẤT LƯỢNG TÀI CHÍNH", cmd_fa_score), ("ĐỊNH GIÁ", cmd_value)]
         for title, fn in sections:
             print(f"\n── {title} " + "─" * (74 - len(title)))
             try:
@@ -689,7 +698,7 @@ def cmd_analyze(args) -> int:
             except Exception as e:  # noqa: BLE001 - một phần lỗi không làm dừng cả báo cáo
                 print(f"  ✗ không tính được: {e}")
                 code = 1
-        if fin_note and not args.brief:
+        if fin_note:
             print(f"  ! {fin_note}")
     return code
 
@@ -828,9 +837,11 @@ def main(argv: list[str] | None = None) -> int:
                      help="Tự tải/cập nhật dữ liệu từng mã trước (như analyze)")
     prc.set_defaults(func=cmd_recommend)
 
-    pan = sub.add_parser("analyze", help="Mã bất kỳ: tự tải dữ liệu còn thiếu rồi phân tích đầy đủ")
+    pan = sub.add_parser("analyze", help="Mã bất kỳ: tự tải dữ liệu còn thiếu rồi in thẻ báo cáo")
     pan.add_argument("symbols", nargs="+", help="Một hoặc nhiều mã HOSE/HNX/UPCoM, vd: SHS VCB ACV")
-    pan.add_argument("--brief", action="store_true", help="Chỉ in khuyến nghị")
+    pan.add_argument("--detail", action="store_true",
+                     help="In thêm chi tiết: chỉ báo, kế hoạch, rủi ro, BCTC, định giá từng bước")
+    pan.add_argument("--brief", action="store_true", help=argparse.SUPPRESS)  # giữ tương thích
     pan.add_argument("--refresh", action="store_true",
                      help="Tải lại BCTC và danh sách sàn/ngành dù chưa cũ")
     pan.add_argument("--full", action="store_true", help="Tải lại toàn bộ giá thay vì phần mới")

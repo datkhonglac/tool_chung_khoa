@@ -94,9 +94,14 @@ def cost_of_equity(d: Data) -> tuple[float, float, float, int]:
     return a.risk_free + b * a.equity_risk_premium, b, raw, weeks
 
 
+def _weights(kind: str) -> dict:
+    return settings()["valuation"].get("weights", {}).get(kind)
+
+
 def financial(d: Data):
     """Định chế tài chính: (FAScore, FairValue) bằng thu nhập thặng dư + P/B theo ROE + P/B lịch
-    sử (fa/fair_value.py) và điểm FA riêng (scores.financial_score). ValueError nếu thiếu số."""
+    sử (fa/fair_value.py) và điểm FA riêng (scores.financial_score). ValueError nếu thiếu số.
+    FairValue có dải P10/P90 từ các kịch bản k_e ± 1%, độ bền ROE 0,25/0,75, P/B từng năm."""
     from vnsa import market
     from vnsa.fa import fair_value as fv
     from vnsa.fa.scores import financial_score
@@ -104,38 +109,65 @@ def financial(d: Data):
     if d.fin.empty or d.prices.empty:
         raise ValueError(f"{d.symbol}: thiếu BCTC hoặc giá")
     cfg = settings()["valuation"]
+    g, par = cfg["terminal_growth"], cfg["par_value"]
     ke, _, _, _ = cost_of_equity(d)
-    ri = fv.residual_income(d.fin, ke, cfg["terminal_growth"], cfg["financials"], cfg["par_value"])
+    ri = fv.residual_income(d.fin, ke, g, cfg["financials"], par)
     price = float(d.prices["close"].iloc[-1])
-    fair = fv.combine(price, d.fin, d.prices, cfg["par_value"], ri=ri)
+    fair = fv.combine(price, d.fin, d.prices, par, ri=ri, weights=_weights("financial"))
+    scenarios = []
+    for k in (ke - 0.01, ke, ke + 0.01):
+        for keep in (0.25, 0.75):
+            if k > g:
+                alt = fv.residual_income(d.fin, k, g, {**cfg["financials"], "roe_persistence": keep},
+                                         par)
+                scenarios += [alt.value_per_share, alt.justified_pb * alt.book0]
+    hist = fv.historical_multiples(d.fin, d.prices, par)
+    scenarios += list(hist["pb"] * ri.book0)
+    fair.p10, fair.p90 = fv.scenario_range(scenarios, fair.value)
     pb = price / ri.book0
     score = financial_score(d.fin, settings()["fa_score"]["financials"],
                             market.profile(d.symbol)["model"], pb=pb, fair_upside=fair.upside)
     return score, fair
 
 
+def general_fair_value(d: Data, v=None):
+    """Doanh nghiệp thường: FairValue (DCF, P/E, P/B lịch sử) kèm dải P10/P90 từ ma trận độ nhạy
+    DCF và P/E, P/B của từng năm lịch sử. v = Valuation đã tính (nếu có)."""
+    from vnsa.fa import fair_value as fv
+    from vnsa.fa import valuation as val
+
+    nan = float("nan")
+    par = settings()["valuation"]["par_value"]
+    price = float(d.prices["close"].iloc[-1])
+    fair = fv.combine(price, d.fin, d.prices, par, dcf=v.value_per_share if v else nan,
+                      weights=_weights("general"))
+    hist = fv.historical_multiples(d.fin, d.prices, par)
+    last = hist.iloc[-1]
+    scenarios = list(hist["pe"] * last["eps"]) + list(hist["pb"] * last["bvps"])
+    if v is not None and v.fcff_base > 0:
+        a = val.Assumptions.from_settings(settings()["valuation"])
+        scenarios += [x for x in val.sensitivity(v, a).to_numpy().ravel()]
+    fair.p10, fair.p90 = fv.scenario_range(scenarios, fair.value)
+    return fair
+
+
 def fundamentals_view(d: Data):
     """(điểm FA 0–100, FairValue hoặc None, P/E, P/B) cho mọi loại doanh nghiệp; thiếu BCTC ->
     (NaN, None, NaN, NaN). Dùng cho khuyến nghị và vùng mua."""
-    from vnsa.fa import fair_value as fv
     from vnsa.market import financial_note
 
     nan = float("nan")
     if d.fin.empty or d.prices.empty:
         return nan, None, nan, nan
     if financial_note(d.symbol):
+        pe, pb = multiples(d)
         try:
             score, fair = financial(d)
         except ValueError:
-            pe, pb = multiples(d)
             return nan, None, pe, pb
-        pe, pb = multiples(d)
         return score.total, fair, pe, pb
     _, _, score, v = fa(d)
-    dcf = v.value_per_share if v is not None else nan
-    fair = fv.combine(float(d.prices["close"].iloc[-1]), d.fin, d.prices,
-                      settings()["valuation"]["par_value"], dcf=dcf)
-    return score.total, fair, (v.pe if v else nan), (v.pb if v else nan)
+    return score.total, general_fair_value(d, v), (v.pe if v else nan), (v.pb if v else nan)
 
 
 def valuation(d: Data, growth: float | None = None, wacc: float | None = None):
@@ -243,7 +275,7 @@ class RiskReport:
 
 
 def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
-         n_paths: int | None = None) -> RiskReport:
+         n_paths: int | None = None, trade_plan=None) -> RiskReport:
     from vnsa import market
     from vnsa.risk.garch import fit_garch, log_returns_pct
     from vnsa.risk.simulate import Simulation, garch_var, historical_var, simulate
@@ -261,10 +293,12 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
     band = market.band(prices["symbol"].iloc[-1]) if "symbol" in prices else market.band()
     sim = simulate(fit, p0, max(horizons), n_paths=n_paths or cfg["n_paths"], band=band,
                    bootstrap=cfg["bootstrap"], seed=cfg["seed"])
-    try:
-        p = plan(indicators(prices))
-    except (ValueError, IndexError):
-        p = None
+    p = trade_plan
+    if p is None:
+        try:
+            p = plan(indicators(prices))
+        except (ValueError, IndexError):
+            p = None
     touch = None
     if p and p.targets:
         h = max(horizons)
@@ -273,10 +307,28 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
     return RiskReport(p0, fit, hist_vol, var, sim, horizons, p, touch)
 
 
-def recommendation(symbol: str):
-    """Khuyến nghị tổng hợp cho một mã (xem recommend/engine.py)."""
+@dataclass
+class Assessment:
+    """Mọi kết quả phân tích của một mã, tính một lần (khuyến nghị, báo cáo, dashboard dùng chung)."""
+    data: Data
+    fa_score: float
+    fair: object             # FairValue | None
+    pe: float
+    pb: float
+    z_em: float
+    dcf_upside: float
+    ind: pd.DataFrame
+    ta: object               # TAScore
+    plan: object             # TradePlan | None
+    risk: RiskReport | None
+    quant: float
+    rec: object              # Recommendation
+
+
+def assess(symbol: str) -> Assessment:
+    """Phân tích đầy đủ một mã: FA, giá trị hợp lý, TA, vùng mua, rủi ro, Quant, khuyến nghị."""
     from vnsa.market import financial_note
-    from vnsa.recommend.engine import Inputs, recommend
+    from vnsa.recommend.engine import Inputs, quant_score, recommend
 
     d = load(symbol, need_fin=False)
     nan = float("nan")
@@ -304,20 +356,36 @@ def recommendation(symbol: str):
                         f"chờ giá về ≤ {zn.high:,.0f} mới mua")
     r = None
     try:
-        r = risk(d.prices)
+        r = risk(d.prices, trade_plan=p)
     except ValueError as e:
         notes.append(str(e))
+    vol = r.fit.current_vol_annual if r else nan
+    prob_up = r.sim.prob_above(day=max(r.horizons)) if r else nan
+    rr = p.targets[0].reward_risk if p and p.targets else nan
+    q = quant_score(prob_up, vol, rr, settings()["recommend"]["quant"])
     inputs = Inputs(
         symbol=d.symbol, price=float(d.prices["close"].iloc[-1]),
         date=d.prices["date"].iloc[-1], fa_score=fa_score, ta_score=t.total, z_em=z_em,
-        dcf_upside=upside, pe=pe, pb=pb,
-        fair_value=fair.value if fair else nan, fair_upside=fair.upside if fair else nan,
-        vol_annual=r.fit.current_vol_annual if r else float("nan"),
-        prob_up=r.sim.prob_above(day=max(r.horizons)) if r else float("nan"),
-        first_target_rr=p.targets[0].reward_risk if p and p.targets else float("nan"),
+        dcf_upside=upside, pe=pe, pb=pb, vol_annual=vol, prob_up=prob_up, first_target_rr=rr,
         horizon=max(r.horizons) if r else 60,
+        fair_value=fair.value if fair else nan, fair_upside=fair.upside if fair else nan,
+        quant_score=q,
     )
-    return recommend(inputs, settings()["recommend"], notes), p
+    rec = recommend(inputs, settings()["recommend"], notes)
+    return Assessment(d, fa_score, fair, pe, pb, z_em, upside, ind, t, p, r, q, rec)
+
+
+def recommendation(symbol: str):
+    """(Recommendation, TradePlan | None) cho một mã (xem recommend/engine.py)."""
+    a = assess(symbol)
+    return a.rec, a.plan
+
+
+def report_card(symbol: str):
+    """Thẻ báo cáo gọn một màn hình (report/card.py)."""
+    from vnsa.report.card import build_card
+
+    return build_card(assess(symbol))
 
 
 def _params_hash() -> str:

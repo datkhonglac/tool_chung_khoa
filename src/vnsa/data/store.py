@@ -233,6 +233,14 @@ class Store:
                                [symbol.upper()]).fetchone()
         return dict(zip(cols, row)) if row else None
 
+    def peers(self, industry: str) -> list[str]:
+        """Các mã cùng ngành (bảng companies) đã có BCTC trong kho."""
+        rows = self.con.execute(
+            "SELECT symbol FROM companies WHERE industry = ? "
+            "AND symbol IN (SELECT DISTINCT symbol FROM fundamentals) ORDER BY symbol",
+            [industry]).fetchall()
+        return [r[0] for r in rows]
+
     def companies_loaded_at(self) -> pd.Timestamp | None:
         t = self.con.execute("SELECT MAX(loaded_at) FROM companies").fetchone()[0]
         return None if t is None else pd.Timestamp(t)

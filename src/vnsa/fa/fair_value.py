@@ -4,7 +4,10 @@ Vì sao không chỉ dùng DCF: ở Việt Nam nhiều doanh nghiệp đang đ�
 âm nhiều năm nên DCF không ra số; ngân hàng/chứng khoán thì FCFF không có nghĩa. Thị trường VN
 định giá phổ biến bằng P/E, P/B so với lịch sử của chính mã đó, nên gộp như sau:
 
-Doanh nghiệp thường — giá trị hợp lý = TRUNG VỊ các phương pháp ra số dương:
+Giá trị hợp lý = bình quân CÓ TRỌNG SỐ các phương pháp ra số dương (trọng số ở [valuation.weights];
+có từ 3 phương pháp thì loại phương pháp lệch quá 2,5 lần trung vị, chia lại trọng số).
+
+Doanh nghiệp thường (mặc định DCF 40% · P/E lịch sử 30% · P/B lịch sử 30%):
   1. DCF-FCFF (fa/valuation.py), nếu FCFF bình quân dương.
   2. P/E lịch sử: P/E mục tiêu = trung vị P/E từng năm (giá bình quân năm / EPS năm) × EPS năm gần
      nhất. Lấy giá bình quân cả năm thay vì giá một ngày cuối năm để bớt nhiễu.
@@ -12,9 +15,9 @@ Doanh nghiệp thường — giá trị hợp lý = TRUNG VỊ các phương ph�
   EPS và BVPS các năm đều chia cho số cổ phiếu HIỆN TẠI, vì giá đã điều chỉnh về cơ sở cổ phiếu
   hiện tại (sau cổ tức cổ phiếu/thưởng) — chia số cổ phiếu cũ sẽ làm P/E quá khứ bị méo.
 
-Ngân hàng / chứng khoán / bảo hiểm — giá trị hợp lý = ½ × (giá trị theo ROE = trung bình của 1 và 2)
-+ ½ × (3). Hai phương pháp 1–2 cùng dựa vào ROE và k_e nên gộp thành một "phiếu", cân bằng với
-mức P/B thị trường vẫn trả cho mã (chạy thật: SSI ROE tăng nhanh, mô hình ROE thuần cho −29%):
+Ngân hàng / chứng khoán / bảo hiểm (mặc định RI 25% · P/B theo ROE 25% · P/B lịch sử 50%): hai
+phương pháp đầu cùng dựa vào ROE và k_e nên tổng chỉ bằng P/B lịch sử — mức thị trường vẫn trả
+cho mã (chạy thật: SSI ROE tăng nhanh, mô hình ROE thuần cho −29%):
   1. Thu nhập thặng dư (Residual Income, mô hình chuẩn cho định chế tài chính):
        V0 = B0 + Σ_{t=1..N} (ROE_t − k_e) × B_{t−1} / (1 + k_e)^t
               + (ROE_T − k_e) × B_N / ((k_e − g) × (1 + k_e)^N)
@@ -122,14 +125,22 @@ def residual_income(fin: pd.DataFrame, ke: float, g: float, cfg: dict,
                           value_per_share=b0 + pv + pv_tv, justified_pb=pb_star, notes=notes)
 
 
+DEFAULT_WEIGHTS = {"general": {"dcf": 0.4, "pe_hist": 0.3, "pb_hist": 0.3},
+                   "financial": {"ri": 0.25, "pb_roe": 0.25, "pb_hist": 0.5}}
+OUTLIER_RATIO = 2.5     # phương pháp lệch quá 2,5 lần trung vị các phương pháp bị loại
+
+
 @dataclass
 class FairValue:
     price: float
     methods: dict[str, float]    # tên phương pháp -> giá trị/cp (đồng); NaN = không dùng được
-    value: float                 # trung vị các phương pháp dùng được
+    value: float                 # bình quân có trọng số các phương pháp dùng được
     pe_target: float = float("nan")
     pb_target: float = float("nan")
     ri: ResidualIncome | None = None
+    weights: dict[str, float] = field(default_factory=dict)   # trọng số thực dùng (tổng = 1)
+    p10: float = float("nan")    # dải giá trị nội tại theo kịch bản (scenario_range)
+    p90: float = float("nan")
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -138,13 +149,42 @@ class FairValue:
 
     @property
     def used(self) -> dict[str, float]:
-        return {k: v for k, v in self.methods.items() if not pd.isna(v) and v > 0}
+        return {k: v for k, v in self.methods.items() if k in self.weights}
+
+
+def weighted_value(methods: dict[str, float], weights: dict[str, float]
+                   ) -> tuple[float, dict[str, float], list[str]]:
+    """Bình quân có trọng số các phương pháp ra số dương. Có từ 3 phương pháp trở lên thì loại
+    phương pháp lệch quá OUTLIER_RATIO lần so với trung vị; trọng số chia lại cho phần còn lại.
+    Trả về (giá trị, trọng số thực dùng, ghi chú)."""
+    ok = {k: v for k, v in methods.items() if not pd.isna(v) and v > 0 and weights.get(k, 0) > 0}
+    notes = []
+    if len(ok) >= 3:
+        mid = float(np.median(list(ok.values())))
+        for k in [k for k, v in ok.items() if v > mid * OUTLIER_RATIO or v < mid / OUTLIER_RATIO]:
+            notes.append(f"bỏ {METHOD_NAMES[k]} ({ok.pop(k):,.0f}) vì lệch quá xa các phương pháp khác")
+    if not ok:
+        return float("nan"), {}, notes + ["không phương pháp nào ra giá trị dương"]
+    total = sum(weights[k] for k in ok)
+    used = {k: weights[k] / total for k in ok}
+    return float(sum(ok[k] * w for k, w in used.items())), used, notes
+
+
+def scenario_range(values: list[float], center: float) -> tuple[float, float]:
+    """(P10, P90) của các giá trị kịch bản dương; luôn bao lấy giá trị trung tâm."""
+    v = np.array([x for x in values if not pd.isna(x) and x > 0], dtype=float)
+    if len(v) < 3 or pd.isna(center):
+        return float("nan"), float("nan")
+    lo, hi = np.percentile(v, [10, 90])
+    return float(min(lo, center)), float(max(hi, center))
 
 
 def combine(price: float, fin: pd.DataFrame, prices: pd.DataFrame, par_value: float = 10_000,
-            dcf: float = float("nan"), ri: ResidualIncome | None = None) -> FairValue:
-    """Giá trị hợp lý = trung vị các phương pháp ra số dương (doanh nghiệp thường: DCF, P/E, P/B
-    lịch sử; định chế tài chính khi truyền `ri`: RI, P/B theo ROE, P/B lịch sử)."""
+            dcf: float = float("nan"), ri: ResidualIncome | None = None,
+            weights: dict[str, float] | None = None) -> FairValue:
+    """Giá trị hợp lý = bình quân có trọng số (mục [valuation.weights]) các phương pháp:
+    doanh nghiệp thường DCF, P/E lịch sử, P/B lịch sử; định chế tài chính (truyền `ri`) thu nhập
+    thặng dư, P/B theo ROE, P/B lịch sử."""
     hist = historical_multiples(fin, prices, par_value)
     last = hist.iloc[-1]
     pe_t, pb_t = _median_positive(hist["pe"]), _median_positive(hist["pb"])
@@ -155,24 +195,14 @@ def combine(price: float, fin: pd.DataFrame, prices: pd.DataFrame, par_value: fl
                    "pb_hist": pb_t * last["bvps"] if last["bvps"] > 0 else np.nan}
         if last["eps"] <= 0:
             notes.append("EPS năm gần nhất ≤ 0: bỏ phương pháp P/E")
+        weights = weights or DEFAULT_WEIGHTS["general"]
     else:
         methods = {"ri": ri.value_per_share, "pb_roe": ri.justified_pb * ri.book0,
                    "pb_hist": pb_t * ri.book0}
         notes += ri.notes
-        roe_based = [v for v in (methods["ri"], methods["pb_roe"]) if not pd.isna(v) and v > 0]
-        parts = [float(np.mean(roe_based))] if roe_based else []
-        if not pd.isna(methods["pb_hist"]) and methods["pb_hist"] > 0:
-            parts.append(methods["pb_hist"])
-        value = float(np.mean(parts)) if parts else float("nan")
-        if not parts:
-            notes.append("không phương pháp nào ra giá trị dương")
-        return FairValue(price=price, methods=methods, value=value, pe_target=pe_t,
-                         pb_target=pb_t, ri=ri, notes=notes)
+        weights = weights or DEFAULT_WEIGHTS["financial"]
     if hist["pe"].notna().sum() + hist["pb"].notna().sum() < 4:
         notes.append("ít năm có đủ giá để tính bội số lịch sử: P/E, P/B lịch sử kém tin cậy")
-    used = [v for v in methods.values() if not pd.isna(v) and v > 0]
-    value = float(np.median(used)) if used else float("nan")
-    if not used:
-        notes.append("không phương pháp nào ra giá trị dương")
+    value, used, more = weighted_value(methods, weights)
     return FairValue(price=price, methods=methods, value=value, pe_target=pe_t, pb_target=pb_t,
-                     ri=ri, notes=notes)
+                     ri=ri, weights=used, notes=notes + more)

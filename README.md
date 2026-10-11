@@ -20,10 +20,28 @@ streamlit run dashboard/app.py                              # mở dashboard (c�
 ## Phân tích một mã bất kỳ (tự lấy dữ liệu)
 
 ```bash
-python -m vnsa.cli analyze SHS VCB ACV        # đầy đủ: khuyến nghị, kỹ thuật, kế hoạch, rủi ro, FA, định giá
-python -m vnsa.cli analyze HPG --brief        # chỉ khuyến nghị
+python -m vnsa.cli analyze HPG                # thẻ báo cáo một màn hình (xem mẫu dưới)
+python -m vnsa.cli analyze SHS VCB --detail   # thêm chi tiết: chỉ báo, kế hoạch, rủi ro, BCTC, định giá
 python -m vnsa.cli recommend SHS VCB --update # bảng khuyến nghị, cập nhật dữ liệu trước
 ```
+
+Thẻ báo cáo (`src/vnsa/report/card.py`, cũng hiện ở dashboard và Claude Desktop):
+
+```text
+HPG — Khuyến nghị: THEO DÕI (Trung lập) · Độ tin cậy: Trung bình · Khung: trung hạn
+Ngày phân tích: … · Giá hiện tại: …đ
+ĐỊNH GIÁ      Giá trị nội tại (P10 / P50 / P90) · Giá mục tiêu 12 tháng → Upside · Phương pháp + trọng số
+ĐIỂM SỐ       FA · TA · Quant → Tổng hợp (50% / 30% / 20%)
+CƠ BẢN        ROE (so với ngành) · Tăng trưởng EPS 3 năm · D/E · CFO/LNST · F-Score · cờ đỏ
+KỸ THUẬT      Xu hướng (giá/MA50/MA200), RSI · Hỗ trợ · Kháng cự
+DỰ BÁO 20 PHIÊN  Dải giá P10–P50–P90 · Xác suất tăng · VaR 95% 1 ngày
+KẾ HOẠCH      Vùng mua · Cắt lỗ · Chốt lời · Tỷ trọng gợi ý % NAV
+```
+
+Độ tin cậy = số điều kiện đạt trong 6 (có BCTC, ≥ 2 phương pháp định giá, kịch bản định giá hẹp,
+giá trị hợp lý không lệch quá ±60% so với giá, FA và TA cùng chiều, đủ ~2 năm giá): ≥ 5 Cao,
+≥ 3 Trung bình. Điểm Quant = xác suất tăng (Monte Carlo), biến động năm, lãi/lỗ mục tiêu 1.
+Ngưỡng ở `[report]`, `[recommend.quant]`; trọng số phương pháp định giá ở `[valuation.weights]`.
 
 Với mỗi mã, tool tự kiểm tra kho và chỉ tải phần còn thiếu (tham số ở `[auto]` trong settings):
 - **Sàn, ngành, loại doanh nghiệp** của mọi cổ phiếu (vnstock/VCI), tải lại sau 30 ngày. Sàn quyết
