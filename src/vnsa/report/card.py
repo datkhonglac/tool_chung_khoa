@@ -48,6 +48,11 @@ def vn_num(x: float, digits: int = 0, unit: str = "") -> str:
     return s + unit
 
 
+def _digits(x: float) -> int:
+    """Số lẻ khi in %: số nhỏ (sát ngưỡng xếp hạng) in 1 chữ số để không ra "−0%"."""
+    return 1 if not pd.isna(x) and abs(x) < 0.1 else 0
+
+
 def vn_pct(x: float, digits: int = 1, sign: bool = False) -> str:
     if x is None or pd.isna(x):
         return "—"
@@ -332,9 +337,9 @@ def format_card(c: Card) -> str:
         "",
         "ĐỊNH GIÁ",
         f"  Giá trị nội tại (P10 / P50 / P90): {vn_num(c.p10)} / {vn_num(c.p50)} / {vn_num(c.p90)}đ",
-        (f"  Giá mục tiêu 12 tháng: {vn_num(c.target)}đ → Upside {vn_pct(c.upside, 0, sign=True)}"
+        (f"  Giá mục tiêu 12 tháng: {vn_num(c.target)}đ → Upside {vn_pct(c.upside, _digits(c.upside), sign=True)}"
          + (f" + cổ tức {vn_pct(c.dividend_yield)}" if c.dividend_yield > 0 else "")
-         + f" = lợi nhuận kỳ vọng {vn_pct(c.expected_return, 0, sign=True)}"),
+         + f" = lợi nhuận kỳ vọng {vn_pct(c.expected_return, _digits(c.expected_return), sign=True)}"),
         f"  Phương pháp: {c.methods}",
         "",
         "ĐIỂM SỐ (0-100)",

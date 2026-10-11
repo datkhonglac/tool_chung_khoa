@@ -114,7 +114,8 @@ def recommend(x: Inputs, cfg: dict, notes: list[str] | None = None) -> Recommend
     else:
         dy = 0.0 if pd.isna(x.dividend_yield) else x.dividend_yield
         expected = x.fair_upside + dy
-        reasons.append(f"lợi nhuận kỳ vọng {expected:+.0%} (giá trị hợp lý {x.fair_value:,.0f} "
+        fmt = "+.1%" if abs(expected) < 0.1 else "+.0%"
+        reasons.append(f"lợi nhuận kỳ vọng {expected:{fmt}} (giá trị hợp lý {x.fair_value:,.0f} "
                        f"{x.fair_upside:+.0%}" + (f", cổ tức {dy:.1%}" if dy > 0 else "") + ")")
         thresholds = list(cfg["rating_thresholds"])
         if x.regime == "giảm":
