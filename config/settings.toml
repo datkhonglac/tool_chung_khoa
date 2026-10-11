@@ -99,3 +99,20 @@ horizons = [20, 60]         # số phiên mô phỏng (≈ 1 tháng, 3 tháng)
 n_paths = 10000
 bootstrap = true            # rút phần dư thật (true) hay phân phối chuẩn (false)
 seed = 42
+
+[recommend]
+weight_fa = 0.6             # điểm tổng = 60% FA + 40% TA
+weight_ta = 0.4
+buy_above = 65              # MUA khi điểm tổng ≥ 65 ...
+min_ta_buy = 45             # ... và điểm TA ≥ 45 (xu hướng không xấu)
+min_upside_buy = -0.10      # ... và giá không cao hơn giá trị DCF quá 10%
+sell_below = 40             # TRÁNH khi điểm tổng < 40 (hoặc Altman Z'' vùng nguy cơ)
+min_reward_risk = 2.0
+high_vol = 0.40             # biến động năm trên 40% thì nhắc giảm khối lượng
+
+[backtest]
+entry_score = 65            # mua khi điểm TA ≥ 65
+exit_score = 45             # bán khi điểm TA < 45
+atr_stop = 2.0              # cắt lỗ cố định = giá mua − 2 × ATR14
+fee = 0.0015                # phí môi giới mỗi chiều 0,15%
+sell_tax = 0.001            # thuế bán 0,1%

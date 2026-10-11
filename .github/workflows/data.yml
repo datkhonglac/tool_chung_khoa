@@ -72,6 +72,12 @@ jobs:
       - name: Rủi ro (GARCH, Monte Carlo, VaR)
         if: ${{ !inputs.skip_prices }}
         run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli risk $s; echo; done
+      - name: Khuyến nghị và backtest
+        if: ${{ !inputs.skip_prices }}
+        run: |
+          python -m vnsa.cli recommend ${{ inputs.symbols }}
+          echo
+          for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli backtest $s --last 5; echo; done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
