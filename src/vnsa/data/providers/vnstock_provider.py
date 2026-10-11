@@ -1,4 +1,4 @@
-"""BCTC năm qua thư viện vnstock (nguồn VCI - Vietcap).
+"""BCTC năm và danh sách niêm yết (sàn, ngành) qua thư viện vnstock (nguồn VCI - Vietcap).
 
 vnstock không có trên PyPI, cài riêng:
     pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
@@ -126,15 +126,88 @@ def _vnstock_statements(symbol: str, period: str = "year") -> dict[str, pd.DataF
     return {name: getattr(fin, name)(period=period) for name in STATEMENTS}
 
 
+# Sàn trong danh sách niêm yết VCI -> tên chuẩn của tool
+EXCHANGE_NAMES = {"HSX": "HOSE", "HOSE": "HOSE", "HNX": "HNX", "UPCOM": "UPCOM"}
+# Mã loại doanh nghiệp của VCI (com_type_code) -> mô hình phân tích
+COM_TYPES = {"NH": "bank", "CK": "securities", "BH": "insurance"}
+# Dự phòng khi thiếu com_type_code: tên ngành ICB cấp 2
+INDUSTRY_MODELS = [(r"ngân hàng|^banks?$", "bank"),
+                   (r"dịch vụ tài chính|financial services", "securities"),
+                   (r"bảo hiểm|insurance", "insurance")]
+
+
+def _col(df: pd.DataFrame, *names: str) -> pd.Series | None:
+    for n in names:
+        if n in df.columns:
+            return df[n]
+    return None
+
+
+def standardize_listing(by_exchange: pd.DataFrame,
+                        by_industry: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Hai bảng của vnstock Listing -> symbol, name, exchange, industry, model (chỉ cổ phiếu)."""
+    df = by_exchange.copy()
+    kind = _col(df, "type")
+    if kind is not None:
+        df = df[kind.astype(str).str.upper() == "STOCK"]
+    out = pd.DataFrame({
+        "symbol": df["symbol"].astype(str).str.upper().str.strip(),
+        "exchange": _col(df, "exchange", "board", "comGroupCode").astype(str).str.upper()
+                    .map(EXCHANGE_NAMES),
+        "name": _col(df, "organ_name", "organ_short_name", "company_name"),
+    }).dropna(subset=["exchange"])
+    out["industry"] = None
+    out["model"] = "general"
+    if by_industry is not None and len(by_industry):
+        ind = by_industry.assign(symbol=by_industry["symbol"].astype(str).str.upper())
+        ind = ind.drop_duplicates("symbol").set_index("symbol")
+        name2 = _col(ind, "icb_name2", "industry", "icb_name")
+        if name2 is not None:
+            out["industry"] = out["symbol"].map(name2)
+            for pattern, model in INDUSTRY_MODELS:
+                hit = out["industry"].fillna("").str.contains(pattern, case=False, regex=True)
+                out.loc[hit, "model"] = model
+        com = _col(ind, "com_type_code")
+        if com is not None:
+            mapped = out["symbol"].map(com.astype(str).str.upper().map(COM_TYPES))
+            out["model"] = mapped.fillna(out["model"])
+        if out["name"].isna().all():
+            out["name"] = out["symbol"].map(_col(ind, "organ_name"))
+    return out.reset_index(drop=True)
+
+
+def _vnstock_listing() -> pd.DataFrame:
+    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
+    try:
+        from vnstock import Listing
+    except ImportError as e:
+        raise RuntimeError(
+            "Chưa cài vnstock. Chạy: pip install -U --extra-index-url "
+            "https://vnstocks.com/api/simple vnstock vnai"
+        ) from e
+    ls = Listing(source="VCI")
+    try:
+        by_industry = ls.symbols_by_industries()
+    except Exception:  # noqa: BLE001 - thiếu ngành vẫn dùng được sàn
+        by_industry = None
+    return standardize_listing(ls.symbols_by_exchange(), by_industry)
+
+
 class VnstockProvider(DataProvider):
     name = "vnstock-vci"
 
-    def __init__(self, get_statements: Callable[[str], dict[str, pd.DataFrame]] = _vnstock_statements):
+    def __init__(self, get_statements: Callable[[str], dict[str, pd.DataFrame]] = _vnstock_statements,
+                 get_listing: Callable[[], pd.DataFrame] = _vnstock_listing):
         self.get_statements = get_statements   # thay được trong test, không cần mạng
+        self.get_listing = get_listing
         self.missing: list[str] = []
 
     def symbols(self) -> list[str]:
-        return []
+        return self.listing()["symbol"].tolist()
+
+    def listing(self) -> pd.DataFrame:
+        """Mọi cổ phiếu trên HOSE, HNX, UPCoM: symbol, name, exchange, industry, model."""
+        return self.get_listing()
 
     def ohlcv(self, symbol, start=None, end=None):
         raise NotImplementedError("Giá lấy bằng 'fetch' (CafeF); vnstock chỉ dùng cho BCTC")

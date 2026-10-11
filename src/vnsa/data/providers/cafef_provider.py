@@ -59,10 +59,12 @@ class CafeFProvider(DataProvider):
         pause: float = 0.3,
         get_json: Callable[[str], dict] = _http_get_json,
         retries: int = 2,
+        log: Callable[[str], None] | None = print,
     ):
         self.pause = pause          # giây nghỉ giữa các lần gọi, để không bị chặn
         self.get_json = get_json    # thay được trong test, không cần mạng
         self.retries = retries
+        self.log = log              # in tiến trình; None = im lặng (MCP server dùng stdout)
         self.repaired: list[str] = []   # ngày có nến mâu thuẫn đã được sửa ở lần tải gần nhất
 
     def symbols(self) -> list[str]:
@@ -100,7 +102,8 @@ class CafeFProvider(DataProvider):
             if not batch or len(rows) >= int(data.get("TotalCount") or 0):
                 break
             time.sleep(self.pause)
-        print(f"      {start} → {end}: {len(rows)} phiên ({page} trang)", flush=True)
+        if self.log:
+            self.log(f"      {start} → {end}: {len(rows)} phiên ({page} trang)")
         return rows
 
     def raw_rows(self, symbol: str, start: date, end: date) -> pd.DataFrame:

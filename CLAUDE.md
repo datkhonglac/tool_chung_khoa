@@ -22,6 +22,13 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 - Mọi con số do Python tính; LLM chỉ diễn giải. Không bịa dữ liệu thị trường.
 
 ## Lệnh
+- `python -m vnsa.cli analyze MÃ... [--brief] [--refresh] [--full] [--offline]` — **mã bất kỳ** HOSE/HNX/
+  UPCoM: `data/autofetch.py` tự tải phần thiếu/cũ (sàn+ngành và BCTC qua vnstock, giá CafeF tải tăng dần,
+  tự tải lại toàn bộ khi CafeF điều chỉnh giá cũ) rồi in toàn bộ phân tích. Tham số `[auto]`.
+  Biên độ/bước giá theo sàn qua `src/vnsa/market.py` (bảng `companies`; chưa biết sàn → HOSE), không
+  dùng thẳng `band_hose`. Ngân hàng/CK/bảo hiểm (`model` ≠ general): `analysis.fa/valuation` báo
+  ValueError, khuyến nghị chỉ dùng TA + P/E, P/B. MCP: `analyze_symbol`, `update_symbol` (chuyển
+  stdout sang stderr khi tải). Dashboard: ô "Mã bất kỳ" ở thanh bên.
 - `python -m vnsa.cli fetch [MÃ...] [--years 5]` — tải giá từ CafeF (API JSON không chính thức,
   ≤1 năm mỗi lần gọi, ngày dạng tháng/ngày/năm) → `data/raw/prices/` → kho. Cách chính để lấy giá.
 - `python -m vnsa.cli fetch-bctc [MÃ...]` — BCTC năm hợp nhất qua vnstock nguồn VCI → `data/raw/bctc/`

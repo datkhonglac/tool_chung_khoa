@@ -1,5 +1,6 @@
 """Dòng lệnh của tool.
 
+  python -m vnsa.cli analyze SHS VCB  # MỌI mã HOSE/HNX/UPCoM: tự tải giá, BCTC, sàn rồi phân tích
   python -m vnsa.cli fetch            # tải 5 năm giá của danh sách theo dõi từ CafeF rồi nạp
   python -m vnsa.cli fetch-bctc       # tải BCTC năm (vnstock/VCI) của danh sách theo dõi vào kho
   python -m vnsa.cli ratios FPT       # bộ chỉ số tài chính năm: ROE, ROA, biên LN, D/E, CFO/LNST, EPS
@@ -42,7 +43,8 @@ def cmd_load(args) -> int:
     if not symbols:
         print(f"Chưa có file CSV nào trong {prov.folder}. Xem README, mục 'Lấy dữ liệu giá'.")
         return 1
-    band = settings()["market"]["band_hose"]
+    from vnsa import market
+
     total, failed = 0, []
     with Store(path("warehouse")) as store:
         for sym in symbols:
@@ -52,7 +54,7 @@ def cmd_load(args) -> int:
                 print(f"  ✗ {sym}: {e}")
                 failed.append(sym)
                 continue
-            issues = validate_prices(df, band=band)
+            issues = validate_prices(df, band=market.band(sym))
             errors = [i for i in issues if i.level == "LOI"]
             if errors and not args.force:
                 print(f"  ✗ {sym}: {len(errors)} lỗi, không nạp (dùng --force để nạp vẫn).")
@@ -278,7 +280,11 @@ def cmd_fa_score(args) -> int:
     from vnsa import analysis
 
     fin = loaded[0]
-    f, z, score, v = analysis.fa(analysis.Data(sym, *loaded))
+    try:
+        f, z, score, v = analysis.fa(analysis.Data(sym, *loaded))
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
     if v is None and not loaded[1].empty:
         print("  ! không định giá được; bỏ nhóm định giá")
 
@@ -416,7 +422,9 @@ def cmd_risk(args) -> int:
     except ValueError as e:
         print(f"  ✗ {sym}: {e}")
         return 1
-    fit, sim, band = r.fit, r.sim, settings()["market"]["band_hose"]
+    from vnsa import market
+
+    fit, sim, band = r.fit, r.sim, market.band(sym)
     print(f"{sym} — rủi ro, giá {r.price:,.0f} đ ({prices['date'].iloc[-1]:%d/%m/%Y})")
     print(f"\nGARCH(1,1) trên {len(fit.resid)} phiên: alpha {fit.alpha:.3f}, beta {fit.beta:.3f}, "
           f"bền vững {fit.persistence:.3f} (cú sốc giảm một nửa sau ~{fit.half_life:.1f} phiên)"
@@ -452,6 +460,9 @@ def cmd_recommend(args) -> int:
 
     symbols = [s.upper() for s in args.symbols] or settings()["watchlist"]["symbols"]
     rows, code = [], 0
+    for sym in symbols if getattr(args, "update", False) else []:
+        rep = analysis.update(sym)
+        print(f"  … {sym}: cập nhật dữ liệu" + "".join(f"\n    ✗ {e}" for e in rep.errors))
     for sym in symbols:
         try:
             rec, _ = analysis.recommendation(sym)
@@ -485,7 +496,7 @@ def cmd_backtest(args) -> int:
     loaded = _load(sym, need_fin=False)
     if loaded is None:
         return 1
-    cfg = dict(settings()["backtest"], ticks=settings()["plan"].get("ticks"))
+    cfg = analysis.backtest_config(sym)
     if args.entry is not None:
         cfg["entry_score"] = args.entry
     if args.exit is not None:
@@ -515,10 +526,60 @@ def cmd_backtest(args) -> int:
     return 0
 
 
+def cmd_analyze(args) -> int:
+    """Một mã bất kỳ: tự tải dữ liệu còn thiếu/cũ rồi in toàn bộ phân tích."""
+    from vnsa import analysis, market
+
+    code = 0
+    for i, raw in enumerate(args.symbols):
+        sym = raw.upper().strip()
+        if i:
+            print("\n" + "═" * 78 + "\n")
+        if not args.offline:
+            print(f"{sym} — cập nhật dữ liệu (giá: CafeF; BCTC, sàn, ngành: vnstock/VCI)")
+            rep = analysis.update(sym, args.refresh, args.full, log=print if args.verbose else None)
+            print(rep)
+            if not rep.ok:
+                print(f"  ✗ {sym}: chưa có giá nên không phân tích được. Kiểm tra lại mã.")
+                code = 1
+                continue
+        prof = market.profile(sym)
+        where = (f"sàn {prof['exchange']} (biên độ ±{market.band(sym):.0%})" if prof["known"] else
+                 f"chưa rõ sàn, tạm tính như {prof['exchange']} (±{market.band(sym):.0%})")
+        print("\n" + " · ".join(x for x in (f"{sym}", prof["name"], where, prof["industry"]) if x))
+        fin_note = market.financial_note(sym)
+        one = argparse.Namespace(symbol=sym, symbols=[sym], days=None, paths=None, growth=None,
+                                 wacc=None, update=False)
+        sections = [("KHUYẾN NGHỊ", cmd_recommend)]
+        if not args.brief:
+            sections += [("KỸ THUẬT", cmd_ta), ("KẾ HOẠCH GIAO DỊCH", cmd_plan),
+                         ("RỦI RO", cmd_risk)]
+            if analysis.load(sym, need_fin=False).fin.empty:
+                fin_note = None
+                sections.append(("TÀI CHÍNH", lambda _: print(
+                    "  Chưa có BCTC (nguồn vnstock lỗi hoặc chưa cài): bỏ qua chỉ số, điểm FA và "
+                    f"định giá. Thử lại: analyze {sym} --refresh") or 0))
+            else:
+                sections += ([("CHỈ SỐ TÀI CHÍNH", cmd_ratios)] if fin_note else
+                             [("CHẤT LƯỢNG TÀI CHÍNH", cmd_fa_score), ("ĐỊNH GIÁ", cmd_value)])
+        for title, fn in sections:
+            print(f"\n── {title} " + "─" * (74 - len(title)))
+            try:
+                if fn(one):
+                    code = 1
+            except Exception as e:  # noqa: BLE001 - một phần lỗi không làm dừng cả báo cáo
+                print(f"  ✗ không tính được: {e}")
+                code = 1
+        if fin_note and not args.brief:
+            print(f"  ! {fin_note}")
+    return code
+
+
 def cmd_check(args) -> int:
+    from vnsa import market
     from vnsa.data.store import Store
 
-    band = settings()["market"]["band_hose"]
+    band = market.band(args.symbol)
     with Store(path("warehouse")) as store:
         df = store.prices(args.symbol)
     if df.empty:
@@ -620,7 +681,19 @@ def main(argv: list[str] | None = None) -> int:
 
     prc = sub.add_parser("recommend", help="Khuyến nghị MUA/THEO DÕI/TRÁNH cho danh sách mã")
     prc.add_argument("symbols", nargs="*", help="Bỏ trống = danh sách theo dõi trong settings.toml")
+    prc.add_argument("--update", action="store_true",
+                     help="Tự tải/cập nhật dữ liệu từng mã trước (như analyze)")
     prc.set_defaults(func=cmd_recommend)
+
+    pan = sub.add_parser("analyze", help="Mã bất kỳ: tự tải dữ liệu còn thiếu rồi phân tích đầy đủ")
+    pan.add_argument("symbols", nargs="+", help="Một hoặc nhiều mã HOSE/HNX/UPCoM, vd: SHS VCB ACV")
+    pan.add_argument("--brief", action="store_true", help="Chỉ in khuyến nghị")
+    pan.add_argument("--refresh", action="store_true",
+                     help="Tải lại BCTC và danh sách sàn/ngành dù chưa cũ")
+    pan.add_argument("--full", action="store_true", help="Tải lại toàn bộ giá thay vì phần mới")
+    pan.add_argument("--offline", action="store_true", help="Không tải gì, chỉ dùng dữ liệu trong kho")
+    pan.add_argument("--verbose", action="store_true", help="In tiến trình tải từng đoạn của CafeF")
+    pan.set_defaults(func=cmd_analyze)
 
     pbt = sub.add_parser("backtest", help="Backtest chiến lược theo điểm TA")
     pbt.add_argument("symbol")

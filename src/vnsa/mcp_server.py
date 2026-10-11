@@ -10,8 +10,10 @@ Hướng dẫn cấu hình Claude Desktop: README, mục "MCP server".
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import math
+import sys
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 
@@ -27,11 +29,12 @@ except ImportError:                    # mcp 1.x
     from mcp.server.fastmcp import FastMCP as _Server
 
 INSTRUCTIONS = (
-    "Công cụ phân tích cổ phiếu Việt Nam (HOSE). Mọi số liệu do các tool này tính từ dữ liệu đã tải "
-    "về máy; không tự đoán hay bịa số liệu thị trường. Giá tính bằng đồng, đã điều chỉnh cổ tức/"
-    "chia tách; tỷ lệ là số thập phân (0.25 = 25%). Nếu tool báo thiếu dữ liệu, hướng dẫn người "
-    "dùng chạy lệnh được nêu trong thông báo. Kết quả là sàng lọc theo quy tắc, không phải lời "
-    "khuyên đầu tư."
+    "Công cụ phân tích cổ phiếu Việt Nam (mọi mã HOSE, HNX, UPCoM). Mọi số liệu do các tool này "
+    "tính từ dữ liệu đã tải về máy; không tự đoán hay bịa số liệu thị trường. Giá tính bằng đồng, "
+    "đã điều chỉnh cổ tức/chia tách; tỷ lệ là số thập phân (0.25 = 25%). Khi người dùng hỏi về một "
+    "mã, gọi analyze_symbol trước: tool tự tải giá (CafeF), BCTC và sàn/ngành (vnstock) nếu kho "
+    "chưa có hoặc đã cũ. Ngân hàng, chứng khoán, bảo hiểm không có DCF/điểm FA (mô hình không áp "
+    "dụng). Kết quả là sàng lọc theo quy tắc, không phải lời khuyên đầu tư."
 )
 mcp = _Server("vn-stock-analyzer", instructions=INSTRUCTIONS)
 
@@ -66,6 +69,45 @@ def _guard(fn):
         except (analysis.DataMissing, ValueError) as e:
             return {"error": str(e)}
     return wrapper
+
+
+def _update(symbol: str, refresh: bool = False):
+    # Thư viện tải dữ liệu có thể in ra stdout, mà stdout là kênh giao tiếp với Claude Desktop
+    with contextlib.redirect_stdout(sys.stderr):
+        return analysis.update(symbol, refresh=refresh)
+
+
+@mcp.tool()
+@_guard
+def update_symbol(symbol: str, refresh: bool = False) -> dict:
+    """Tải/cập nhật dữ liệu một mã bất kỳ (HOSE/HNX/UPCoM): giá 5 năm từ CafeF (lần sau chỉ tải
+    phiên mới), BCTC năm và sàn/ngành từ vnstock. refresh=True: tải lại BCTC dù chưa cũ.
+    Lần đầu mất khoảng 10–30 giây."""
+    from vnsa import market
+
+    rep = _update(symbol, refresh)
+    return {"symbol": rep.symbol, "ready": rep.ok, "errors": rep.errors,
+            "steps": [{"step": s.what, "status": s.status, "detail": s.detail} for s in rep.steps],
+            "profile": market.profile(rep.symbol)}
+
+
+@mcp.tool()
+@_guard
+def analyze_symbol(symbol: str) -> dict:
+    """Phân tích nhanh MỘT MÃ BẤT KỲ: tự cập nhật dữ liệu nếu thiếu/cũ, rồi trả khuyến nghị
+    (MUA/THEO DÕI/TRÁNH, lý do), điểm FA/TA, định giá, rủi ro, kế hoạch giao dịch và sàn/ngành.
+    Xem chi tiết hơn bằng get_valuation, get_technical, get_risk..."""
+    from vnsa import market
+
+    rep = _update(symbol)
+    if not rep.ok:
+        return {"symbol": rep.symbol, "error": "không có giá để phân tích: " + "; ".join(rep.errors)}
+    rec, plan = analysis.recommendation(rep.symbol)
+    return {"symbol": rec.symbol, "profile": market.profile(rec.symbol),
+            "band": market.band(rec.symbol), "action": rec.action, "score": rec.score,
+            "reasons": rec.reasons, "inputs": rec.inputs, "plan": plan,
+            "data_update": [str(s).strip() for s in rep.steps],
+            "disclaimer": "Sàng lọc theo quy tắc trong settings.toml, không phải lời khuyên đầu tư."}
 
 
 @mcp.tool()
@@ -162,7 +204,7 @@ def get_technical(symbol: str) -> dict:
 @_guard
 def get_trade_plan(symbol: str) -> dict:
     """Kế hoạch mua tham khảo: giá vào, cắt lỗ theo ATR/hỗ trợ, mục tiêu, khối lượng theo % rủi ro
-    vốn trong cấu hình (tôn trọng bước giá HOSE và lô 100 cp)."""
+    vốn trong cấu hình (tôn trọng bước giá theo sàn và lô 100 cp)."""
     d = analysis.load(symbol, need_fin=False)
     p = analysis.plan(analysis.indicators(d.prices))
     return {"symbol": d.symbol, "plan": p, "risk_per_share": p.risk_per_share,
@@ -221,7 +263,7 @@ def run_backtest(symbol: str, entry_score: float | None = None,
     from vnsa.ta.score import ta_score_series
 
     d = analysis.load(symbol, need_fin=False)
-    cfg = dict(settings()["backtest"], ticks=settings()["plan"].get("ticks"))
+    cfg = analysis.backtest_config(d.symbol)
     if entry_score is not None:
         cfg["entry_score"] = entry_score
     if exit_score is not None:

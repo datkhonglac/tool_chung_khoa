@@ -37,8 +37,40 @@ def load(symbol: str, need_fin: bool = True, need_prices: bool = True) -> Data:
                                  ("fetch-bctc", need_fin and fin.empty)) if miss]
     if missing:
         steps = " và ".join(f"'{c} {sym}'" for c in missing)
-        raise DataMissing(f"{sym}: kho chưa có đủ dữ liệu. Chạy {steps} trước.")
+        raise DataMissing(f"{sym}: kho chưa có đủ dữ liệu. Chạy {steps} trước "
+                          f"(hoặc 'analyze {sym}' để tự tải).")
     return Data(sym, fin, prices, index)
+
+
+def update(symbol: str, refresh: bool = False, full: bool = False, log=None):
+    """Tự tải/cập nhật giá (CafeF), BCTC và thông tin sàn (vnstock) cho một mã bất kỳ.
+    Trả về UpdateReport (từng bước đã làm gì); xem data/autofetch.py."""
+    from vnsa.data.autofetch import ensure
+
+    return ensure(symbol, refresh, full, log)
+
+
+def _not_financial(symbol: str) -> None:
+    from vnsa.market import financial_note
+
+    note = financial_note(symbol)
+    if note:
+        raise ValueError(note)
+
+
+def multiples(d: Data) -> tuple[float, float]:
+    """(P/E, P/B) đơn giản từ BCTC năm gần nhất: giá / EPS, giá / giá trị sổ sách mỗi cp
+    (vốn chủ công ty mẹ / số cp = vốn điều lệ / mệnh giá). Dùng được cho cả ngân hàng."""
+    nan = float("nan")
+    if d.fin.empty or d.prices.empty:
+        return nan, nan
+    last = d.fin.iloc[-1]
+    price = float(d.prices["close"].iloc[-1])
+    shares = last["paid_in_capital"] / settings()["valuation"]["par_value"]
+    book = last["equity"] - (0 if pd.isna(last["minority_interest"]) else last["minority_interest"])
+    pe = price / last["eps"] if last["eps"] > 0 else nan
+    pb = price / (book / shares) if shares > 0 and book > 0 else nan
+    return float(pe), float(pb)
 
 
 def symbols() -> list[str]:
@@ -55,6 +87,7 @@ def valuation(d: Data, growth: float | None = None, wacc: float | None = None):
     """(Assumptions, Valuation, beta thô). ValueError nếu không định giá được."""
     from vnsa.fa import valuation as val
 
+    _not_financial(d.symbol)
     a = val.Assumptions.from_settings(settings()["valuation"])
     b, weeks = (val.beta(d.prices, d.index, a.beta_years) if not d.index.empty
                 else (float("nan"), 0))
@@ -68,6 +101,7 @@ def fa(d: Data):
     """(bảng F-Score, bảng Altman, FAScore, Valuation hoặc None)."""
     from vnsa.fa import scores as sc
 
+    _not_financial(d.symbol)
     cfg = settings()["fa_score"]
     v = None
     if not d.prices.empty:
@@ -105,12 +139,20 @@ def ta(ind: pd.DataFrame):
 
 def plan(ind: pd.DataFrame):
     """Kế hoạch mua theo giá đóng cửa phiên cuối. ValueError nếu chưa đủ dữ liệu tính ATR."""
+    from vnsa import market
     from vnsa.ta.plan import trade_plan
 
     sup, res = levels(ind)
     last = ind.iloc[-1]
-    cfg = settings()["plan"]
-    return trade_plan(float(last["close"]), float(last["atr"]), sup, res, cfg, cfg.get("ticks"))
+    ticks = market.ticks(last["symbol"]) if "symbol" in ind else market.ticks()
+    return trade_plan(float(last["close"]), float(last["atr"]), sup, res, settings()["plan"], ticks)
+
+
+def backtest_config(symbol: str) -> dict:
+    """Tham số [backtest] kèm bước giá theo sàn của mã."""
+    from vnsa import market
+
+    return dict(settings()["backtest"], ticks=market.ticks(symbol))
 
 
 @dataclass
@@ -127,6 +169,7 @@ class RiskReport:
 
 def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
          n_paths: int | None = None) -> RiskReport:
+    from vnsa import market
     from vnsa.risk.garch import fit_garch, log_returns_pct
     from vnsa.risk.simulate import Simulation, garch_var, historical_var, simulate
 
@@ -140,9 +183,9 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
         var[q] = {"hist": hv, "cvar": cv, "garch": garch_var(fit, q),
                   "garch_normal": garch_var(fit, q, empirical=False)}
     horizons = sorted(horizons or cfg["horizons"])
-    sim = simulate(fit, p0, max(horizons), n_paths=n_paths or cfg["n_paths"],
-                   band=settings()["market"]["band_hose"], bootstrap=cfg["bootstrap"],
-                   seed=cfg["seed"])
+    band = market.band(prices["symbol"].iloc[-1]) if "symbol" in prices else market.band()
+    sim = simulate(fit, p0, max(horizons), n_paths=n_paths or cfg["n_paths"], band=band,
+                   bootstrap=cfg["bootstrap"], seed=cfg["seed"])
     try:
         p = plan(indicators(prices))
     except (ValueError, IndexError):
@@ -157,12 +200,17 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
 
 def recommendation(symbol: str):
     """Khuyến nghị tổng hợp cho một mã (xem recommend/engine.py)."""
+    from vnsa.market import financial_note
     from vnsa.recommend.engine import Inputs, recommend
 
     d = load(symbol, need_fin=False)
     fa_score = z_em = upside = pe = pb = float("nan")
     notes = []
-    if not d.fin.empty:
+    fin_note = financial_note(d.symbol)
+    if fin_note:
+        pe, pb = multiples(d)
+        notes.append(fin_note)
+    elif not d.fin.empty:
         _, z, s, v = fa(d)
         fa_score, z_em = s.total, float(z["z_em"].iloc[-1])
         if v is not None:

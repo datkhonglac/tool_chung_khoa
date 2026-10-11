@@ -18,6 +18,10 @@ on:
         description: "Bỏ qua bước tải giá (chỉ tải BCTC)"
         type: boolean
         default: false
+      analyze:
+        description: "Mã bất kỳ để thử lệnh analyze (tự tải giá, BCTC, sàn/ngành)"
+        required: false
+        default: "SHS VCB ACV"
 
 jobs:
   test:
@@ -83,6 +87,9 @@ jobs:
         run: |
           pip install -e ".[mcp,dashboard]"
           python scripts/smoke_test.py ${{ inputs.symbols }}
+      - name: Phân tích mã bất kỳ (tự tải dữ liệu)
+        if: ${{ inputs.analyze != '' }}
+        run: python -m vnsa.cli analyze ${{ inputs.analyze }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

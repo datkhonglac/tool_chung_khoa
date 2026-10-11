@@ -11,10 +11,33 @@ Mọi con số do Python tính; tham số nằm ở `config/settings.toml`. Kế
 Làm hằng ngày (Codespaces):
 
 ```bash
-python -m vnsa.cli fetch && python -m vnsa.cli fetch-bctc   # cập nhật dữ liệu
+python -m vnsa.cli analyze SHS                              # MỌI mã HOSE/HNX/UPCoM: tự tải rồi phân tích
+python -m vnsa.cli fetch && python -m vnsa.cli fetch-bctc   # cập nhật danh sách theo dõi
 python -m vnsa.cli recommend                                # bảng khuyến nghị 5 mã
 streamlit run dashboard/app.py                              # mở dashboard (cổng 8501)
 ```
+
+## Phân tích một mã bất kỳ (tự lấy dữ liệu)
+
+```bash
+python -m vnsa.cli analyze SHS VCB ACV        # đầy đủ: khuyến nghị, kỹ thuật, kế hoạch, rủi ro, FA, định giá
+python -m vnsa.cli analyze HPG --brief        # chỉ khuyến nghị
+python -m vnsa.cli recommend SHS VCB --update # bảng khuyến nghị, cập nhật dữ liệu trước
+```
+
+Với mỗi mã, tool tự kiểm tra kho và chỉ tải phần còn thiếu (tham số ở `[auto]` trong settings):
+- **Sàn, ngành, loại doanh nghiệp** của mọi cổ phiếu (vnstock/VCI), tải lại sau 30 ngày. Sàn quyết
+  định biên độ (HOSE ±7%, HNX ±10%, UPCoM ±15%) và bước giá (HNX/UPCoM 100 đồng).
+- **Giá**: lần đầu tải 5 năm từ CafeF; lần sau chỉ tải phiên mới. Nếu CafeF đã điều chỉnh lại giá cũ
+  (cổ tức, chia tách) thì tự tải lại toàn bộ cho khớp. Trước 15h chưa tính phiên hôm nay.
+- **BCTC năm** (vnstock/VCI), tải lại sau 30 ngày. Lỗi BCTC không chặn phần kỹ thuật.
+
+`--refresh` tải lại BCTC và danh sách sàn ngay; `--full` tải lại toàn bộ giá; `--offline` không tải gì.
+**Ngân hàng, chứng khoán, bảo hiểm**: DCF-FCFF, Altman Z và điểm FA không áp dụng (thiết kế cho doanh
+nghiệp thường), tool chỉ dùng kỹ thuật cùng P/E, P/B và ghi rõ lý do.
+
+Trên dashboard: gõ mã vào ô **Mã bất kỳ** ở thanh bên rồi bấm **Lấy dữ liệu & phân tích**.
+Trên Claude Desktop: hỏi "phân tích mã SHS" — Claude gọi công cụ `analyze_symbol`, tự tải dữ liệu.
 
 ## 0. Chạy trên GitHub Codespaces (khuyến nghị)
 
@@ -160,8 +183,9 @@ giá mở cửa phiên sau tín hiệu, có cắt lỗ ATR, T+2, phí 0,15%/chi�
 
 ## 8. Hỏi Claude Desktop qua MCP server (ngày 8)
 
-MCP server cho Claude Desktop gọi thẳng các phép tính của tool (10 công cụ: giá, chỉ số tài chính,
-định giá, điểm FA, kỹ thuật, kế hoạch, rủi ro, khuyến nghị, backtest, danh sách mã). Claude Desktop
+MCP server cho Claude Desktop gọi thẳng các phép tính của tool (12 công cụ: phân tích/cập nhật mã bất
+kỳ, giá, chỉ số tài chính, định giá, điểm FA, kỹ thuật, kế hoạch, rủi ro, khuyến nghị, backtest,
+danh sách mã). Claude Desktop
 chạy trên **máy Windows**, nên dữ liệu phải có trong thư mục dự án trên máy đó:
 
 ```powershell
@@ -188,7 +212,7 @@ streamlit run dashboard/app.py
 Codespaces tự mở cổng 8501 (tab **Ports** → biểu tượng 🌐 nếu trình duyệt chưa mở). Trên Windows:
 `pip install -e ".[dashboard]"` rồi chạy cùng lệnh, mở http://localhost:8501. Dashboard có 6 tab:
 tổng quan khuyến nghị, kỹ thuật & kế hoạch, tài chính, định giá (chỉnh g1/WACC), rủi ro (biểu đồ quạt
-Monte Carlo), backtest (thanh trượt ngưỡng). Dữ liệu chỉ thay đổi khi chạy `fetch`/`fetch-bctc`.
+Monte Carlo), backtest (thanh trượt ngưỡng). Ô **Mã bất kỳ** ở thanh bên tự tải dữ liệu cho mã mới.
 
 ## 10. Kiểm tra toàn bộ trên dữ liệu thật
 
@@ -224,13 +248,15 @@ src/vnsa/
   data/excel_import.py        ghép file Excel tải từ web
   data/cleaning.py            kiểm tra chất lượng
   data/store.py               kho DuckDB
-  data/providers/vnstock_provider.py  BCTC năm qua vnstock (VCI)
+  data/providers/vnstock_provider.py  BCTC năm, danh sách niêm yết (sàn, ngành) qua vnstock (VCI)
+  data/autofetch.py           tự tải phần dữ liệu còn thiếu/cũ cho một mã bất kỳ
+  market.py                   quy tắc theo sàn: biên độ, bước giá; nhận diện ngân hàng/CK/bảo hiểm
   fa/ratios.py                bộ chỉ số tài chính
   fa/valuation.py             WACC, DCF-FCFF, P/E, P/B, độ nhạy
   fa/scores.py                Piotroski F-Score, Altman Z, điểm FA
   ta/indicators.py            chỉ báo kỹ thuật
   ta/levels.py, ta/score.py   hỗ trợ/kháng cự, điểm TA
-  ta/plan.py                  kế hoạch giao dịch (cắt lỗ ATR, khối lượng, bước giá HOSE)
+  ta/plan.py                  kế hoạch giao dịch (cắt lỗ ATR, khối lượng, bước giá theo sàn)
   risk/garch.py               GARCH(1,1)
   risk/simulate.py            Monte Carlo, VaR, CVaR
   recommend/engine.py         khuyến nghị MUA / THEO DÕI / TRÁNH
@@ -255,3 +281,4 @@ trong `data/providers/`, không phải sửa phần còn lại.
 - Đối chiếu BCTC với số công bố gốc; mua gói vnstock trả phí để có hơn 4 năm BCTC.
 - Duyệt lại giả định định giá (`[valuation]`) và ngưỡng chấm điểm theo kinh nghiệm của bạn.
 - Thêm mã vào `[watchlist]`; backtest nhiều mã cùng lúc; cảnh báo tự động khi khuyến nghị đổi.
+- Kế hoạch chi tiết: `docs/KIEN_TRUC_NANG_CAP_V2.md`.
