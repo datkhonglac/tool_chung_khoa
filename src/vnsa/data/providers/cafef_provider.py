@@ -62,6 +62,7 @@ class CafeFProvider(DataProvider):
         self.pause = pause          # giây nghỉ giữa các lần gọi, để không bị chặn
         self.get_json = get_json    # thay được trong test, không cần mạng
         self.retries = retries
+        self.repaired: list[str] = []   # ngày có nến mâu thuẫn đã được sửa ở lần tải gần nhất
 
     def symbols(self) -> list[str]:
         return []  # CafeF có mọi mã niêm yết; danh sách theo dõi nằm ở config/settings.toml
@@ -125,6 +126,17 @@ class CafeFProvider(DataProvider):
         end = end or date.today()
         start = start or end - timedelta(days=365 * 5)
         df = normalize_prices(self.raw_rows(symbol, start, end), symbol, price_unit="nghin")
-        return df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))].reset_index(
-            drop=True
-        )
+        df = df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))]
+        return self._repair_ohlc(df.reset_index(drop=True))
+
+    def _repair_ohlc(self, df: pd.DataFrame) -> pd.DataFrame:
+        """CafeF thỉnh thoảng ghi giá đóng/mở cửa nằm ngoài khoảng cao-thấp (ví dụ MWG 08/05/2025:
+        đóng cửa 60,3 nhưng cao nhất 60,2). Nới cao/thấp cho bao được mở/đóng cửa và ghi lại ngày
+        đã sửa vào self.repaired để báo cho người dùng; không đụng tới giá đóng cửa."""
+        oc_max = df[["open", "close"]].max(axis=1)
+        oc_min = df[["open", "close"]].min(axis=1)
+        bad = (df["high"] < oc_max) | (df["low"] > oc_min)
+        self.repaired = df.loc[bad, "date"].dt.strftime("%d/%m/%Y").tolist()
+        df["high"] = df["high"].where(~bad, df["high"].combine(oc_max, max))
+        df["low"] = df["low"].where(~bad, df["low"].combine(oc_min, min))
+        return df

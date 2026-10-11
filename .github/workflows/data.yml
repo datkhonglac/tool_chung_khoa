@@ -46,6 +46,8 @@ jobs:
             -A "Mozilla/5.0" "https://cafef.vn/du-lieu/Ajax/PageNew/DataHistory/PriceHistory.ashx?Symbol=FPT&StartDate=&EndDate=&PageIndex=1&PageSize=2"
       - run: python -m vnsa.cli fetch ${{ inputs.symbols }} --years ${{ inputs.years }}
       - run: python -m vnsa.cli list
+      - name: Kiểm tra chất lượng từng mã
+        run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli check $s; echo; done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

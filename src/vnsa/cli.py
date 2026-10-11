@@ -109,6 +109,9 @@ def cmd_fetch(args) -> int:
         )
         first, last = df["date"].min().date(), df["date"].max().date()
         print(f"  ✓ {sym}: {len(df)} phiên ({first} → {last}) → {out.relative_to(PROJECT_ROOT)}")
+        if prov.repaired:
+            print(f"      sửa cao/thấp cho {len(prov.repaired)} phiên CafeF ghi sai: "
+                  + ", ".join(prov.repaired))
         done.append(sym)
     if args.no_load or not done:
         return code

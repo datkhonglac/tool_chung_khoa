@@ -152,3 +152,22 @@ def test_cafef_fetch_splits_years_pages_and_adjusts():
     assert df["volume"].tolist() == [500, 800, 900, 700]       # khớp lệnh, không phải thỏa thuận
     assert df["close"].tolist() == [40_000, 50_000, 51_000, 52_000]   # nghìn đồng -> đồng, điều chỉnh
     assert df.loc[0, "high"] == 40_400                          # cả nến được điều chỉnh (101 * 0.4)
+
+
+def test_cafef_repairs_candle_where_close_above_high():
+    from datetime import date
+
+    from vnsa.data.providers.cafef_provider import CafeFProvider
+
+    # Đúng dòng lỗi thật của MWG ngày 08/05/2025 trên CafeF: đóng cửa 60,3 > cao nhất 60,2.
+    row = {"Ngay": "08/05/2025", "GiaDieuChinh": 60.3, "GiaDongCua": 60.3, "GiaMoCua": 60.1,
+           "GiaCaoNhat": 60.2, "GiaThapNhat": 58.9, "KhoiLuongKhopLenh": 9463100}
+
+    def fake_get(url):
+        return {"Success": True, "Data": {"TotalCount": 1, "Data": [row]}}
+
+    prov = CafeFProvider(pause=0, get_json=fake_get)
+    df = prov.ohlcv("MWG", date(2025, 5, 1), date(2025, 5, 10))
+    assert prov.repaired == ["08/05/2025"]
+    assert (df.loc[0, "high"], df.loc[0, "close"], df.loc[0, "low"]) == (60_300, 60_300, 58_900)
+    assert validate_prices(df) == []
