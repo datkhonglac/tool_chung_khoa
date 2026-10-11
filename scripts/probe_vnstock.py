@@ -42,9 +42,32 @@ def show(title: str, fn) -> None:
     time.sleep(2)
 
 
+def items(symbols: list[str]) -> int:
+    """--items: in toàn bộ item_id / tên khoản mục BCTC quý (để ánh xạ chỉ số ngân hàng, CK)."""
+    from vnstock import Finance
+
+    for sym in symbols:
+        fin = Finance(source="VCI", symbol=sym)
+        for name in ("income_statement", "balance_sheet", "cash_flow"):
+            try:
+                df = getattr(fin, name)(period="quarter")
+            except Exception as e:  # noqa: BLE001
+                print(f"{sym} {name}: LỖI {e}")
+                continue
+            last = [c for c in df.columns if str(c)[:4].isdigit()][:1]
+            print(f"\n===== {sym} {name} ({len(df)} dòng)")
+            for _, r in df.iterrows():
+                v = r[last[0]] if last else ""
+                print(f"  {r['item_id']:<70} | {str(r['item'])[:60]:<60} | {v}")
+            time.sleep(2)
+    return 0
+
+
 def main() -> int:
     from vnstock import Company, Finance, Quote
 
+    if sys.argv[1:2] == ["--items"]:
+        return items([s.upper() for s in sys.argv[2:]])
     for sym in [s.upper() for s in sys.argv[1:]] or ["FPT", "VCB"]:
         fin = Finance(source="VCI", symbol=sym)
         for name in ("income_statement", "balance_sheet", "cash_flow"):
