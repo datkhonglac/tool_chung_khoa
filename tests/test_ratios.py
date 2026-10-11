@@ -116,7 +116,9 @@ def test_vnstock_vci_tables_are_standardized():
     }
     prov = VnstockProvider(get_statements=lambda sym: statements)
     df = prov.fundamentals("fpt")
-    assert prov.missing == []
+    core = ["revenue", "gross_profit", "net_income", "net_income_parent", "eps", "total_assets",
+            "total_liabilities", "equity", "minority_interest", "short_debt", "long_debt", "cfo"]
+    assert not set(core) & set(prov.missing)
     assert df["year"].tolist() == [2024, 2025]
     assert df["symbol"].tolist() == ["FPT", "FPT"]
     row = df.set_index("year").loc[2025]

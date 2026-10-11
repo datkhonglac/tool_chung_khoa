@@ -20,3 +20,17 @@ band_upcom = 0.15
 
 [watchlist]
 symbols = ["FPT", "HPG", "MWG", "VNM", "DGC"]
+
+[valuation]
+# Giả định định giá — xem lại định kỳ. Tỷ lệ dạng thập phân (0.035 = 3,5%).
+index = "VNINDEX"              # chỉ số để tính beta (lệnh fetch tự tải kèm)
+risk_free = 0.035              # lợi suất trái phiếu Chính phủ 10 năm
+equity_risk_premium = 0.08     # phần bù rủi ro thị trường cổ phiếu Việt Nam
+terminal_growth = 0.03         # tăng trưởng dài hạn của FCFF (không nên vượt tăng trưởng GDP danh nghĩa)
+forecast_years = 5
+max_stage1_growth = 0.20       # g1 lấy từ CAGR LNST công ty mẹ, chặn trên ở mức này
+default_tax_rate = 0.20
+default_beta = 1.0
+beta_years = 3
+adjust_beta = true             # beta Blume = 0,67 × beta thô + 0,33
+par_value = 10000              # mệnh giá cổ phiếu (đồng)

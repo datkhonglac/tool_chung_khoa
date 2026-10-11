@@ -3,6 +3,7 @@
   python -m vnsa.cli fetch            # tải 5 năm giá của danh sách theo dõi từ CafeF rồi nạp
   python -m vnsa.cli fetch-bctc       # tải BCTC năm (vnstock/VCI) của danh sách theo dõi vào kho
   python -m vnsa.cli ratios FPT       # bộ chỉ số tài chính năm: ROE, ROA, biên LN, D/E, CFO/LNST, EPS
+  python -m vnsa.cli value FPT        # định giá: beta, WACC, DCF-FCFF, P/E, P/B, ma trận độ nhạy
   python -m vnsa.cli import-excel FPT  # ghép data/raw/excel/FPT/*.xlsx -> data/raw/prices/FPT.csv rồi nạp
   python -m vnsa.cli load            # nạp mọi CSV trong data/raw/prices vào DuckDB
   python -m vnsa.cli load --sample   # nạp dữ liệu MẪU (giả lập) để chạy thử
@@ -91,6 +92,9 @@ def cmd_fetch(args) -> int:
     from vnsa.data.providers.cafef_provider import CafeFProvider
 
     symbols = [s.upper() for s in args.symbols] or settings()["watchlist"]["symbols"]
+    index = settings()["valuation"]["index"]
+    if index not in symbols:
+        symbols = [*symbols, index]   # cần chỉ số thị trường để tính beta
     end = date.today()
     start = end - timedelta(days=round(365.25 * args.years))
     out_dir = path("raw_prices_dir")
@@ -164,6 +168,71 @@ def cmd_ratios(args) -> int:
     with pd.option_context("display.width", 200, "display.max_columns", 20):
         print(f"{args.symbol.upper()} — chỉ số tài chính năm (nguồn: BCTC hợp nhất, VCI)")
         print(format_ratios(compute_ratios(fin)).to_string())
+    return 0
+
+
+def cmd_value(args) -> int:
+    import pandas as pd
+
+    from vnsa.data.store import Store
+    from vnsa.fa import valuation as val
+
+    sym = args.symbol.upper()
+    a = val.Assumptions.from_settings(settings()["valuation"])
+    with Store(path("warehouse")) as store:
+        fin = store.fundamentals(sym)
+        prices = store.prices(sym)
+        index = store.prices(settings()["valuation"]["index"])
+    if fin.empty or prices.empty:
+        print(f"{sym}: cần cả giá và BCTC trong kho. Chạy 'fetch {sym}' và 'fetch-bctc {sym}' trước.")
+        return 1
+    b, weeks = (val.beta(prices, index, a.beta_years) if not index.empty else (float("nan"), 0))
+    price = float(prices["close"].iloc[-1])
+    try:
+        v = val.value(sym, fin, price, a, beta_value=b, beta_weeks=weeks,
+                      g1=args.growth, wacc_override=args.wacc)
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+
+    def bn(x: float) -> str:
+        return "—" if pd.isna(x) else f"{x / 1e9:,.0f} tỷ"
+
+    def pct(x: float) -> str:
+        return "—" if pd.isna(x) else f"{x:.1%}"
+
+    day = prices["date"].iloc[-1].date()
+    print(f"{sym} — giá {price:,.0f} đ ({day}), {v.shares / 1e6:,.1f} triệu cp, "
+          f"vốn hoá {bn(price * v.shares)}")
+    print(f"  P/E {v.pe:.1f} lần · P/B {v.pb:.2f} lần (BCTC năm {int(fin['year'].iloc[-1])})")
+    beta_src = "mặc định"
+    if not v.beta_is_default:
+        beta_src = f"{v.beta_weeks} tuần so với VN-Index" + (
+            f", thô {b:.2f}, điều chỉnh Blume" if a.adjust_beta else "")
+    print(f"\nWACC {pct(v.wacc)}")
+    print(f"  beta {v.beta:.2f} ({beta_src}) → k_e = {pct(a.risk_free)} + {v.beta:.2f} × "
+          f"{pct(a.equity_risk_premium)} = {pct(v.cost_of_equity)}")
+    print(f"  k_d {pct(v.cost_of_debt)}, thuế {pct(v.tax_rate)}, tỷ trọng vốn chủ {pct(v.weight_equity)}")
+    print("\nFCFF lịch sử (CFO + lãi vay × (1−t) − capex):")
+    print("  " + " · ".join(f"{y}: {bn(x)}" for y, x in v.fcff_history.items()))
+    print(f"  gốc (TB 3 năm) {bn(v.fcff_base)}; tăng {pct(v.g1)}/năm × {a.forecast_years} năm, "
+          f"sau đó {pct(v.g)}")
+    d, br = v.dcf, v.net_debt_bridge
+    print(f"\nDCF: PV dòng tiền {bn(d['pv_flows'])} + PV giá trị cuối {bn(d['pv_terminal'])} "
+          f"= EV {bn(d['ev'])}")
+    print(f"  − vay {bn(br['debt'])} + tiền & ĐTNH {bn(br['cash'])} − CĐ thiểu số {bn(br['minority'])}"
+          f" = vốn chủ {bn(v.equity_value)}")
+    if not pd.isna(v.value_per_share):
+        print(f"  → {v.value_per_share:,.0f} đ/cp, so với giá hiện tại {v.upside:+.1%}")
+    for n in v.notes:
+        print(f"  ! {n}")
+    table = val.sensitivity(v, a)
+    if table.notna().any().any():
+        print("\nĐộ nhạy giá trị/cp (nghìn đồng): hàng = WACC, cột = tăng trưởng dài hạn g")
+        t = (table / 1000).round(1)
+        t.index = [pct(w) for w in t.index]
+        t.columns = [pct(g) for g in t.columns]
+        print(t.to_string())
     return 0
 
 
@@ -244,6 +313,13 @@ def main(argv: list[str] | None = None) -> int:
     pr = sub.add_parser("ratios", help="Bộ chỉ số tài chính năm từ BCTC trong kho")
     pr.add_argument("symbol")
     pr.set_defaults(func=cmd_ratios)
+
+    pv = sub.add_parser("value", help="Định giá: WACC, DCF-FCFF, P/E, P/B, độ nhạy")
+    pv.add_argument("symbol")
+    pv.add_argument("--growth", type=float, help="Tăng trưởng FCFF giai đoạn 1, vd 0.12 (mặc định: "
+                    "CAGR LNST cty mẹ, tối đa max_stage1_growth)")
+    pv.add_argument("--wacc", type=float, help="Dùng WACC này thay vì tự tính, vd 0.13")
+    pv.set_defaults(func=cmd_value)
 
     pc = sub.add_parser("check", help="Kiểm tra chất lượng dữ liệu")
     pc.add_argument("symbol")

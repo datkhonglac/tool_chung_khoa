@@ -101,7 +101,7 @@ class Store:
         """Ghi đè BCTC năm của các mã có trong df. Cột: symbol, year + FIELDS (đồng)."""
         if df.empty:
             return 0
-        frame = df[["symbol", "year", *FIELDS]].copy()
+        frame = df.reindex(columns=["symbol", "year", *FIELDS]).copy()  # khoản thiếu -> NULL
         frame["source"] = source
         cols = ", ".join(["symbol", "year", *FIELDS, "source"])
         self.con.register("incoming", frame)

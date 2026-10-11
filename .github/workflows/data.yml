@@ -61,6 +61,9 @@ jobs:
         run: python -m vnsa.cli fetch-bctc ${{ inputs.symbols }}
       - name: Chỉ số tài chính từng mã
         run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli ratios $s; echo; done
+      - name: Định giá từng mã
+        if: ${{ !inputs.skip_prices }}
+        run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli value $s; echo; done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

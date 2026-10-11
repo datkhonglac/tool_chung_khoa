@@ -39,6 +39,7 @@ FIELDS = {
     "GiaDieuChinh": "Giá điều chỉnh",
     "KhoiLuongKhopLenh": "Khối lượng khớp lệnh",
 }
+INDEX_SYMBOLS = {"VNINDEX", "VN30", "HNXINDEX", "HNX30", "UPCOMINDEX"}
 WINDOW_DAYS = 365   # CafeF cắt mỗi lần gọi còn khoảng 1 năm tính lùi từ ngày kết thúc
 PAGE_SIZE = 30      # CafeF trả tối đa 30 dòng mỗi trang, ~9 trang cho 1 năm
 MAX_PAGES = 100     # chặn vòng lặp vô hạn nếu CafeF đổi cách phân trang
@@ -125,7 +126,9 @@ class CafeFProvider(DataProvider):
     def ohlcv(self, symbol: str, start: date | None = None, end: date | None = None) -> pd.DataFrame:
         end = end or date.today()
         start = start or end - timedelta(days=365 * 5)
-        df = normalize_prices(self.raw_rows(symbol, start, end), symbol, price_unit="nghin")
+        # Cổ phiếu: CafeF ghi nghìn đồng. Chỉ số (VNINDEX...): điểm, giữ nguyên.
+        unit = "dong" if symbol.upper() in INDEX_SYMBOLS else "nghin"
+        df = normalize_prices(self.raw_rows(symbol, start, end), symbol, price_unit=unit)
         df = df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))]
         return self._repair_ohlc(df.reset_index(drop=True))
 

@@ -40,7 +40,23 @@ MAPPING: dict[str, tuple[str, list[str], str]] = {
     "long_debt": ("balance_sheet", ["long_term_borrowings"], r"^long-term borrowings$"),
     "cfo": ("cash_flow", ["net_cash_inflows_outflows_from_operating_activities"],
             r"^net cash inflows/\(outflows\) from operating"),
+    "pbt": ("income_statement", ["net_accounting_profit_loss_before_tax", "profit_before_tax"],
+            r"profit/\(loss\) before tax$|^profit before tax"),
+    "tax_expense": ("income_statement", ["corporate_income_tax_expenses"],
+                    r"^corporate income tax expenses?$"),
+    "interest_expense": ("income_statement", ["interest_expenses", "interest_expense"],
+                         r"^interest expenses?$"),
+    "capex": ("cash_flow", ["purchases_of_fixed_assets_and_other_long_term_assets"],
+              r"^purchases of fixed assets"),
+    "cash": ("balance_sheet", ["cash_and_cash_equivalents"], r"^cash and cash equivalents$"),
+    "short_term_investments": ("balance_sheet", ["short_term_investments"],
+                               r"^short-term investments$"),
+    "paid_in_capital": ("balance_sheet", ["paid_in_capital", "owner_s_capital", "common_shares",
+                                          "charter_capital"],
+                        r"^paid-in capital$|^common shares|^owner'?s'? capital$|charter capital"),
 }
+# VCI ghi chi phí/khoản chi bằng số âm; lưu số dương cho dễ dùng.
+POSITIVE = {"tax_expense", "interest_expense", "capex"}
 STATEMENTS = ["income_statement", "balance_sheet", "cash_flow"]
 
 
@@ -81,7 +97,7 @@ def standardize(statements: dict[str, pd.DataFrame], symbol: str) -> tuple[pd.Da
             out[field] = np.nan
             continue
         values.index = values.index.astype(int)
-        out[field] = out["year"].map(values)
+        out[field] = out["year"].map(values.abs() if field in POSITIVE else values)
     out.insert(0, "symbol", symbol.upper())
     return out, missing
 

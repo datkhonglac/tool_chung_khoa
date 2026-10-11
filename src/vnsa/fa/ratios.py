@@ -37,6 +37,14 @@ FIELDS = [
     "short_debt",         # vay và nợ thuê tài chính ngắn hạn
     "long_debt",          # vay và nợ thuê tài chính dài hạn
     "cfo",                # lưu chuyển tiền thuần từ HĐKD
+    # Dùng cho định giá (ngày 3). Chi phí/khoản chi lưu dạng số DƯƠNG.
+    "pbt",                # lợi nhuận trước thuế
+    "tax_expense",        # chi phí thuế TNDN
+    "interest_expense",   # chi phí lãi vay
+    "capex",              # tiền chi mua sắm TSCĐ và tài sản dài hạn
+    "cash",               # tiền và tương đương tiền
+    "short_term_investments",  # đầu tư tài chính ngắn hạn (chủ yếu tiền gửi có kỳ hạn)
+    "paid_in_capital",    # vốn góp của chủ sở hữu (mệnh giá 10.000 đ/cp -> số cổ phiếu)
 ]
 
 RATIO_COLUMNS = [
