@@ -8,7 +8,11 @@
         "ms-toolsai.jupyter",
         "charliermarsh.ruff",
         "anthropic.claude-code"
-      ]
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python-envs.defaultEnvManager": "ms-python.python:system"
+      }
     }
   },
   "postCreateCommand": "pip install -e \".[dev,mcp,dashboard]\" && pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai && python scripts/make_sample_data.py && python -m vnsa.cli load --sample",
