@@ -9,11 +9,12 @@ có từ 3 phương pháp thì loại phương pháp lệch quá 2,5 lần trung
 
 Doanh nghiệp thường (mặc định DCF 40% · P/E lịch sử 30% · P/B lịch sử 30%):
   1. DCF-FCFF (fa/valuation.py), nếu FCFF bình quân dương.
-  2. P/E lịch sử: P/E mục tiêu = trung vị P/E từng năm (giá bình quân năm / EPS năm) × EPS năm gần
-     nhất. Lấy giá bình quân cả năm thay vì giá một ngày cuối năm để bớt nhiễu.
-  3. P/B lịch sử: tương tự với giá trị sổ sách mỗi cổ phiếu (BVPS) cuối năm.
-  EPS và BVPS các năm đều chia cho số cổ phiếu HIỆN TẠI, vì giá đã điều chỉnh về cơ sở cổ phiếu
-  hiện tại (sau cổ tức cổ phiếu/thưởng) — chia số cổ phiếu cũ sẽ làm P/E quá khứ bị méo.
+  2. P/E lịch sử: P/E mục tiêu = trung vị P/E từng năm × EPS hiện tại (TTM nếu có, fa/ttm.py).
+     P/E năm = vốn hoá bình quân năm / LNST cty mẹ năm, vốn hoá = giá CHƯA điều chỉnh (giá khớp
+     thật) × số cổ phiếu năm đó (vốn góp / mệnh giá). Giá đã điều chỉnh bị trừ cả cổ tức tiền mặt
+     nên làm P/E quá khứ thấp đi; chỉ dùng cách cũ (giá điều chỉnh / EPS theo số cp hiện tại) khi
+     nguồn không có giá chưa điều chỉnh (giá lấy từ vnstock).
+  3. P/B lịch sử: tương tự với vốn chủ công ty mẹ cuối năm; × BVPS hiện tại (quý gần nhất).
 
 Ngân hàng / chứng khoán / bảo hiểm (mặc định RI 25% · P/B theo ROE 25% · P/B lịch sử 50%): hai
 phương pháp đầu cùng dựa vào ROE và k_e nên tổng chỉ bằng P/B lịch sử — mức thị trường vẫn trả
@@ -56,19 +57,29 @@ def parent_equity(row: pd.Series) -> float:
 
 def historical_multiples(fin: pd.DataFrame, prices: pd.DataFrame,
                          par_value: float = 10_000) -> pd.DataFrame:
-    """Mỗi năm BCTC: giá bình quân năm, EPS và BVPS theo số cổ phiếu hiện tại, P/E, P/B."""
-    shares = shares_outstanding(fin, par_value)
-    close = prices.set_index("date")["close"]
+    """Mỗi năm BCTC: P/E, P/B theo vốn hoá thật (giá chưa điều chỉnh × số cp năm đó); thiếu giá chưa
+    điều chỉnh thì theo giá điều chỉnh / EPS, BVPS tính bằng số cp hiện tại. Cột basis cho biết."""
+    shares_now = shares_outstanding(fin, par_value)
+    px = prices.set_index("date")
+    raw = px["close_raw"] if "close_raw" in px else pd.Series(np.nan, index=px.index)
     rows = []
     for _, r in fin.sort_values("year").iterrows():
         year = int(r["year"])
-        in_year = close[close.index.year == year]
-        avg = float(in_year.mean()) if len(in_year) >= 60 else float("nan")   # đủ ~1 quý giao dịch
-        eps = r["net_income_parent"] / shares
-        bvps = parent_equity(r) / shares
-        rows.append({"year": year, "avg_price": avg, "eps": eps, "bvps": bvps,
-                     "pe": avg / eps if eps > 0 else np.nan,
-                     "pb": avg / bvps if bvps > 0 else np.nan})
+        in_year = px.index.year == year
+        ni, eq = r["net_income_parent"], parent_equity(r)
+        cap = r.get("paid_in_capital")
+        shares_y = cap / par_value if not pd.isna(cap) and cap > 0 else np.nan
+        raw_y = raw[in_year].dropna()
+        if len(raw_y) >= 60 and shares_y > 0:            # đủ ~1 quý giao dịch có giá thật
+            mcap, basis = float(raw_y.mean()) * shares_y, "giá thật"
+        else:
+            adj = px["close"][in_year]
+            mcap = float(adj.mean()) * shares_now if len(adj) >= 60 else np.nan
+            basis = "giá điều chỉnh"
+        rows.append({"year": year, "market_cap": mcap, "basis": basis,
+                     "eps": ni / shares_now, "bvps": eq / shares_now,
+                     "pe": mcap / ni if ni > 0 else np.nan,
+                     "pb": mcap / eq if eq > 0 else np.nan})
     return pd.DataFrame(rows)
 
 
@@ -92,16 +103,22 @@ class ResidualIncome:
 
 
 def residual_income(fin: pd.DataFrame, ke: float, g: float, cfg: dict,
-                    par_value: float = 10_000) -> ResidualIncome:
-    """Định giá thu nhập thặng dư cho ngân hàng / chứng khoán / bảo hiểm (xem đầu file)."""
+                    par_value: float = 10_000, current=None) -> ResidualIncome:
+    """Định giá thu nhập thặng dư cho ngân hàng / chứng khoán / bảo hiểm (xem đầu file).
+    current = fa.ttm.Current: B0 theo vốn chủ quý gần nhất / số cp lưu hành hiện tại, ROE TTM là
+    điểm ROE mới nhất (nặng nhất) khi nó mới hơn BCTC năm."""
     if ke <= g:
         raise ValueError(f"chi phí vốn chủ ({ke:.1%}) phải lớn hơn tăng trưởng dài hạn ({g:.1%})")
     df = fin.sort_values("year").reset_index(drop=True)
-    shares = shares_outstanding(df, par_value)
+    shares = current.shares if current is not None else shares_outstanding(df, par_value)
     if pd.isna(shares):
         raise ValueError("thiếu vốn góp chủ sở hữu, không tính được số cổ phiếu")
-    b0 = parent_equity(df.iloc[-1]) / shares
-    roe_hist = compute_ratios(df)["roe"].dropna().tail(int(cfg.get("roe_years", 3)))
+    b0 = (current.bvps if current is not None else parent_equity(df.iloc[-1]) / shares)
+    n_roe = int(cfg.get("roe_years", 3))
+    roe_hist = compute_ratios(df)["roe"].dropna()
+    if current is not None and current.basis.startswith("TTM") and not pd.isna(current.roe):
+        roe_hist = pd.concat([roe_hist, pd.Series([current.roe])], ignore_index=True)
+    roe_hist = roe_hist.tail(n_roe)
     if b0 <= 0 or roe_hist.empty:
         raise ValueError("thiếu vốn chủ hoặc ROE, không định giá thu nhập thặng dư được")
     weights = np.arange(1, len(roe_hist) + 1, dtype=float)       # năm gần nhất nặng nhất
@@ -181,12 +198,14 @@ def scenario_range(values: list[float], center: float) -> tuple[float, float]:
 
 def combine(price: float, fin: pd.DataFrame, prices: pd.DataFrame, par_value: float = 10_000,
             dcf: float = float("nan"), ri: ResidualIncome | None = None,
-            weights: dict[str, float] | None = None) -> FairValue:
+            weights: dict[str, float] | None = None, current=None) -> FairValue:
     """Giá trị hợp lý = bình quân có trọng số (mục [valuation.weights]) các phương pháp:
     doanh nghiệp thường DCF, P/E lịch sử, P/B lịch sử; định chế tài chính (truyền `ri`) thu nhập
     thặng dư, P/B theo ROE, P/B lịch sử."""
     hist = historical_multiples(fin, prices, par_value)
-    last = hist.iloc[-1]
+    last = hist.iloc[-1].copy()
+    if current is not None:                     # EPS TTM, BVPS quý gần nhất, số cp hiện tại
+        last["eps"], last["bvps"] = current.eps, current.bvps
     pe_t, pb_t = _median_positive(hist["pe"]), _median_positive(hist["pb"])
     notes = []
     if ri is None:

@@ -49,7 +49,13 @@ Với mỗi mã, tool tự kiểm tra kho và chỉ tải phần còn thiếu (t
 - **Giá**: lần đầu tải 5 năm từ CafeF; lần sau chỉ tải phiên mới. Mã CafeF không có dữ liệu
   (đã gặp với SHS, ACV trên HNX/UPCoM) thì tự lấy từ vnstock/VCI và lần sau dùng lại nguồn đó. Nếu CafeF đã điều chỉnh lại giá cũ
   (cổ tức, chia tách) thì tự tải lại toàn bộ cho khớp. Trước 15h chưa tính phiên hôm nay.
-- **BCTC năm** (vnstock/VCI), tải lại sau 30 ngày. Lỗi BCTC không chặn phần kỹ thuật.
+- **BCTC năm và BCTC quý** (vnstock/VCI; bản miễn phí 4 quý gần nhất), tải lại sau 30 ngày. Từ 4 quý
+  tool tính **TTM** (12 tháng gần nhất): P/E, P/B, ROE và giá trị hợp lý dùng TTM thay cho năm tài
+  chính đã cũ. Lỗi BCTC không chặn phần kỹ thuật.
+- **Hồ sơ doanh nghiệp và cổ tức** (tải lại sau 7 ngày): số cổ phiếu lưu hành hiện tại (đã tính cổ
+  phiếu thưởng mới, trừ cổ phiếu quỹ), sở hữu nước ngoài / room, GTGD bình quân, lịch sử cổ tức.
+- Giá lưu cả **giá chưa điều chỉnh** (giá khớp thật) để P/E, P/B lịch sử tính theo vốn hoá thật
+  (giá điều chỉnh đã trừ cổ tức tiền nên làm P/E quá khứ thấp đi).
 
 `--refresh` tải lại BCTC và danh sách sàn ngay; `--full` tải lại toàn bộ giá; `--offline` không tải gì.
 **Ngân hàng, chứng khoán, bảo hiểm**: DCF-FCFF, Altman Z và điểm FA không áp dụng (thiết kế cho doanh

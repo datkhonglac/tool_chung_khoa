@@ -6,7 +6,7 @@ Dòng lệnh (cli.py), MCP server (mcp_server.py) và dashboard đều gọi qua
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -23,6 +23,21 @@ class Data:
     fin: pd.DataFrame      # BCTC năm (year + FIELDS, đồng)
     prices: pd.DataFrame   # giá ngày (đồng, đã điều chỉnh)
     index: pd.DataFrame    # giá chỉ số thị trường (để tính beta)
+    quarterly: pd.DataFrame = field(default_factory=pd.DataFrame)   # BCTC quý (4 quý gần nhất)
+    profile: dict = field(default_factory=dict)   # hồ sơ: shares_out, foreign_pct, avg_value_1m...
+    dividends: pd.DataFrame = field(default_factory=pd.DataFrame)
+
+    @property
+    def current(self):
+        """fa.ttm.Current: số liệu hiện tại (TTM nếu có) theo số cổ phiếu lưu hành hiện tại."""
+        from vnsa.fa.ttm import current
+
+        if not hasattr(self, "_current"):
+            shares = self.profile.get("shares_out") if self.profile else None
+            self._current = current(self.fin, self.quarterly,
+                                    float("nan") if shares is None else float(shares),
+                                    settings()["valuation"]["par_value"])
+        return self._current
 
 
 def load(symbol: str, need_fin: bool = True, need_prices: bool = True) -> Data:
@@ -33,13 +48,16 @@ def load(symbol: str, need_fin: bool = True, need_prices: bool = True) -> Data:
         fin = store.fundamentals(sym)
         prices = store.prices(sym)
         index = store.prices(settings()["valuation"]["index"])
+        quarterly = store.quarterly(sym)
+        profile = store.company(sym) or {}
+        dividends = store.dividends(sym)
     missing = [c for c, miss in (("fetch", need_prices and prices.empty),
                                  ("fetch-bctc", need_fin and fin.empty)) if miss]
     if missing:
         steps = " và ".join(f"'{c} {sym}'" for c in missing)
         raise DataMissing(f"{sym}: kho chưa có đủ dữ liệu. Chạy {steps} trước "
                           f"(hoặc 'analyze {sym}' để tự tải).")
-    return Data(sym, fin, prices, index)
+    return Data(sym, fin, prices, index, quarterly, profile, dividends)
 
 
 def update(symbol: str, refresh: bool = False, full: bool = False, log=None):
@@ -59,18 +77,14 @@ def _not_financial(symbol: str) -> None:
 
 
 def multiples(d: Data) -> tuple[float, float]:
-    """(P/E, P/B) đơn giản từ BCTC năm gần nhất: giá / EPS, giá / giá trị sổ sách mỗi cp
-    (vốn chủ công ty mẹ / số cp = vốn điều lệ / mệnh giá). Dùng được cho cả ngân hàng."""
+    """(P/E, P/B) hiện tại: giá / EPS TTM (hoặc năm gần nhất), giá / BVPS quý gần nhất, theo số cổ
+    phiếu lưu hành hiện tại (fa/ttm.py). Dùng được cho cả ngân hàng."""
     nan = float("nan")
-    if d.fin.empty or d.prices.empty:
+    if d.fin.empty or d.prices.empty or d.current is None:
         return nan, nan
-    last = d.fin.iloc[-1]
-    price = float(d.prices["close"].iloc[-1])
-    shares = last["paid_in_capital"] / settings()["valuation"]["par_value"]
-    book = last["equity"] - (0 if pd.isna(last["minority_interest"]) else last["minority_interest"])
-    pe = price / last["eps"] if last["eps"] > 0 else nan
-    pb = price / (book / shares) if shares > 0 and book > 0 else nan
-    return float(pe), float(pb)
+    c, price = d.current, float(d.prices["close"].iloc[-1])
+    return (float(price / c.eps) if c.eps > 0 else nan,
+            float(price / c.bvps) if c.bvps > 0 else nan)
 
 
 def symbols() -> list[str]:
@@ -111,22 +125,24 @@ def financial(d: Data):
     cfg = settings()["valuation"]
     g, par = cfg["terminal_growth"], cfg["par_value"]
     ke, _, _, _ = cost_of_equity(d)
-    ri = fv.residual_income(d.fin, ke, g, cfg["financials"], par)
+    ri = fv.residual_income(d.fin, ke, g, cfg["financials"], par, current=d.current)
     price = float(d.prices["close"].iloc[-1])
-    fair = fv.combine(price, d.fin, d.prices, par, ri=ri, weights=_weights("financial"))
+    fair = fv.combine(price, d.fin, d.prices, par, ri=ri, weights=_weights("financial"),
+                      current=d.current)
     scenarios = []
     for k in (ke - 0.01, ke, ke + 0.01):
         for keep in (0.25, 0.75):
             if k > g:
                 alt = fv.residual_income(d.fin, k, g, {**cfg["financials"], "roe_persistence": keep},
-                                         par)
+                                         par, current=d.current)
                 scenarios += [alt.value_per_share, alt.justified_pb * alt.book0]
     hist = fv.historical_multiples(d.fin, d.prices, par)
     scenarios += list(hist["pb"] * ri.book0)
     fair.p10, fair.p90 = fv.scenario_range(scenarios, fair.value)
     pb = price / ri.book0
     score = financial_score(d.fin, settings()["fa_score"]["financials"],
-                            market.profile(d.symbol)["model"], pb=pb, fair_upside=fair.upside)
+                            market.profile(d.symbol)["model"], pb=pb, fair_upside=fair.upside,
+                            roe=d.current.roe if d.current is not None else None)
     return score, fair
 
 
@@ -140,10 +156,11 @@ def general_fair_value(d: Data, v=None):
     par = settings()["valuation"]["par_value"]
     price = float(d.prices["close"].iloc[-1])
     fair = fv.combine(price, d.fin, d.prices, par, dcf=v.value_per_share if v else nan,
-                      weights=_weights("general"))
+                      weights=_weights("general"), current=d.current)
     hist = fv.historical_multiples(d.fin, d.prices, par)
-    last = hist.iloc[-1]
-    scenarios = list(hist["pe"] * last["eps"]) + list(hist["pb"] * last["bvps"])
+    c = d.current
+    eps, bvps = (c.eps, c.bvps) if c is not None else (hist["eps"].iloc[-1], hist["bvps"].iloc[-1])
+    scenarios = list(hist["pe"] * eps) + list(hist["pb"] * bvps)
     if v is not None and v.fcff_base > 0:
         a = val.Assumptions.from_settings(settings()["valuation"])
         scenarios += [x for x in val.sensitivity(v, a).to_numpy().ravel()]
@@ -180,7 +197,7 @@ def valuation(d: Data, growth: float | None = None, wacc: float | None = None):
                 else (float("nan"), 0))
     price = float(d.prices["close"].iloc[-1])
     v = val.value(d.symbol, d.fin, price, a, beta_value=b, beta_weeks=weeks, g1=growth,
-                  wacc_override=wacc)
+                  wacc_override=wacc, current=d.current)
     return a, v, b
 
 
@@ -201,7 +218,8 @@ def fa(d: Data):
     z = sc.altman(d.fin, caps)
     nan = float("nan")
     score = sc.fa_score(d.fin, cfg, pe=v.pe if v else nan, pb=v.pb if v else nan,
-                        dcf_upside=v.upside if v else nan)
+                        dcf_upside=v.upside if v else nan,
+                        roe=d.current.roe if d.current is not None else None)
     return f, z, score, v
 
 

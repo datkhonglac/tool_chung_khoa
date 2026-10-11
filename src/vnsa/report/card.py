@@ -20,6 +20,9 @@ Quy ước:
   giảm 2 năm liên tiếp; tiền thu phát hành cổ phiếu > 10% vốn chủ (pha loãng). Định chế tài chính:
   ROE < 8%, LNST âm hoặc giảm 2 năm liên tiếp.
 - Tỷ trọng gợi ý = giá trị vị thế của kế hoạch (rủi ro 1% vốn/lệnh) / vốn trong [plan].
+- ROE, P/E, P/B theo số liệu hiện tại (TTM 4 quý gần nhất nếu có — fa/ttm.py), ghi rõ kỳ.
+- Cổ tức tiền 12 tháng = tổng cổ tức tiền mặt có ngày GDKHQ trong 365 ngày trước phiên giá; tỷ suất
+  = cổ tức / giá hiện tại. Sở hữu nước ngoài / room tối đa, GTGD bình quân 1 tháng: hồ sơ VCI.
 """
 
 from __future__ import annotations
@@ -77,6 +80,7 @@ class Card:
     forecast: list[str] = field(default_factory=list)
     plan: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    basis: str = ""          # kỳ số liệu tài chính: "TTM Q2/2026" | "năm 2025"
 
 
 def red_flags(fin: pd.DataFrame, financial: bool, z_em: float, f_score: float) -> list[str]:
@@ -165,14 +169,15 @@ def build_card(a) -> Card:
     if not d.fin.empty:
         fin = d.fin.sort_values("year").reset_index(drop=True)
         ratios = compute_ratios(fin)
-        roe = ratios["roe"].iloc[-1]
+        cur = d.current
+        roe = cur.roe if cur is not None else ratios["roe"].iloc[-1]
         ind_roe, n_peers = industry_roe(d.symbol, prof["industry"])
         roe_s = f"ROE {vn_pct(roe)}" + (f" (ngành {vn_pct(ind_roe)}, {n_peers} mã)"
                                         if not pd.isna(ind_roe) else "")
         span = min(3, len(fin) - 1)
         g = (sc.cagr(fin["net_income_parent"].iloc[-1 - span], fin["net_income_parent"].iloc[-1],
                      span) if span > 0 else nan)
-        fundamentals.append(f"{roe_s} · Tăng trưởng EPS {span} năm {vn_pct(g)}/năm")
+        fundamentals.append(f"{roe_s} · Tăng trưởng EPS {span} năm {vn_pct(g)}/năm (BCTC năm)")
         f_score = nan
         if financial:
             eta = fin["equity"].iloc[-1] / fin["total_assets"].iloc[-1]
@@ -189,6 +194,26 @@ def build_card(a) -> Card:
         flags = red_flags(fin, financial, a.z_em, f_score)
     else:
         fundamentals.append("Chưa có BCTC")
+    extra = []
+    divs = d.dividends if d.dividends is not None else pd.DataFrame()
+    if len(divs):
+        recent = divs[(divs["exright_date"] > x.date - pd.Timedelta(days=365))
+                      & (divs["exright_date"] <= x.date)]
+        cash = recent["cash_per_share"].sum()
+        stock = recent["stock_ratio"].dropna()
+        if cash > 0:
+            extra.append(f"Cổ tức tiền 12 tháng {vn_num(cash)}đ/cp ({vn_pct(cash / x.price)})")
+        if len(stock):
+            extra.append(f"cổ tức/thưởng cổ phiếu {vn_pct(stock.sum(), 0)}")
+    pr = d.profile or {}
+    if not pd.isna(pr.get("foreign_pct") or nan):
+        room = pr.get("foreign_max_pct")
+        extra.append(f"NN sở hữu {vn_pct(pr['foreign_pct'])}"
+                     + (f"/room {vn_pct(room, 0)}" if room and not pd.isna(room) else ""))
+    if not pd.isna(pr.get("avg_value_1m") or nan):
+        extra.append(f"GTGD TB 1 tháng {vn_num(pr['avg_value_1m'] / 1e9, 1)} tỷ")
+    if extra:
+        fundamentals.append(" · ".join(extra))
 
     # Kỹ thuật
     last = a.ind.iloc[-1]
@@ -240,6 +265,7 @@ def build_card(a) -> Card:
         confidence=conf, confidence_checks=checks,
         analysis_date=datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%d/%m/%Y"),
         price_date=f"{x.date:%d/%m/%Y}", price=x.price,
+        basis=d.current.basis if d.current is not None else "",
         p10=fair.p10 if fair else nan, p50=fair.value if fair else nan,
         p90=fair.p90 if fair else nan, target=fair.value if fair else nan,
         upside=fair.upside if fair else nan, methods=methods,
@@ -252,7 +278,8 @@ def format_card(c: Card) -> str:
     lines = [
         (f"{c.symbol} — Khuyến nghị: {c.action} ({c.label}) · Độ tin cậy: {c.confidence} · "
          "Khung: trung hạn"),
-        f"Ngày phân tích: {c.analysis_date} · Giá hiện tại: {vn_num(c.price)}đ (phiên {c.price_date})",
+        (f"Ngày phân tích: {c.analysis_date} · Giá hiện tại: {vn_num(c.price)}đ (phiên {c.price_date})"
+         + (f" · Số liệu tài chính: {c.basis}" if c.basis else "")),
         "",
         "ĐỊNH GIÁ",
         f"  Giá trị nội tại (P10 / P50 / P90): {vn_num(c.p10)} / {vn_num(c.p50)} / {vn_num(c.p90)}đ",

@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import duckdb
+import numpy as np
 import pandas as pd
 
 from vnsa.data.providers.base import PRICE_COLUMNS
@@ -72,7 +73,32 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 """
 
+# BCTC quý (bản miễn phí VCI: 4 quý gần nhất) — dùng tính số liệu 12 tháng gần nhất (TTM)
+SCHEMA += f"""
+CREATE TABLE IF NOT EXISTS fundamentals_q (
+    symbol  VARCHAR NOT NULL,
+    year    INTEGER NOT NULL,
+    quarter INTEGER NOT NULL,
+{"".join(f"    {f} DOUBLE,{chr(10)}" for f in FIELDS)}    source  VARCHAR,
+    loaded_at TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (symbol, year, quarter)
+);
+
+-- Cổ tức (sự kiện quyền): tiền mặt (đồng/cp) hoặc cổ phiếu/thưởng (tỷ lệ)
+CREATE TABLE IF NOT EXISTS dividends (
+    symbol         VARCHAR NOT NULL,
+    exright_date   DATE    NOT NULL,
+    cash_per_share DOUBLE,
+    stock_ratio    DOUBLE,
+    title          VARCHAR
+);
+"""
+
 COMPANY_COLUMNS = ["symbol", "name", "exchange", "industry", "model"]
+# Hồ sơ doanh nghiệp (Company.overview), cập nhật theo từng mã
+PROFILE_COLUMNS = ["shares_out", "foreign_pct", "foreign_max_pct", "state_pct", "free_float_pct",
+                   "avg_value_1m", "analyst_target", "analyst_rating"]
+PROFILE_TYPES = {c: "VARCHAR" if c == "analyst_rating" else "DOUBLE" for c in PROFILE_COLUMNS}
 SIGNAL_COLUMNS = ["as_of", "symbol", "action", "score", "fa_score", "ta_score", "price",
                   "fair_value", "zone_status", "buy_low", "buy_high", "stop", "target", "params"]
 
@@ -87,6 +113,8 @@ class Store:
             self.con.execute(f"ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS {f} DOUBLE")
         # giá đóng cửa chưa điều chỉnh (NULL nếu nguồn không có)
         self.con.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS close_raw DOUBLE")
+        for c, t in [*PROFILE_TYPES.items(), ("profile_at", "TIMESTAMP")]:
+            self.con.execute(f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {c} {t}")
 
     def close(self) -> None:
         self.con.close()
@@ -217,10 +245,13 @@ class Store:
         frame["source"] = source
         cols = ", ".join([*COMPANY_COLUMNS, "source"])
         self.con.register("incoming", frame)
+        updates = ", ".join(f"{c} = excluded.{c}" for c in [*COMPANY_COLUMNS[1:], "source"])
         try:
             self.con.execute("BEGIN")
-            self.con.execute("DELETE FROM companies WHERE symbol IN (SELECT symbol FROM incoming)")
-            self.con.execute(f"INSERT INTO companies ({cols}) SELECT {cols} FROM incoming")
+            # cập nhật đè sàn/ngành, giữ nguyên hồ sơ (số cp lưu hành...) đã ghi riêng
+            self.con.execute(f"INSERT INTO companies ({cols}) SELECT {cols} FROM incoming "
+                             f"ON CONFLICT (symbol) DO UPDATE SET {updates}, "
+                             "loaded_at = now()")
             self.con.execute("COMMIT")
         except Exception:
             self.con.execute("ROLLBACK")
@@ -229,9 +260,74 @@ class Store:
             self.con.unregister("incoming")
         return len(frame)
 
+    def write_profile(self, symbol: str, profile: dict) -> None:
+        """Ghi hồ sơ doanh nghiệp vào dòng companies của mã (thêm dòng nếu chưa có)."""
+        sym = symbol.upper()
+        if self.company(sym) is None:
+            self.con.execute("INSERT INTO companies (symbol) VALUES (?)", [sym])
+        cols = [c for c in PROFILE_COLUMNS if c in profile]
+        sets = ", ".join(f"{c} = ?" for c in cols)
+        self.con.execute(f"UPDATE companies SET {sets}, profile_at = current_timestamp "
+                         "WHERE symbol = ?", [*(None if isinstance(profile[c], float)
+                                                 and np.isnan(profile[c]) else profile[c]
+                                                 for c in cols), sym])
+
+    def write_quarterly(self, df: pd.DataFrame, source: str) -> int:
+        """Ghi đè BCTC quý của các mã có trong df. Cột: symbol, year, quarter + FIELDS (đồng)."""
+        if df.empty:
+            return 0
+        frame = df.reindex(columns=["symbol", "year", "quarter", *FIELDS]).copy()
+        frame["source"] = source
+        cols = ", ".join(["symbol", "year", "quarter", *FIELDS, "source"])
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute("BEGIN")
+            self.con.execute("DELETE FROM fundamentals_q f USING incoming i WHERE f.symbol = "
+                             "i.symbol AND f.year = i.year AND f.quarter = i.quarter")
+            self.con.execute(f"INSERT INTO fundamentals_q ({cols}) SELECT {cols} FROM incoming")
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming")
+        return len(frame)
+
+    def quarterly(self, symbol: str) -> pd.DataFrame:
+        cols = ", ".join(["symbol", "year", "quarter", *FIELDS])
+        return self.con.execute(f"SELECT {cols} FROM fundamentals_q WHERE symbol = ? "
+                                "ORDER BY year, quarter", [symbol.upper()]).df()
+
+    def quarterly_loaded_at(self, symbol: str) -> pd.Timestamp | None:
+        t = self.con.execute("SELECT MAX(loaded_at) FROM fundamentals_q WHERE symbol = ?",
+                             [symbol.upper()]).fetchone()[0]
+        return None if t is None else pd.Timestamp(t)
+
+    def write_dividends(self, df: pd.DataFrame, symbol: str) -> int:
+        """Ghi đè toàn bộ lịch sử cổ tức của một mã."""
+        self.con.execute("DELETE FROM dividends WHERE symbol = ?", [symbol.upper()])
+        if df.empty:
+            return 0
+        frame = df.reindex(columns=["symbol", "exright_date", "cash_per_share", "stock_ratio",
+                                    "title"]).copy()
+        frame["exright_date"] = pd.to_datetime(frame["exright_date"]).dt.date
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute("INSERT INTO dividends SELECT * FROM incoming")
+        finally:
+            self.con.unregister("incoming")
+        return len(frame)
+
+    def dividends(self, symbol: str) -> pd.DataFrame:
+        df = self.con.execute("SELECT exright_date, cash_per_share, stock_ratio, title FROM "
+                              "dividends WHERE symbol = ? ORDER BY exright_date",
+                              [symbol.upper()]).df()
+        df["exright_date"] = pd.to_datetime(df["exright_date"])
+        return df
+
     def company(self, symbol: str) -> dict | None:
-        """Sàn, ngành, loại doanh nghiệp của một mã; None nếu chưa có."""
-        cols = [*COMPANY_COLUMNS, "loaded_at"]
+        """Sàn, ngành, loại doanh nghiệp và hồ sơ (số cp lưu hành...) của một mã; None nếu chưa có."""
+        cols = [*COMPANY_COLUMNS, "loaded_at", *PROFILE_COLUMNS, "profile_at"]
         row = self.con.execute(f"SELECT {', '.join(cols)} FROM companies WHERE symbol = ?",
                                [symbol.upper()]).fetchone()
         return dict(zip(cols, row)) if row else None

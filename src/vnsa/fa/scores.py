@@ -192,15 +192,16 @@ def _div_sum(a: pd.Series, b: pd.Series) -> float:
 
 
 def fa_score(fin: pd.DataFrame, cfg: dict, pe: float = np.nan, pb: float = np.nan,
-             dcf_upside: float = np.nan) -> FAScore:
-    """Điểm FA năm BCTC gần nhất. cfg = mục [fa_score] trong settings (trọng số + ngưỡng)."""
+             dcf_upside: float = np.nan, roe: float | None = None) -> FAScore:
+    """Điểm FA năm BCTC gần nhất. cfg = mục [fa_score] trong settings (trọng số + ngưỡng).
+    roe: ROE hiện tại (TTM, fa/ttm.py) thay cho ROE năm gần nhất nếu có."""
     df = fin.sort_values("year").reset_index(drop=True)
     ratios = compute_ratios(df)
     f = piotroski(df, cfg.get("issue_materiality", 0.01))
     z = altman(df)
     span = int(df["year"].iloc[-1] - df["year"].iloc[0])
     values = {
-        "roe": ratios["roe"].iloc[-1],
+        "roe": ratios["roe"].iloc[-1] if roe is None or pd.isna(roe) else roe,
         "ni_cagr": cagr(df["net_income_parent"].iloc[0], df["net_income_parent"].iloc[-1], span),
         "z_em": z["z_em"].iloc[-1],
         "debt_to_equity": ratios["debt_to_equity"].iloc[-1],
@@ -237,14 +238,14 @@ FIN_GROUPS = {
 
 
 def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan,
-                    fair_upside: float = np.nan) -> FAScore:
+                    fair_upside: float = np.nan, roe: float | None = None) -> FAScore:
     """Điểm FA 0–100 cho định chế tài chính. cfg = mục [fa_score.financials] trong settings."""
     df = fin.sort_values("year").reset_index(drop=True)
     ratios = compute_ratios(df)
     span = int(df["year"].iloc[-1] - df["year"].iloc[0])
     last = df.iloc[-1]
     values = {
-        "roe": ratios["roe"].iloc[-1],
+        "roe": ratios["roe"].iloc[-1] if roe is None or pd.isna(roe) else roe,
         "ni_cagr": cagr(df["net_income_parent"].iloc[0], df["net_income_parent"].iloc[-1], span),
         "equity_to_assets": (last["equity"] / last["total_assets"]
                              if last["total_assets"] > 0 else np.nan),

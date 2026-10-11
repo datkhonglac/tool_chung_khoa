@@ -34,6 +34,7 @@ adjust_tolerance = 0.005    # giá cũ lệch > 0,5% so với lần tải mới 
 market_close_hour = 15      # trước 15h (giờ Việt Nam) chưa có giá phiên hôm nay
 bctc_max_age_days = 30      # BCTC trong kho cũ hơn số ngày này thì tải lại
 listing_max_age_days = 30   # danh sách niêm yết (sàn, ngành) cũ hơn số ngày này thì tải lại
+profile_max_age_days = 7    # hồ sơ (số cp lưu hành, sở hữu NN) và cổ tức cũ hơn số ngày này thì tải lại
 pause = 0.3                 # giây nghỉ giữa các lần gọi CafeF
 
 [watchlist]

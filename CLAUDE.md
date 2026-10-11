@@ -35,6 +35,11 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   ro, điểm Quant, khuyến nghị). Điểm tổng = FA 50% + TA 30% + Quant 20% (`[recommend]`,
   `[recommend.quant]`); độ tin cậy 6 điều kiện (`[report]`); giá trị hợp lý = bình quân có trọng số
   `[valuation.weights]`, loại phương pháp lệch > 2,5 lần trung vị. MCP `analyze_symbol` trả `report`.
+- Số liệu hiện tại: `fa/ttm.py` (`Data.current`) = TTM từ 4 quý gần nhất (bảng `fundamentals_q`) nếu
+  mới hơn BCTC năm; EPS/BVPS chia số cp lưu hành hiện tại (`companies.shares_out` từ Company.overview,
+  vốn hoá / giá vì VCI trả `issue_share` trùng tên). P/E, P/B lịch sử theo vốn hoá thật
+  (`prices.close_raw` × vốn góp năm đó / mệnh giá). Cổ tức: bảng `dividends` (Company.events).
+  `scripts/probe_vnstock.py` + input `probe` của workflow để dò cấu trúc dữ liệu vnstock mới.
 - Giá mua: `ta/entry.py` vùng mua (neo hỗ trợ/VWAP20/SMA20, chặn bởi giá trị hợp lý × (1 − biên an
   toàn), "CHỜ GIÁ" nếu quá cao; `[entry]`); `analysis.plan` dùng giữa vùng làm giá vào, KHÔNG dùng
   giá đóng cửa. Giá trị hợp lý `fa/fair_value.py` = trung vị DCF + P/E, P/B lịch sử (EPS/BVPS theo

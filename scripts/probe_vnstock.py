@@ -48,16 +48,16 @@ def main() -> int:
     for sym in [s.upper() for s in sys.argv[1:]] or ["FPT", "VCB"]:
         fin = Finance(source="VCI", symbol=sym)
         for name in ("income_statement", "balance_sheet", "cash_flow"):
-            show(f"{sym} {name} quarter", lambda n=name: getattr(fin, n)(period="quarter"))
-        show(f"{sym} ratio quarter", lambda: fin.ratio(period="quarter"))
-        show(f"{sym} ratio year", lambda: fin.ratio(period="year"))
+            show(f"{sym} {name} quarter", lambda n=name, f=fin: getattr(f, n)(period="quarter"))
+        show(f"{sym} ratio quarter", lambda f=fin: f.ratio(period="quarter"))
+        show(f"{sym} ratio year", lambda f=fin: f.ratio(period="year"))
         comp = Company(source="VCI", symbol=sym)
         for name in ("overview", "dividends", "events", "shareholders"):
             if hasattr(comp, name):
                 show(f"{sym} company.{name}", getattr(comp, name))
         q = Quote(source="VCI", symbol=sym)
         show(f"{sym} quote.history 1D (5 dòng)",
-             lambda: q.history(start="2026-09-01", end="2026-10-10", interval="1D"))
+             lambda q=q: q.history(start="2026-09-01", end="2026-10-10", interval="1D"))
         for name in ("intraday", "price_depth"):
             if hasattr(q, name):
                 print(f"  (Quote có {name})")
