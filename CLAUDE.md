@@ -30,6 +30,13 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   dùng thẳng `band_hose`. Ngân hàng/CK/bảo hiểm (`model` ≠ general): `analysis.fa/valuation` báo
   ValueError, khuyến nghị chỉ dùng TA + P/E, P/B. MCP: `analyze_symbol`, `update_symbol` (chuyển
   stdout sang stderr khi tải). Dashboard: ô "Mã bất kỳ" ở thanh bên.
+- Giá mua: `ta/entry.py` vùng mua (neo hỗ trợ/VWAP20/SMA20, chặn bởi giá trị hợp lý × (1 − biên an
+  toàn), "CHỜ GIÁ" nếu quá cao; `[entry]`); `analysis.plan` dùng giữa vùng làm giá vào, KHÔNG dùng
+  giá đóng cửa. Giá trị hợp lý `fa/fair_value.py` = trung vị DCF + P/E, P/B lịch sử (EPS/BVPS theo
+  số cp hiện tại); định chế tài chính: thu nhập thặng dư + P/B theo ROE (`analysis.financial`,
+  `scores.financial_score`, `[valuation.financials]`). Khuyến nghị tự lưu vào bảng `signals` +
+  `data/signals.csv` (`analysis.record_signals`); `review-signals` chấm sau 5/20/60 phiên
+  (`recommend/review.py`); test cô lập CSV bằng `VNSA_SIGNALS_CSV`.
 - `python -m vnsa.cli fetch [MÃ...] [--years 5]` — tải giá từ CafeF (API JSON không chính thức,
   ≤1 năm mỗi lần gọi, ngày dạng tháng/ngày/năm) → `data/raw/prices/` → kho. Cách chính để lấy giá.
 - `python -m vnsa.cli fetch-bctc [MÃ...]` — BCTC năm hợp nhất qua vnstock nguồn VCI → `data/raw/bctc/`
