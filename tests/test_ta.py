@@ -78,6 +78,7 @@ def test_tick_rounding_hose():
 
 
 CFG = {"capital": 100_000_000, "risk_per_trade": 0.01, "atr_stop": 2.0, "max_stop_atr": 3.0,
+       "min_stop_atr": 1.0,
        "support_buffer_atr": 0.5, "reward_multiples": [2.0, 3.0], "min_reward_risk": 2.0,
        "lot_size": 100}
 D = pd.Timestamp("2025-01-01")
@@ -96,6 +97,11 @@ def test_trade_plan_stop_below_nearby_support_and_cash_cap():
     p = trade_plan(50_000, 1_000, [Level(49_000, 2, D)], [], CFG)
     assert p.stop == 48_500 and "hỗ trợ" in p.stop_source          # 49.000 − 0,5 ATR
     assert [t.price for t in p.targets] == [53_000, 54_500]        # 2R, 3R với R = 1.500
+    # Hỗ trợ sát giá (cắt lỗ dưới nó chỉ cách 0,6 ATR) bị bỏ qua, dùng hỗ trợ kế tiếp
+    p = trade_plan(50_000, 1_000, [Level(49_900, 1, D), Level(48_000, 2, D)], [], CFG)
+    assert p.stop == 47_500 and "48,000" in p.stop_source
+    p = trade_plan(50_000, 1_000, [Level(49_900, 1, D)], [], CFG)
+    assert p.stop == 48_000 and p.stop_source == "2 × ATR"
     tight = trade_plan(50_000, 50, [], [], CFG)                    # R = 100 đ -> 10.000 cp
     assert tight.shares == 2_000                                   # giới hạn bởi vốn 100 triệu
     with pytest.raises(ValueError):

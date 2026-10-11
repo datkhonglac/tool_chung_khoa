@@ -8,9 +8,11 @@ Piotroski F-Score (9 tiêu chí, mỗi tiêu chí đạt = 1 điểm), so năm t
              4. CFO > LNST (lợi nhuận có tiền về, ít "dồn tích")
   Đòn bẩy,   5. Vay dài hạn / tổng tài sản giảm (không có vay cả hai năm cũng tính đạt)
   thanh khoản 6. Tỷ số thanh toán hiện hành (TSNH / nợ ngắn hạn) tăng
-             7. Không phát hành cổ phiếu thu tiền: dùng "tiền thu từ phát hành cổ phiếu" trong
-                lưu chuyển tiền; nguồn không có thì dùng vốn góp không tăng (khi đó cổ phiếu
-                thưởng/cổ tức bằng cổ phiếu cũng bị tính là phát hành — cách làm thận trọng).
+             7. Không phát hành cổ phiếu thu tiền đáng kể: "tiền thu từ phát hành cổ phiếu, nhận
+                vốn góp" trong lưu chuyển tiền ≤ `issue_materiality` (mặc định 1%) vốn chủ. Khoản
+                này gồm cả ESOP và vốn cổ đông thiểu số góp vào công ty con, nên bỏ qua số nhỏ.
+                Nguồn không có thì dùng vốn góp không tăng (khi đó cổ phiếu thưởng/cổ tức bằng cổ
+                phiếu cũng bị tính là phát hành — cách làm thận trọng).
   Hiệu quả   8. Biên lợi nhuận gộp tăng   9. Vòng quay tài sản (doanh thu / tổng tài sản) tăng
   ROA ở đây = LNST / tổng tài sản cuối kỳ (để có F-Score cho cả năm thứ 2 khi chỉ có 4 năm BCTC).
   8–9: mạnh, 0–2: yếu (Piotroski, 2000).
@@ -67,7 +69,7 @@ def _flag(cond: pd.Series, *inputs: pd.Series) -> pd.Series:
     return cond.astype(float).where(ok)
 
 
-def piotroski(fin: pd.DataFrame) -> pd.DataFrame:
+def piotroski(fin: pd.DataFrame, issue_materiality: float = 0.01) -> pd.DataFrame:
     """Bảng: year, 9 cột tiêu chí (1/0/NaN) và f_score (tổng; NaN nếu thiếu tiêu chí nào)."""
     df, gap = _prepare(fin)
 
@@ -91,7 +93,8 @@ def piotroski(fin: pd.DataFrame) -> pd.DataFrame:
                             lever, lever_prev)
     out["f_dliquid"] = _flag(liquid > prev(liquid), liquid, prev(liquid))
     # Ưu tiên tiền thu từ phát hành cổ phiếu; thiếu thì so vốn góp với năm trước.
-    by_cash = _flag(df["equity_issued"] <= 0, df["equity_issued"])
+    by_cash = _flag(df["equity_issued"] <= issue_materiality * df["equity"],
+                    df["equity_issued"], df["equity"])
     cap_prev = prev(df["paid_in_capital"])
     by_capital = _flag(df["paid_in_capital"] <= cap_prev, df["paid_in_capital"], cap_prev)
     out["f_no_issue"] = by_cash.fillna(by_capital)
@@ -181,12 +184,19 @@ def cagr(first: float, last: float, years: int) -> float:
     return (last / first) ** (1 / years) - 1
 
 
+def _div_sum(a: pd.Series, b: pd.Series) -> float:
+    """Tổng a / tổng b (cộng dồn để một năm lãi rất nhỏ không làm méo tỷ lệ)."""
+    if a.isna().any() or b.isna().any() or b.sum() <= 0:
+        return float("nan")
+    return float(a.sum() / b.sum())
+
+
 def fa_score(fin: pd.DataFrame, cfg: dict, pe: float = np.nan, pb: float = np.nan,
              dcf_upside: float = np.nan) -> FAScore:
     """Điểm FA năm BCTC gần nhất. cfg = mục [fa_score] trong settings (trọng số + ngưỡng)."""
     df = fin.sort_values("year").reset_index(drop=True)
     ratios = compute_ratios(df)
-    f = piotroski(df)
+    f = piotroski(df, cfg.get("issue_materiality", 0.01))
     z = altman(df)
     span = int(df["year"].iloc[-1] - df["year"].iloc[0])
     values = {
@@ -195,7 +205,7 @@ def fa_score(fin: pd.DataFrame, cfg: dict, pe: float = np.nan, pb: float = np.na
         "z_em": z["z_em"].iloc[-1],
         "debt_to_equity": ratios["debt_to_equity"].iloc[-1],
         "f_score": f["f_score"].iloc[-1],
-        "cfo_to_ni": ratios["cfo_to_net_income"].tail(3).mean(),
+        "cfo_to_ni": _div_sum(df["cfo"].tail(3), df["net_income"].tail(3)),
         "pe": pe if pe is None or pe > 0 else np.nan,   # P/E âm (lỗ) không chấm theo thang này
         "pb": pb if pb is None or pb > 0 else np.nan,
         "dcf_upside": dcf_upside,

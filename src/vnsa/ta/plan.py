@@ -2,9 +2,10 @@
 
 Quy tắc (tham số ở mục [plan] trong settings):
 - Giá vào = giá đóng cửa phiên gần nhất (làm tròn theo bước giá HOSE).
-- Cắt lỗ = giá vào − `atr_stop` × ATR14. Nếu có hỗ trợ gần trong khoảng `max_stop_atr` × ATR dưới
-  giá vào, đặt cắt lỗ dưới hỗ trợ đó `support_buffer_atr` × ATR (để không bị quét ngay trên hỗ trợ).
-  Làm tròn XUỐNG theo bước giá.
+- Cắt lỗ = giá vào − `atr_stop` × ATR14. Nếu có hỗ trợ dưới giá vào mà cắt lỗ đặt dưới nó
+  `support_buffer_atr` × ATR (để không bị quét ngay trên hỗ trợ) cách giá vào từ `min_stop_atr` đến
+  `max_stop_atr` × ATR, dùng hỗ trợ gần nhất như vậy. Cắt lỗ sát hơn `min_stop_atr` × ATR dễ bị dao
+  động bình thường trong phiên quét mất. Làm tròn XUỐNG theo bước giá.
 - Rủi ro mỗi cp R = giá vào − cắt lỗ. Mục tiêu: các kháng cự phía trên có lãi/lỗ ≥ 1R (tối đa 2),
   thiếu thì bổ sung giá vào + k × R với k trong `reward_multiples`.
 - Khối lượng: rủi ro tối đa = vốn × `risk_per_trade`; số cp = rủi ro tối đa / R, làm tròn xuống
@@ -80,9 +81,11 @@ def trade_plan(close: float, atr: float, supports: list[Level], resistances: lis
         raise ValueError("chưa đủ dữ liệu để tính ATR")
     entry = round_tick(close, "nearest", ticks)
     stop, source = entry - cfg["atr_stop"] * atr, f"{cfg['atr_stop']:g} × ATR"
-    near = [s for s in supports if entry - cfg["max_stop_atr"] * atr <= s.price < entry]
+    buffer, lo, hi = (cfg["support_buffer_atr"] * atr, cfg["max_stop_atr"] * atr,
+                      cfg.get("min_stop_atr", 1.0) * atr)
+    near = [s for s in supports if s.price < entry and hi <= entry - (s.price - buffer) <= lo]
     if near:
-        stop = near[0].price - cfg["support_buffer_atr"] * atr
+        stop = near[0].price - buffer
         source = f"dưới hỗ trợ {near[0].price:,.0f}"
     stop = round_tick(stop, "down", ticks)
     risk = entry - stop

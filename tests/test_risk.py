@@ -71,4 +71,6 @@ def test_historical_and_garch_var_by_hand():
     assert cv == pytest.approx(0.0475, abs=1e-6)     # trung bình −5,0% … −4,5%
     fit = fit_garch(_simulate_garch())
     expected = -(np.exp((fit.mu + fit.next_sigma * norm.ppf(0.05)) / 100) - 1)
-    assert garch_var(fit, 0.95) == pytest.approx(expected)
+    assert garch_var(fit, 0.95, empirical=False) == pytest.approx(expected)
+    z = np.percentile(fit.resid, 5)
+    assert garch_var(fit, 0.95) == pytest.approx(-(np.exp((fit.mu + fit.next_sigma * z) / 100) - 1))

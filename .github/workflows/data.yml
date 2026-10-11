@@ -65,7 +65,6 @@ jobs:
         if: ${{ !inputs.skip_prices }}
         run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli value $s; echo; done
       - name: Điểm FA (F-Score, Altman Z)
-        if: ${{ !inputs.skip_prices }}
         run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli fa-score $s; echo; done
       - name: Kỹ thuật và kế hoạch giao dịch
         if: ${{ !inputs.skip_prices }}

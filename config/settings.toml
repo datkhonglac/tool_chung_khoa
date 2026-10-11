@@ -38,6 +38,7 @@ par_value = 10000              # mệnh giá cổ phiếu (đồng)
 
 [fa_score]
 # Điểm FA 0–100. Mỗi chỉ tiêu quy về 0–100 tuyến tính giữa [mức xấu, mức tốt].
+issue_materiality = 0.01    # F-Score: tiền thu phát hành cp ≤ 1% vốn chủ coi như không phát hành
 [fa_score.weights]
 sinh_loi = 25        # ROE
 tang_truong = 20     # tăng trưởng kép LNST cty mẹ
@@ -51,7 +52,7 @@ ni_cagr = [0.0, 0.20]
 z_em = [1.1, 2.6]
 debt_to_equity = [1.5, 0.3]   # số nhỏ là tốt
 f_score = [2, 8]
-cfo_to_ni = [0.5, 1.0]
+cfo_to_ni = [0.5, 1.0]        # CFO / LNST cộng dồn 3 năm
 pe = [25, 8]
 pb = [4.0, 1.0]
 dcf_upside = [-0.2, 0.3]
@@ -81,6 +82,7 @@ dong_tien = 15
 capital = 100_000_000       # vốn dùng để tính khối lượng (đồng)
 risk_per_trade = 0.01       # rủi ro tối đa mỗi lệnh: 1% vốn
 atr_stop = 2.0              # cắt lỗ = giá vào − 2 × ATR14
+min_stop_atr = 1.0          # cắt lỗ theo hỗ trợ phải cách giá vào ít nhất 1 ATR
 max_stop_atr = 3.0          # chỉ dời cắt lỗ xuống dưới hỗ trợ nếu hỗ trợ cách giá vào ≤ 3 ATR
 support_buffer_atr = 0.5    # đặt cắt lỗ dưới hỗ trợ 0,5 ATR
 reward_multiples = [2.0, 3.0]

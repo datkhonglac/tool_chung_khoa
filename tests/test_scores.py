@@ -46,6 +46,10 @@ def test_piotroski_failures_and_share_issue_fallback():
     assert (f["f_accrual"], f["f_no_issue"], f["f_score"]) == (0, 0, 7)
 
     fin = _fin()
+    fin.loc[1, "equity_issued"] = 5 * B           # ESOP nhỏ (< 1% vốn chủ 600 tỷ) -> bỏ qua
+    assert sc.piotroski(fin).iloc[1]["f_no_issue"] == 1
+
+    fin = _fin()
     fin["equity_issued"] = np.nan                 # nguồn không có: so vốn góp
     fin.loc[1, "paid_in_capital"] = 330 * B       # vốn góp tăng (kể cả cổ phiếu thưởng)
     assert sc.piotroski(fin).iloc[1]["f_no_issue"] == 0
@@ -94,5 +98,6 @@ def test_fa_score_reweights_when_valuation_missing():
     assert s.total == pytest.approx(expected)
     assert s.items["f_score"] == (9.0, 100.0)
     assert s.items["ni_cagr"][0] == pytest.approx(0.5)          # 40 -> 60 tỷ trong 1 năm
+    assert s.items["cfo_to_ni"][0] == pytest.approx(140 / 100)  # cộng dồn, không lấy TB tỷ lệ
     with_val = sc.fa_score(_fin(), cfg, pe=8, pb=1, dcf_upside=0.3)
     assert with_val.groups["dinh_gia"] == 100

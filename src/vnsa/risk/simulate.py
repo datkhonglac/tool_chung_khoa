@@ -11,7 +11,9 @@ Monte Carlo theo "mô phỏng lịch sử có lọc" (filtered historical simula
 VaR / CVaR (lỗ tính dương, mức tin cậy q, ví dụ 95%):
 - VaR lịch sử 1 ngày = − phân vị (1 − q) của lợi suất ngày trong `window` phiên gần nhất.
 - CVaR (Expected Shortfall) = − trung bình các lợi suất tệ hơn mức VaR.
-- VaR GARCH 1 ngày = − (mu + sigma_{t+1} × z_{1−q}), z là phân vị phân phối chuẩn.
+- VaR GARCH 1 ngày = − (mu + sigma_{t+1} × z_{1−q}). Mặc định z là phân vị (1 − q) của phần dư
+  chuẩn hoá thật (đuôi dày như dữ liệu); `empirical=False` dùng phân vị phân phối chuẩn (thường
+  đánh giá thấp lỗ ở mức 99%).
 - VaR Monte Carlo h ngày = − phân vị (1 − q) của (giá sau h phiên / giá hiện tại − 1).
 """
 
@@ -79,7 +81,9 @@ def historical_var(close: pd.Series, q: float = 0.95, window: int = 750) -> tupl
     return float(-cut), float(-r[r <= cut].mean())
 
 
-def garch_var(fit: GarchFit, q: float = 0.95) -> float:
-    """VaR 1 ngày (tỷ lệ, lỗ tính dương) theo sigma GARCH phiên kế tiếp và phân phối chuẩn."""
-    log_r = (fit.mu + fit.next_sigma * norm.ppf(1 - q)) / 100
+def garch_var(fit: GarchFit, q: float = 0.95, empirical: bool = True) -> float:
+    """VaR 1 ngày (tỷ lệ, lỗ tính dương) theo sigma GARCH phiên kế tiếp."""
+    resid = fit.resid[np.isfinite(fit.resid)]
+    z = np.percentile(resid, (1 - q) * 100) if empirical else norm.ppf(1 - q)
+    log_r = (fit.mu + fit.next_sigma * z) / 100
     return float(-(np.exp(log_r) - 1))

@@ -291,7 +291,7 @@ def cmd_fa_score(args) -> int:
         except ValueError as e:
             print(f"  ! không định giá được ({e}); bỏ nhóm định giá")
     par = settings()["valuation"]["par_value"]
-    f = sc.piotroski(fin)
+    f = sc.piotroski(fin, settings()["fa_score"].get("issue_materiality", 0.01))
     z = sc.altman(fin, sc.year_end_market_caps(fin, prices, par))
 
     print(f"{sym} — chất lượng tài chính (BCTC năm {int(fin['year'].iloc[0])}–"
@@ -299,7 +299,9 @@ def cmd_fa_score(args) -> int:
     print("\nPiotroski F-Score (1 = đạt, 0 = không đạt, — = thiếu số liệu)")
     t = f.set_index("year")[list(sc.FSCORE_CRITERIA) + ["f_score"]].T
     t.index = [*sc.FSCORE_CRITERIA.values(), "F-Score (/9)"]
-    print(t.map(lambda x: "—" if pd.isna(x) else f"{x:.0f}").to_string())
+    t = t.map(lambda x: "—" if pd.isna(x) else f"{x:.0f}")
+    t.loc["(tiền thu phát hành cp, tỷ)"] = [_num(x / 1e9) for x in fin["equity_issued"]]
+    print(t.to_string())
 
     print("\nAltman Z")
     zt = z.set_index("year")[["z_em", "z_orig"]]
@@ -313,7 +315,7 @@ def cmd_fa_score(args) -> int:
              "chat_luong": "Chất lượng LN", "dinh_gia": "Định giá"}
     labels = {"roe": ("ROE", "pct"), "ni_cagr": ("Tăng trưởng kép LNST cty mẹ", "pct"),
               "z_em": ("Altman Z''", "x"), "debt_to_equity": ("Vay/VCSH", "x"),
-              "f_score": ("F-Score", "x0"), "cfo_to_ni": ("CFO/LNST TB 3 năm", "x"),
+              "f_score": ("F-Score", "x0"), "cfo_to_ni": ("CFO/LNST cộng dồn 3 năm", "x"),
               "pe": ("P/E", "x1"), "pb": ("P/B", "x"), "dcf_upside": ("Chênh lệch DCF", "pct")}
     print(f"\nĐiểm FA: {_num(s.total)}/100 — {s.rating}")
     for g, keys in sc.GROUPS.items():
@@ -447,7 +449,8 @@ def cmd_risk(args) -> int:
     print("\nVaR 1 ngày (lỗ tối đa với xác suất tin cậy):")
     for q in cfg["confidence"]:
         hv, cv = historical_var(close, q, cfg["var_window"])
-        print(f"  {q:.0%}: lịch sử {hv:.2%} (CVaR {cv:.2%}) · GARCH {garch_var(fit, q):.2%}")
+        print(f"  {q:.0%}: lịch sử {hv:.2%} (CVaR {cv:.2%}) · GARCH {garch_var(fit, q):.2%}"
+              f" (phân phối chuẩn {garch_var(fit, q, empirical=False):.2%})")
 
     band = settings()["market"]["band_hose"]
     plan = None
