@@ -8,6 +8,7 @@ sample_prices_dir = "data/sample/prices"
 warehouse = "data/warehouse.duckdb"
 charts_dir = "data/charts"
 signals_csv = "data/signals.csv"       # bản sao lịch sử khuyến nghị (không bị .gitignore, commit để giữ lại)
+bank_manual = "config/bank_manual.toml"   # NPL, CASA, CAR ngân hàng nhập tay (nguồn miễn phí không có)
 
 # Đơn vị giá trong file CSV: "auto" | "dong" | "nghin"
 # auto: nếu trung vị giá đóng cửa < 1000 thì coi là nghìn đồng và nhân 1000.
@@ -104,8 +105,9 @@ dcf_upside = [-0.2, 0.3]
 sinh_loi = 30        # ROE
 tang_truong = 15     # tăng trưởng kép LNST cty mẹ
 an_toan = 10         # vốn chủ / tổng tài sản
-hieu_qua = 10        # ngân hàng: NIM, CIR (fa/sector.py)
+hieu_qua = 10        # ngân hàng: NIM, CIR (fa/sector.py), CASA (nhập tay)
 rui_ro = 10          # ngân hàng: chi phí tín dụng · chứng khoán: cho vay ký quỹ / vốn chủ
+chat_luong_tai_san = 10   # ngân hàng: nợ xấu, bao phủ nợ xấu (nhập tay config/bank_manual.toml)
 dinh_gia = 25        # P/B, chênh lệch so với giá trị hợp lý
 [fa_score.financials.thresholds]
 roe = [0.08, 0.20]
@@ -116,6 +118,16 @@ nim = [0.025, 0.045]
 cir = [0.50, 0.30]             # số nhỏ là tốt
 credit_cost = [0.025, 0.005]   # dự phòng / dư nợ bình quân; số nhỏ là tốt
 margin_to_equity = [1.8, 0.8]  # luật cho phép tối đa 2 lần vốn chủ
+npl = [0.03, 0.01]             # nợ xấu / dư nợ (nhập tay); số nhỏ là tốt
+npl_coverage = [0.5, 1.5]      # dự phòng / nợ xấu (lần)
+casa = [0.10, 0.40]
+car = [0.09, 0.13]             # tối thiểu theo NHNN 8%
+min_bank_peers = 4             # số ngân hàng KHÁC trong kho tối thiểu để chấm NIM/CIR/chi phí tín dụng theo ngành
+[fa_score.financials.relative]
+# Khi kho có ≥ min_bank_peers ngân hàng: chấm theo tỷ lệ so với trung vị ngành [mức xấu, mức tốt]
+nim = [0.8, 1.2]               # NIM bằng 80% trung vị = 0 điểm, 120% = 100 điểm
+cir = [1.2, 0.8]
+credit_cost = [1.5, 0.5]
 [fa_score.financials.equity_to_assets]   # [mức xấu, mức tốt] theo loại doanh nghiệp
 bank = [0.05, 0.11]
 securities = [0.25, 0.60]

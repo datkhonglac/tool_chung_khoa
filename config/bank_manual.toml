@@ -1,0 +1,17 @@
+# Chỉ số ngân hàng NHẬP TAY — nguồn miễn phí (vnstock/VCI) không có nợ xấu, CASA, CAR.
+# Lấy từ BCTC quý / thuyết minh / báo cáo thường niên của ngân hàng (mục "Chất lượng tín dụng",
+# "Tiền gửi của khách hàng", "Tỷ lệ an toàn vốn"). Mỗi quý mất khoảng 5 phút cho một ngân hàng.
+#
+# Cách nhập: một mục [MÃ."NĂM-Q"] cho mỗi kỳ; tool dùng kỳ MỚI NHẤT, kỳ cũ để đối chiếu.
+# Đơn vị là TỶ LỆ thập phân (0.012 = 1,2%); thiếu chỉ tiêu nào thì bỏ dòng đó.
+#   npl          = nợ xấu (nhóm 3–5) / tổng dư nợ cho vay khách hàng
+#   npl_coverage = dự phòng rủi ro cho vay / nợ xấu (LLR, lần: 1.5 = 150%)
+#   casa         = tiền gửi không kỳ hạn / tổng tiền gửi khách hàng
+#   car          = hệ số an toàn vốn (Basel II)
+#
+# Ví dụ (bỏ dấu # ở đầu dòng và điền số thật):
+# [VCB."2026-Q2"]
+# npl = 0.012
+# npl_coverage = 2.0
+# casa = 0.34
+# car = 0.12

@@ -121,7 +121,41 @@ def sector(d: Data):
 
     if d.fin.empty:
         return None
-    return sec.metrics(market.profile(d.symbol)["model"], d.fin, d.quarterly)
+    return sec.metrics(market.profile(d.symbol)["model"], d.fin, d.quarterly, d.symbol)
+
+
+def bank_peers(d: Data) -> dict[str, float] | None:
+    """Trung vị NIM, CIR, chi phí tín dụng của các ngân hàng khác trong kho (cùng cách tính xấp xỉ
+    của fa/sector.py) và số ngân hàng `n`; None nếu ít hơn `min_bank_peers`."""
+    import numpy as np
+
+    from vnsa import market
+    from vnsa.data.store import Store
+    from vnsa.fa import sector as sec
+
+    prof = market.profile(d.symbol)
+    if prof["model"] != "bank" or not prof.get("industry"):
+        return None
+    with Store(path("warehouse")) as store:
+        peers = [s for s in store.peers(prof["industry"]) if s != d.symbol]
+    vals: dict[str, list[float]] = {"nim": [], "cir": [], "credit_cost": []}
+    for s in peers:
+        if market.profile(s)["model"] != "bank":
+            continue
+        try:
+            p = load(s, need_prices=False)
+        except DataMissing:
+            continue
+        m = sec.bank(p.fin, p.quarterly)
+        if m is None:
+            continue
+        for k, lst in vals.items():
+            if not pd.isna(m.values.get(k, float("nan"))):
+                lst.append(m.values[k])
+    n = len(vals["nim"])
+    if n < settings()["fa_score"]["financials"].get("min_bank_peers", 4):
+        return None
+    return {**{k: float(np.median(v)) for k, v in vals.items() if v}, "n": n}
 
 
 def financial(d: Data):
@@ -156,7 +190,7 @@ def financial(d: Data):
     score = financial_score(d.fin, settings()["fa_score"]["financials"],
                             market.profile(d.symbol)["model"], pb=pb, fair_upside=fair.upside,
                             roe=d.current.roe if d.current is not None else None,
-                            pb_hist=fair.pb_median, sector=sector(d))
+                            pb_hist=fair.pb_median, sector=sector(d), peer=bank_peers(d))
     return score, fair
 
 

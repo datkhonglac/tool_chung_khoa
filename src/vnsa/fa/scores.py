@@ -246,19 +246,25 @@ def fa_score(fin: pd.DataFrame, cfg: dict, pe: float = np.nan, pb: float = np.na
 FIN_GROUPS = {
     "sinh_loi": ["roe"],
     "tang_truong": ["ni_cagr"],
-    "an_toan": ["equity_to_assets"],
-    "hieu_qua": ["nim", "cir"],                         # ngân hàng (fa/sector.py)
+    "an_toan": ["equity_to_assets", "car"],             # CAR: nhập tay (config/bank_manual.toml)
+    "hieu_qua": ["nim", "cir", "casa"],                 # ngân hàng (fa/sector.py); CASA nhập tay
     "rui_ro": ["credit_cost", "margin_to_equity"],      # ngân hàng | công ty chứng khoán
+    "chat_luong_tai_san": ["npl", "npl_coverage"],      # ngân hàng, nhập tay
     "dinh_gia": ["pb_rel", "fair_upside"],
 }
+PEER_RELATIVE = ("nim", "cir", "credit_cost")           # chấm so với trung vị ngân hàng trong kho
 
 
 def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan,
                     fair_upside: float = np.nan, roe: float | None = None,
-                    pb_hist: float = np.nan, sector=None) -> FAScore:
+                    pb_hist: float = np.nan, sector=None,
+                    peer: dict[str, float] | None = None) -> FAScore:
     """Điểm FA 0–100 cho định chế tài chính. cfg = mục [fa_score.financials] trong settings.
-    sector = fa.sector.SectorMetrics (NIM, CIR, chi phí tín dụng, ký quỹ/vốn chủ) nếu có; chỉ tiêu
-    thiếu thì nhóm đó bị bỏ, trọng số chia lại cho các nhóm còn lại."""
+    sector = fa.sector.SectorMetrics (NIM, CIR, chi phí tín dụng, ký quỹ/vốn chủ; NPL, CASA, CAR
+    nếu nhập tay) nếu có; chỉ tiêu thiếu thì nhóm đó bị bỏ, trọng số chia lại cho nhóm còn lại.
+    peer = {chỉ tiêu: trung vị các ngân hàng trong kho} (analysis.bank_peers): NIM, CIR, chi phí tín
+    dụng chấm theo tỷ lệ so với trung vị ngành (`[fa_score.financials.relative]`) thay cho ngưỡng
+    tuyệt đối — NIM của tool là xấp xỉ nên so cùng cách tính giữa các ngân hàng mới công bằng."""
     df = fin.sort_values("year").reset_index(drop=True)
     ratios = compute_ratios(df)
     span = int(df["year"].iloc[-1] - df["year"].iloc[0])
@@ -272,12 +278,20 @@ def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan
         "fair_upside": fair_upside,
     }
     sv = sector.values if sector is not None else {}
-    for k in ("nim", "cir", "credit_cost", "margin_to_equity"):
+    for k in ("nim", "cir", "credit_cost", "margin_to_equity", "npl", "npl_coverage", "casa",
+              "car"):
         values[k] = sv.get(k, np.nan)
     thresholds = dict(cfg["thresholds"])
     thresholds["equity_to_assets"] = cfg["equity_to_assets"][model]
     items = {k: (float(v), scale(v, *thresholds[k]) if k in thresholds else np.nan)
              for k, v in values.items()}
+    rel = cfg.get("relative", {})
+    used_peer = []
+    for k in PEER_RELATIVE:
+        base = (peer or {}).get(k, np.nan)
+        if k in rel and base > 0 and not pd.isna(values[k]):
+            items[k] = (float(values[k]), scale(values[k] / base, *rel[k]))
+            used_peer.append(k)
     groups = {}
     for g, keys in FIN_GROUPS.items():
         scores = [items[k][1] for k in keys if not pd.isna(items[k][1])]
@@ -288,8 +302,14 @@ def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan
     notes = []
     if model == "bank":
         missing = sector.missing if sector else ["NPL", "CASA", "CAR"]
-        notes.append(f"nguồn miễn phí không có {', '.join(missing)}: chưa chấm chất lượng tài sản "
-                     "theo nợ xấu — cần xem BCTC gốc")
+        if missing:
+            notes.append(f"nguồn miễn phí không có {', '.join(missing)}: chưa chấm — nhập tay từ "
+                         "BCTC vào config/bank_manual.toml")
+        if sector is not None and sector.manual:
+            notes.append(f"NPL/CASA/CAR nhập tay kỳ {sector.manual} (config/bank_manual.toml)")
+        if used_peer:
+            notes.append(f"NIM, CIR, chi phí tín dụng chấm so với trung vị {int(peer['n'])} ngân "
+                         "hàng trong kho")
         if sector is None:
             notes.append("chưa có khoản mục ngân hàng (NIM, CIR, chi phí tín dụng): chạy lại "
                          "fetch-bctc để tải")

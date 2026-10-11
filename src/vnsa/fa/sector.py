@@ -14,7 +14,8 @@ Ngân hàng (đơn vị: tỷ lệ, 0.035 = 3,5%):
 - LDR (đơn giản) = dư nợ cho vay / tiền gửi khách hàng — KHÔNG phải công thức LDR của NHNN.
 - Tăng trưởng tín dụng = dư nợ cuối năm gần nhất / năm trước − 1 (BCTC năm).
 KHÔNG có trong nguồn miễn phí VCI (đã dò thật): nợ xấu (NPL), tỷ lệ bao phủ nợ xấu, CASA, CAR —
-không tự ước lượng, báo rõ là thiếu.
+không tự ước lượng, báo rõ là thiếu. Người dùng có thể NHẬP TAY từ BCTC vào config/bank_manual.toml
+(`manual_bank`); khi có, các chỉ tiêu này được hiển thị và chấm điểm, ghi rõ "nhập tay".
 
 Công ty chứng khoán:
 - Cho vay ký quỹ / vốn chủ (pháp luật giới hạn tổng dư nợ ký quỹ ≤ 2 lần vốn chủ).
@@ -30,6 +31,8 @@ import numpy as np
 import pandas as pd
 
 BANK_MISSING = ["nợ xấu (NPL)", "bao phủ nợ xấu", "CASA", "CAR"]
+MANUAL_KEYS = {"npl": "nợ xấu (NPL)", "npl_coverage": "bao phủ nợ xấu", "casa": "CASA",
+               "car": "CAR"}
 EARNING_ASSETS = ["sbv_balances", "interbank_placements", "trading_securities",
                   "investment_securities", "loans_gross"]
 
@@ -40,6 +43,7 @@ class SectorMetrics:
     basis: str                  # "TTM Q2/2026" | "năm 2025"
     values: dict[str, float] = field(default_factory=dict)
     missing: list[str] = field(default_factory=list)   # chỉ tiêu nguồn không có
+    manual: str = ""            # kỳ của số nhập tay (config/bank_manual.toml), "" nếu không có
 
 
 def _window(fin: pd.DataFrame, quarterly: pd.DataFrame | None, need: str):
@@ -77,7 +81,27 @@ def _earning_assets(row: pd.Series) -> float:
     return float(sum(0.0 if pd.isna(row.get(c)) else row[c] for c in EARNING_ASSETS))
 
 
-def bank(fin: pd.DataFrame, quarterly: pd.DataFrame | None = None) -> SectorMetrics | None:
+def manual_bank(symbol: str, file=None) -> tuple[str, dict[str, float]] | None:
+    """(kỳ, {npl, npl_coverage, casa, car}) mới nhất của mã trong file nhập tay; None nếu không có."""
+    import tomllib
+    from pathlib import Path
+
+    from vnsa.config import path
+
+    f = Path(file) if file is not None else path("bank_manual")
+    if not f.exists():
+        return None
+    with f.open("rb") as fh:
+        data = tomllib.load(fh).get(symbol.upper(), {})
+    periods = sorted(k for k, v in data.items() if isinstance(v, dict))
+    if not periods:
+        return None
+    vals = {k: float(v) for k, v in data[periods[-1]].items() if k in MANUAL_KEYS}
+    return (periods[-1], vals) if vals else None
+
+
+def bank(fin: pd.DataFrame, quarterly: pd.DataFrame | None = None,
+         manual: tuple[str, dict[str, float]] | None = None) -> SectorMetrics | None:
     w = _window(fin, quarterly, "nii")
     if w is None or pd.isna(w[1].get("nii")):
         return None
@@ -94,7 +118,12 @@ def bank(fin: pd.DataFrame, quarterly: pd.DataFrame | None = None) -> SectorMetr
     f = fin.sort_values("year")
     if "loans_gross" in f and len(f) >= 2 and f["year"].iloc[-1] - f["year"].iloc[-2] == 1:
         values["loan_growth"] = _div(f["loans_gross"].iloc[-1], f["loans_gross"].iloc[-2]) - 1
-    return SectorMetrics("bank", basis, values, list(BANK_MISSING))
+    missing, period = list(BANK_MISSING), ""
+    if manual is not None:
+        period, extra = manual
+        values.update(extra)
+        missing = [MANUAL_KEYS[k] for k in MANUAL_KEYS if k not in extra]
+    return SectorMetrics("bank", basis, values, missing, period)
 
 
 def securities(fin: pd.DataFrame, quarterly: pd.DataFrame | None = None) -> SectorMetrics | None:
@@ -113,10 +142,10 @@ def securities(fin: pd.DataFrame, quarterly: pd.DataFrame | None = None) -> Sect
     return SectorMetrics("securities", basis, values, ["thị phần môi giới"])
 
 
-def metrics(model: str, fin: pd.DataFrame,
-            quarterly: pd.DataFrame | None = None) -> SectorMetrics | None:
+def metrics(model: str, fin: pd.DataFrame, quarterly: pd.DataFrame | None = None,
+            symbol: str | None = None) -> SectorMetrics | None:
     if model == "bank":
-        return bank(fin, quarterly)
+        return bank(fin, quarterly, manual_bank(symbol) if symbol else None)
     if model == "securities":
         return securities(fin, quarterly)
     return None
@@ -127,4 +156,5 @@ LABELS = {
     "llr": "Dự phòng/dư nợ", "ldr": "Cho vay/tiền gửi KH", "loan_growth": "Tăng trưởng tín dụng",
     "margin_to_equity": "Ký quỹ/vốn chủ", "fvtpl_to_equity": "Tự doanh FVTPL/vốn chủ",
     "brokerage_share": "Tỷ trọng DT môi giới",
+    "npl": "Nợ xấu", "npl_coverage": "Bao phủ nợ xấu", "casa": "CASA", "car": "CAR",
 }

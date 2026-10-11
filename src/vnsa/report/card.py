@@ -224,9 +224,13 @@ def build_card(a) -> Card:
                 vals = [f"{SECTOR_LABELS[k]} {vn_num(v, 2) + ' lần' if k == 'margin_to_equity' else vn_pct(v)}"
                         for k, v in sm.values.items() if not pd.isna(v)]
                 if vals:
-                    fundamentals.append(f"{' · '.join(vals)} ({sm.basis})")
+                    fundamentals.append(f"{' · '.join(vals)} ({sm.basis}"
+                                        + (f"; NPL/CASA/CAR nhập tay kỳ {sm.manual}"
+                                           if sm.manual else "") + ")")
                 if sm.missing:
-                    fundamentals.append(f"Không có trong nguồn miễn phí: {', '.join(sm.missing)}")
+                    fundamentals.append(f"Không có trong nguồn miễn phí: {', '.join(sm.missing)}"
+                                        + (" — nhập tay ở config/bank_manual.toml"
+                                           if sm.model == "bank" else ""))
                 v = sm.values
                 if v.get("credit_cost", 0) > 0.025:
                     flags.append(f"chi phí tín dụng cao ({vn_pct(v['credit_cost'])} dư nợ)")

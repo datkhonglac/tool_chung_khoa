@@ -319,12 +319,15 @@ def _fin_score(d) -> int:
     print(f"{d.symbol} — chất lượng tài chính, bộ chỉ tiêu cho định chế tài chính "
           f"(BCTC năm {int(d.fin['year'].iloc[0])}–{int(d.fin['year'].iloc[-1])})")
     names = {"sinh_loi": "Sinh lời", "tang_truong": "Tăng trưởng", "an_toan": "Đệm vốn",
-             "hieu_qua": "Hiệu quả", "rui_ro": "Rủi ro", "dinh_gia": "Định giá"}
+             "hieu_qua": "Hiệu quả", "rui_ro": "Rủi ro", "chat_luong_tai_san": "Chất lượng tài sản",
+             "dinh_gia": "Định giá"}
     labels = {"roe": ("ROE", "pct"), "ni_cagr": ("Tăng trưởng kép LNST cty mẹ", "pct"),
               "equity_to_assets": ("Vốn chủ / tổng tài sản", "pct"),
               "nim": ("NIM (xấp xỉ)", "pct"), "cir": ("CIR (chi phí/thu nhập)", "pct"),
               "credit_cost": ("Chi phí tín dụng", "pct"),
               "margin_to_equity": ("Cho vay ký quỹ / vốn chủ (lần)", "x"),
+              "npl": ("Nợ xấu (nhập tay)", "pct"), "npl_coverage": ("Bao phủ nợ xấu (nhập tay)", "pct"),
+              "casa": ("CASA (nhập tay)", "pct"), "car": ("CAR (nhập tay)", "pct"),
               "pb_rel": ("P/B so với trung vị lịch sử (1 = bằng)", "x"),
               "fair_upside": ("Chênh lệch so với giá trị hợp lý", "pct")}
     print(f"\nĐiểm FA: {_num(s.total)}/100 — {s.rating}")

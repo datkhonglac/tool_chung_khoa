@@ -76,7 +76,10 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 - Định chế tài chính: chỉ số ngành `fa/sector.py` (NIM xấp xỉ, CIR, chi phí tín dụng, LDR đơn giản;
   ký quỹ/vốn chủ cho CK) từ khoản mục `SECTOR_FIELDS` (`fa/ratios.py`, đọc theo item_id VCI ở
   `SECTOR_MAPPING`, không báo thiếu với doanh nghiệp thường). NPL, CASA, CAR KHÔNG có trong nguồn
-  miễn phí: báo thiếu, không ước lượng. Dò khoản mục: `python scripts/probe_vnstock.py --items VCB`.
+  miễn phí: báo thiếu, không ước lượng — người dùng nhập tay `config/bank_manual.toml`
+  (`sector.manual_bank`, nhóm điểm `chat_luong_tai_san`, CASA, CAR). NIM/CIR/chi phí tín dụng chấm
+  so với trung vị ngân hàng trong kho khi ≥ `min_bank_peers` (`analysis.bank_peers`,
+  `[fa_score.financials.relative]`). Dò khoản mục: `python scripts/probe_vnstock.py --items VCB`.
 - Lịch sử bền vững (`history.py`): workflow `.github/workflows/daily.yml` (16:40 giờ VN, ngày giao
   dịch) phân tích `[signals] daily`, ghi `history/{signals,fundamentals,fundamentals_q}.csv` + `review.txt`
   vào nhánh `signals`. `python -m vnsa.cli history import --git origin/signals` nạp về kho (chỉ thêm

@@ -70,7 +70,10 @@ thường); định giá bằng thu nhập thặng dư + P/B theo ROE, điểm F
 ngành tính từ BCTC (`fa/sector.py`): ngân hàng — NIM (xấp xỉ), CIR, chi phí tín dụng, dự phòng/dư
 nợ, cho vay/tiền gửi, tăng trưởng tín dụng; công ty chứng khoán — cho vay ký quỹ/vốn chủ, tự doanh
 FVTPL/vốn chủ, tỷ trọng môi giới. Nguồn miễn phí **không có nợ xấu (NPL), CASA, CAR**: tool ghi rõ
-là thiếu chứ không tự ước lượng — cần xem BCTC/thuyết minh gốc.
+là thiếu chứ không tự ước lượng. Bạn có thể **nhập tay** mỗi quý từ BCTC/thuyết minh vào
+`config/bank_manual.toml` (có ví dụ trong file) — khi có, tool hiển thị và chấm thêm nhóm "Chất lượng
+tài sản" (nợ xấu, bao phủ nợ xấu), CASA, CAR. Khi kho có ≥ 5 ngân hàng (đã phân tích), NIM, CIR, chi
+phí tín dụng được chấm **so với trung vị các ngân hàng** thay cho ngưỡng cố định.
 
 Trên dashboard: gõ mã vào ô **Mã bất kỳ** ở thanh bên rồi bấm **Lấy dữ liệu & phân tích**.
 

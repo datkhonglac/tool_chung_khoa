@@ -102,3 +102,42 @@ def test_standardize_reads_bank_items_by_id():
     assert last["nii"] == 100 and last["bank_opex"] == 50 and last["credit_provision"] == 20
     assert last["loan_loss_reserve"] == 9 and last["customer_deposits"] == 1000
     assert "nii" not in missing                                        # không báo thiếu khoản ngành
+
+
+def test_manual_bank_file_fills_missing_items(tmp_path):
+    f = tmp_path / "bank_manual.toml"
+    f.write_text('[BNK."2026-Q1"]\nnpl = 0.02\n[BNK."2026-Q2"]\nnpl = 0.015\ncasa = 0.3\n'
+                 '# ghi chú\n', encoding="utf-8")
+    period, vals = sector.manual_bank("bnk", f)
+    assert period == "2026-Q2" and vals == {"npl": 0.015, "casa": 0.3}       # kỳ mới nhất
+    assert sector.manual_bank("XYZ", f) is None
+    m = sector.bank(_bank_y(), _bank_q(), (period, vals))
+    assert m.values["npl"] == 0.015 and m.manual == "2026-Q2"
+    assert m.missing == ["bao phủ nợ xấu", "CAR"]                            # chỉ còn thiếu 2
+
+
+def test_financial_score_manual_and_peer_relative():
+    fin = pd.DataFrame({"year": [2023, 2024, 2025], "net_income_parent": [10 * B, 12 * B, 14 * B],
+                        "net_income": [10 * B, 12 * B, 14 * B], "equity": [80 * B, 90 * B, 100 * B],
+                        "total_assets": [1000 * B] * 3})
+    cfg = {"weights": {"sinh_loi": 30, "tang_truong": 15, "an_toan": 10, "hieu_qua": 10,
+                       "rui_ro": 10, "chat_luong_tai_san": 10, "dinh_gia": 25},
+           "thresholds": {"roe": [0.08, 0.20], "ni_cagr": [0.0, 0.20], "pb_rel": [1.3, 0.7],
+                          "fair_upside": [-0.2, 0.3], "nim": [0.025, 0.045], "cir": [0.5, 0.3],
+                          "credit_cost": [0.025, 0.005], "margin_to_equity": [1.8, 0.8],
+                          "npl": [0.03, 0.01], "npl_coverage": [0.5, 1.5], "casa": [0.1, 0.4],
+                          "car": [0.09, 0.13]},
+           "relative": {"nim": [0.8, 1.2], "cir": [1.2, 0.8], "credit_cost": [1.5, 0.5]},
+           "equity_to_assets": {"bank": [0.05, 0.11]}}
+    sm = sector.SectorMetrics("bank", "TTM", {"nim": 0.027, "cir": 0.34, "credit_cost": 0.003,
+                                              "npl": 0.01, "npl_coverage": 1.5}, ["CASA", "CAR"],
+                              "2026-Q2")
+    absolute = financial_score(fin, cfg, "bank", sector=sm)
+    assert absolute.items["nim"][1] == pytest.approx(10)                  # 2,7% gần mức xấu 2,5%
+    assert absolute.groups["chat_luong_tai_san"] == 100
+    peer = {"nim": 0.027, "cir": 0.40, "credit_cost": 0.01, "n": 5}
+    rel = financial_score(fin, cfg, "bank", sector=sm, peer=peer)
+    assert rel.items["nim"][1] == pytest.approx(50)                       # bằng trung vị ngành
+    assert rel.items["credit_cost"][1] == 100                             # 0,3% so 1% ngành
+    assert any("5 ngân hàng" in n for n in rel.notes)
+    assert any("nhập tay kỳ 2026-Q2" in n for n in rel.notes)
