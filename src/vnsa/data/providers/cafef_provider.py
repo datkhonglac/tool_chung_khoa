@@ -46,6 +46,36 @@ PAGE_SIZE = 30      # CafeF trả tối đa 30 dòng mỗi trang, ~9 trang cho 1
 MAX_PAGES = 100     # chặn vòng lặp vô hạn nếu CafeF đổi cách phân trang
 
 
+# Giao dịch khối ngoại và tự doanh theo phiên (cùng họ API, đã dò thật qua
+# scripts/probe_vnstock.py --foreign). Giá trị tính bằng đồng.
+FLOW_URL = "https://cafef.vn/du-lieu/Ajax/PageNew/DataHistory/{page}.ashx"
+FLOW_COLUMNS = ["foreign_buy", "foreign_sell", "foreign_net", "foreign_net_vol", "foreign_room",
+                "foreign_pct", "prop_buy", "prop_sell", "prop_net"]
+
+
+def standardize_flows(foreign: list[dict], prop: list[dict], symbol: str) -> pd.DataFrame:
+    """Dòng CafeF GDKhoiNgoai (Ngay, GtMua, GtBan, GTDGRong, KLGDRong, RoomConLai, DangSoHuu) và
+    GDTuDoanh (Date, GtMua, GtBan) -> bảng symbol, date + FLOW_COLUMNS (đồng; foreign_pct 0–1)."""
+    def num(r, k):
+        v = r.get(k)
+        return float(v) if isinstance(v, int | float) else float("nan")
+
+    f = pd.DataFrame([{"date": r.get("Ngay"), "foreign_buy": num(r, "GtMua"),
+                       "foreign_sell": num(r, "GtBan"), "foreign_net": num(r, "GTDGRong"),
+                       "foreign_net_vol": num(r, "KLGDRong"), "foreign_room": num(r, "RoomConLai"),
+                       "foreign_pct": num(r, "DangSoHuu") / 100} for r in foreign],
+                     columns=["date", *FLOW_COLUMNS[:6]])
+    p = pd.DataFrame([{"date": r.get("Date"), "prop_buy": num(r, "GtMua"),
+                       "prop_sell": num(r, "GtBan")} for r in prop],
+                     columns=["date", "prop_buy", "prop_sell"])
+    p["prop_net"] = p["prop_buy"] - p["prop_sell"]
+    out = f.merge(p, on="date", how="outer")
+    out["date"] = pd.to_datetime(out["date"], format="%d/%m/%Y", errors="coerce")
+    out = out.dropna(subset=["date"]).drop_duplicates("date").sort_values("date")
+    out.insert(0, "symbol", symbol.upper())
+    return out.reindex(columns=["symbol", "date", *FLOW_COLUMNS]).reset_index(drop=True)
+
+
 def _http_get_json(url: str, timeout: float = 20) -> dict:
     req = urllib.request.Request(url, headers=HEADERS)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -90,6 +120,32 @@ class CafeFProvider(DataProvider):
                 last_err = e
                 time.sleep(self.pause * (attempt + 1))
         raise RuntimeError(f"không tải được từ CafeF ({last_err})") from last_err
+
+    def _flow_pages(self, page_name: str, symbol: str, sessions: int) -> list[dict]:
+        rows: list[dict] = []
+        for page in range(1, sessions // PAGE_SIZE + 2):
+            query = urllib.parse.urlencode({"Symbol": symbol, "StartDate": "", "EndDate": "",
+                                            "PageIndex": page, "PageSize": PAGE_SIZE})
+            payload = self.get_json(f"{FLOW_URL.format(page=page_name)}?{query}")
+            if not payload.get("Success", False):
+                raise RuntimeError(f"CafeF trả lỗi: {payload.get('Message')}")
+            data = payload["Data"].get("Data") or []
+            batch = data.get("ListDataTudoanh") or [] if isinstance(data, dict) else data
+            rows.extend(batch)
+            if len(batch) < PAGE_SIZE or len(rows) >= sessions:
+                break
+            time.sleep(self.pause)
+        return rows
+
+    def flows(self, symbol: str, sessions: int = 60) -> pd.DataFrame:
+        """Giao dịch khối ngoại + tự doanh `sessions` phiên gần nhất (standardize_flows)."""
+        symbol = symbol.upper()
+        foreign = self._flow_pages("GDKhoiNgoai", symbol, sessions)
+        try:
+            prop = self._flow_pages("GDTuDoanh", symbol, sessions)
+        except Exception:  # noqa: BLE001 - thiếu tự doanh vẫn dùng được khối ngoại
+            prop = []
+        return standardize_flows(foreign, prop, symbol)
 
     def _window(self, symbol: str, start: date, end: date) -> list[dict]:
         rows: list[dict] = []

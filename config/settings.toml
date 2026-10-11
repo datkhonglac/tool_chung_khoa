@@ -36,6 +36,11 @@ bctc_max_age_days = 30      # BCTC trong kho cũ hơn số ngày này thì tải
 listing_max_age_days = 30   # danh sách niêm yết (sàn, ngành) cũ hơn số ngày này thì tải lại
 profile_max_age_days = 7    # hồ sơ (số cp lưu hành, sở hữu NN) và cổ tức cũ hơn số ngày này thì tải lại
 pause = 0.3                 # giây nghỉ giữa các lần gọi CafeF
+flow_sessions = 60          # số phiên giao dịch khối ngoại / tự doanh tải từ CafeF
+
+[flows]
+# Dòng tiền khối ngoại / tự doanh: chỉ để THAM KHẢO trên thẻ báo cáo, không vào điểm số
+windows = [5, 20]           # cộng dồn mua/bán ròng 5 và 20 phiên
 
 [watchlist]
 symbols = ["FPT", "HPG", "MWG", "VNM", "DGC"]

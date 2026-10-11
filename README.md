@@ -65,8 +65,12 @@ Với mỗi mã, tool tự kiểm tra kho và chỉ tải phần còn thiếu (t
   (giá điều chỉnh đã trừ cổ tức tiền nên làm P/E quá khứ thấp đi).
 
 `--refresh` tải lại BCTC và danh sách sàn ngay; `--full` tải lại toàn bộ giá; `--offline` không tải gì.
-**Ngân hàng, chứng khoán, bảo hiểm**: DCF-FCFF, Altman Z và điểm FA không áp dụng (thiết kế cho doanh
-nghiệp thường), tool chỉ dùng kỹ thuật cùng P/E, P/B và ghi rõ lý do.
+**Ngân hàng, chứng khoán, bảo hiểm**: không dùng DCF-FCFF và Altman Z (thiết kế cho doanh nghiệp
+thường); định giá bằng thu nhập thặng dư + P/B theo ROE, điểm FA bằng bộ chỉ tiêu riêng có chỉ số
+ngành tính từ BCTC (`fa/sector.py`): ngân hàng — NIM (xấp xỉ), CIR, chi phí tín dụng, dự phòng/dư
+nợ, cho vay/tiền gửi, tăng trưởng tín dụng; công ty chứng khoán — cho vay ký quỹ/vốn chủ, tự doanh
+FVTPL/vốn chủ, tỷ trọng môi giới. Nguồn miễn phí **không có nợ xấu (NPL), CASA, CAR**: tool ghi rõ
+là thiếu chứ không tự ước lượng — cần xem BCTC/thuyết minh gốc.
 
 Trên dashboard: gõ mã vào ô **Mã bất kỳ** ở thanh bên rồi bấm **Lấy dữ liệu & phân tích**.
 
@@ -239,14 +243,16 @@ Kế hoạch giao dịch là kết quả tính theo quy tắc, không phải khu
 ```bash
 python -m vnsa.cli recommend                  # MUA / THEO DÕI / TRÁNH kèm lý do, cho danh sách theo dõi
 python -m vnsa.cli recommend FPT MWG
-python -m vnsa.cli backtest FPT               # chiến lược theo điểm TA so với mua và nắm giữ
+python -m vnsa.cli backtest FPT               # TA thuần vs TA + VNINDEX + thanh khoản vs mua & giữ
 python -m vnsa.cli backtest FPT --entry 70 --exit 40
 ```
 
-Điểm tổng = 60% điểm FA + 40% điểm TA. MUA cần điểm tổng ≥ 65, điểm TA ≥ 45 và giá không cao hơn
-giá trị DCF quá 10%; TRÁNH khi điểm tổng < 40 hoặc Altman Z'' ở vùng nguy cơ (mục `[recommend]`).
-Backtest chỉ dùng điểm TA (BCTC miễn phí quá ngắn để kiểm tra FA không "nhìn trước"); lệnh khớp ở
-giá mở cửa phiên sau tín hiệu, có cắt lỗ ATR, T+2, phí 0,15%/chiều và thuế bán 0,1% (`[backtest]`).
+Xếp hạng theo lợi nhuận kỳ vọng, thời điểm theo kỹ thuật (xem mục "Khuyến nghị hai trục" ở trên).
+Backtest kiểm tra trục **thời điểm** (BCTC miễn phí quá ngắn để kiểm tra giá trị hợp lý không "nhìn
+trước" — trục xếp hạng theo dõi bằng `review-signals`); lệnh khớp ở giá mở cửa phiên sau tín hiệu,
+có cắt lỗ ATR, T+2, phí 0,15%/chiều và thuế bán 0,1% (`[backtest]`). So sánh hai công thức: **TA
+thuần** và **TA + VNINDEX + thanh khoản** (VNINDEX xu hướng giảm thì cần điểm TA cao thêm 10 và chỉ
+dùng 50% vốn; lệnh ≤ 10% GTGD bình quân 20 phiên), cùng mua & giữ.
 
 ## 8. Hỏi Claude Desktop qua MCP server (ngày 8)
 

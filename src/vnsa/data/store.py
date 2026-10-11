@@ -94,6 +94,27 @@ CREATE TABLE IF NOT EXISTS dividends (
 );
 """
 
+# Giao dịch khối ngoại và tự doanh theo phiên (CafeF), đồng
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS flows (
+    symbol          VARCHAR NOT NULL,
+    date            DATE    NOT NULL,
+    foreign_buy     DOUBLE,
+    foreign_sell    DOUBLE,
+    foreign_net     DOUBLE,
+    foreign_net_vol DOUBLE,
+    foreign_room    DOUBLE,
+    foreign_pct     DOUBLE,
+    prop_buy        DOUBLE,
+    prop_sell       DOUBLE,
+    prop_net        DOUBLE,
+    loaded_at TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (symbol, date)
+);
+"""
+FLOW_COLUMNS = ["foreign_buy", "foreign_sell", "foreign_net", "foreign_net_vol", "foreign_room",
+                "foreign_pct", "prop_buy", "prop_sell", "prop_net"]
+
 COMPANY_COLUMNS = ["symbol", "name", "exchange", "industry", "model"]
 # Hồ sơ doanh nghiệp (Company.overview), cập nhật theo từng mã
 PROFILE_COLUMNS = ["shares_out", "foreign_pct", "foreign_max_pct", "state_pct", "free_float_pct",
@@ -293,6 +314,35 @@ class Store:
         finally:
             self.con.unregister("incoming")
         return len(frame)
+
+    def write_flows(self, df: pd.DataFrame) -> int:
+        """Ghi đè giao dịch khối ngoại/tự doanh theo (mã, ngày)."""
+        if df.empty:
+            return 0
+        frame = df.reindex(columns=["symbol", "date", *FLOW_COLUMNS]).copy()
+        frame["symbol"] = frame["symbol"].str.upper()
+        frame["date"] = pd.to_datetime(frame["date"]).dt.date
+        cols = ", ".join(["symbol", "date", *FLOW_COLUMNS])
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute("BEGIN")
+            self.con.execute("DELETE FROM flows f USING incoming i WHERE f.symbol = i.symbol "
+                             "AND f.date = i.date")
+            self.con.execute(f"INSERT INTO flows ({cols}) SELECT {cols} FROM incoming")
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming")
+        return len(frame)
+
+    def flows(self, symbol: str) -> pd.DataFrame:
+        cols = ", ".join(["symbol", "date", *FLOW_COLUMNS])
+        df = self.con.execute(f"SELECT {cols} FROM flows WHERE symbol = ? ORDER BY date",
+                              [symbol.upper()]).df()
+        df["date"] = pd.to_datetime(df["date"])
+        return df
 
     def quarterly(self, symbol: str) -> pd.DataFrame:
         cols = ", ".join(["symbol", "year", "quarter", *FIELDS])

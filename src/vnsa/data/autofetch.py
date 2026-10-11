@@ -249,6 +249,23 @@ class Updater:
         return Step("hồ sơ", "ok", f"{p['shares_out'] / 1e6:,.1f} triệu cp lưu hành, "
                     f"{n_div} lần chia cổ tức")
 
+    def _flows(self, store: Store, sym: str) -> Step | None:
+        """Khối ngoại + tự doanh (CafeF). Nguồn giá không có hàm flows (test) thì bỏ qua."""
+        get = getattr(self.cafef, "flows", None)
+        if get is None:
+            return None
+        have = store.flows(sym)
+        last_px = store.last_price_date(sym)
+        if len(have) and last_px is not None and have["date"].max() >= pd.Timestamp(last_px):
+            return Step("khối ngoại", "skip", "đã mới")
+        try:
+            n = store.write_flows(get(sym, self.cfg.get("flow_sessions", 60)))
+        except Exception as e:  # noqa: BLE001 - không có dòng tiền vẫn phân tích được
+            return Step("khối ngoại", "error", f"{e}; bỏ qua dòng tiền khối ngoại/tự doanh")
+        if not n:
+            return Step("khối ngoại", "error", "CafeF không có dữ liệu mã này")
+        return Step("khối ngoại", "ok", f"{n} phiên (khối ngoại, tự doanh — CafeF)")
+
     # ---- điểm vào ----------------------------------------------------------------------------
     def ensure(self, symbol: str, refresh: bool = False, full: bool = False) -> UpdateReport:
         """Bảo đảm kho có dữ liệu mới cho `symbol`. refresh: tải lại BCTC và danh sách dù chưa cũ;
@@ -274,6 +291,9 @@ class Updater:
                 rep.steps.append(self._fundamentals(store, sym, refresh))
                 rep.steps.append(self._quarterly(store, sym, refresh))
                 rep.steps.append(self._profile(store, sym, refresh))
+                flow = self._flows(store, sym)
+                if flow is not None:
+                    rep.steps.append(flow)
         return rep
 
 

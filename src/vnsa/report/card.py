@@ -152,7 +152,9 @@ def _confidence(a, cfg: dict) -> tuple[str, dict[str, bool]]:
     }
     n = sum(checks.values())
     # "Cao" đòi hỏi các kịch bản định giá đồng thuận — dải P10–P90 rộng thì tối đa "Trung bình"
-    level = ("Cao" if n >= cfg["high_confidence"] and checks["kịch bản định giá hẹp"] else
+    # và giá trị hợp lý không quá xa giá (chênh quá lớn thường do mô hình, không phải cơ hội)
+    level = ("Cao" if n >= cfg["high_confidence"] and checks["kịch bản định giá hẹp"]
+             and checks["giá trị hợp lý không quá xa giá"] else
              "Trung bình" if n >= cfg["medium_confidence"] else "Thấp")
     return level, checks
 
@@ -255,6 +257,21 @@ def build_card(a) -> Card:
     technical = [f"{trend}, RSI {vn_num(last['rsi'], 0)}",
                  (f"Hỗ trợ {vn_num(sup[0].price) + 'đ' if sup else '—'} · "
                   f"Kháng cự {vn_num(res[0].price) + 'đ' if res else '— (vùng đỉnh)'}")]
+    from vnsa.analysis import flow_summary
+
+    fs = flow_summary(d)
+    if fs is not None:
+        def net(v, pct=float("nan")):
+            if pd.isna(v):
+                return "—"
+            s = f"{'mua' if v >= 0 else 'bán'} ròng {vn_num(abs(v) / 1e9, 1)} tỷ"
+            return s + (f" ({vn_pct(pct)} GTGD)" if not pd.isna(pct) else "")
+
+        wins = settings().get("flows", {}).get("windows", [5, 20])
+        technical.append("Khối ngoại " + " · ".join(
+            f"{n} phiên {net(fs[f'foreign_{n}'], fs[f'foreign_{n}_pct'])}" for n in wins)
+            + f" · Tự doanh {wins[-1]} phiên {net(fs[f'prop_{wins[-1]}'])}"
+            + f" (đến {fs['last_date']:%d/%m}, tham khảo)")
 
     # Dự báo 20 phiên
     forecast = []
@@ -271,7 +288,8 @@ def build_card(a) -> Card:
     if p is not None:
         z = p.zone
         zone = (f"Chờ giá ≤ {vn_num(z.high)}đ" if z is not None and z.status == "CHỜ GIÁ" else
-                f"Vùng mua {vn_num(z.low)}–{vn_num(z.high)}đ" if z is not None else
+                (f"Vùng mua {vn_num(z.low)}–{vn_num(z.high)}đ" if z.high > z.low
+                 else f"Mua quanh {vn_num(z.low)}đ") if z is not None else
                 f"Giá vào {vn_num(p.entry)}đ")
         source = p.stop_source.replace(" × ", "×").replace(",", ".")
         plan_lines.append(f"{zone} · Cắt lỗ {vn_num(p.stop)}đ ({source})")

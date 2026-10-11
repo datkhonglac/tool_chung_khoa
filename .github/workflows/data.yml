@@ -98,6 +98,11 @@ jobs:
       - name: Phân tích mã bất kỳ (tự tải dữ liệu)
         if: ${{ inputs.analyze != '' }}
         run: python -m vnsa.cli analyze ${{ inputs.analyze }}
+      - name: Backtest và chỉ số ngành cho các mã vừa phân tích
+        if: ${{ inputs.analyze != '' }}
+        run: |
+          for s in ${{ inputs.analyze }}; do python -m vnsa.cli backtest $s --last 3; echo; done
+          for s in ${{ inputs.analyze }}; do python -m vnsa.cli fa-score $s 2>/dev/null | tail -25; echo; done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -64,8 +64,14 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 - `fa-score FPT` (F-Score, Altman Z, điểm FA) · `ta FPT` (chỉ báo, hỗ trợ/kháng cự, điểm TA) ·
   `plan FPT` (cắt lỗ ATR, mục tiêu, khối lượng theo % rủi ro, bước giá HOSE) · `risk FPT [--days N]`
   (GARCH(1,1) tự viết bằng scipy, Monte Carlo lọc lịch sử chặn biên độ ±7%, VaR/CVaR).
-- `recommend [MÃ...]` (60% FA + 40% TA → MUA/THEO DÕI/TRÁNH) · `backtest FPT` (chỉ điểm TA, khớp mở
-  cửa phiên sau, T+2, phí + thuế). Mọi phép tính dùng chung qua `src/vnsa/analysis.py`.
+- `recommend [MÃ...]` (bảng xếp hạng hai trục) · `backtest FPT` (`analysis.backtests`: "TA thuần" so
+  với "TA + VNINDEX + thanh khoản" — `regime_series`, `[backtest]` bear_entry_extra/bear_position,
+  lệnh ≤ max_adv_pct × GTGD 20 phiên; khớp mở cửa phiên sau, T+2, phí + thuế). Mọi phép tính dùng
+  chung qua `src/vnsa/analysis.py`.
+- Định chế tài chính: chỉ số ngành `fa/sector.py` (NIM xấp xỉ, CIR, chi phí tín dụng, LDR đơn giản;
+  ký quỹ/vốn chủ cho CK) từ khoản mục `SECTOR_FIELDS` (`fa/ratios.py`, đọc theo item_id VCI ở
+  `SECTOR_MAPPING`, không báo thiếu với doanh nghiệp thường). NPL, CASA, CAR KHÔNG có trong nguồn
+  miễn phí: báo thiếu, không ước lượng. Dò khoản mục: `python scripts/probe_vnstock.py --items VCB`.
 - MCP server: `python -m vnsa.mcp_server` (extra `[mcp]`, chạy được mcp 1.x và 2.x); cấu hình mẫu cho
   Claude Desktop ở `docs/`. Dashboard: `streamlit run dashboard/app.py` (extra `[dashboard]`, cổng 8501).
 - `python scripts/smoke_test.py` gọi mọi công cụ MCP + dashboard trên kho thật. Test dùng fixture

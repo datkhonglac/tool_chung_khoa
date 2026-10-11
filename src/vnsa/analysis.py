@@ -26,6 +26,7 @@ class Data:
     quarterly: pd.DataFrame = field(default_factory=pd.DataFrame)   # BCTC quý (4 quý gần nhất)
     profile: dict = field(default_factory=dict)   # hồ sơ: shares_out, foreign_pct, avg_value_1m...
     dividends: pd.DataFrame = field(default_factory=pd.DataFrame)
+    flows: pd.DataFrame = field(default_factory=pd.DataFrame)       # khối ngoại / tự doanh (CafeF)
 
     @property
     def current(self):
@@ -51,13 +52,14 @@ def load(symbol: str, need_fin: bool = True, need_prices: bool = True) -> Data:
         quarterly = store.quarterly(sym)
         profile = store.company(sym) or {}
         dividends = store.dividends(sym)
+        flows = store.flows(sym)
     missing = [c for c, miss in (("fetch", need_prices and prices.empty),
                                  ("fetch-bctc", need_fin and fin.empty)) if miss]
     if missing:
         steps = " và ".join(f"'{c} {sym}'" for c in missing)
         raise DataMissing(f"{sym}: kho chưa có đủ dữ liệu. Chạy {steps} trước "
                           f"(hoặc 'analyze {sym}' để tự tải).")
-    return Data(sym, fin, prices, index, quarterly, profile, dividends)
+    return Data(sym, fin, prices, index, quarterly, profile, dividends, flows)
 
 
 def update(symbol: str, refresh: bool = False, full: bool = False, log=None):
@@ -273,6 +275,26 @@ def adv_value(prices: pd.DataFrame, n: int = 20) -> float:
     tail = prices.tail(n)
     px = tail["close_raw"].fillna(tail["close"]) if "close_raw" in tail else tail["close"]
     return float((px * tail["volume"]).mean()) if len(tail) else float("nan")
+
+
+def flow_summary(d: Data) -> dict | None:
+    """Khối ngoại / tự doanh mua(+)/bán(−) ròng cộng dồn N phiên gần nhất ([flows] windows), đồng,
+    kèm tỷ lệ so với GTGD cùng kỳ. Chỉ để tham khảo, không vào điểm. None nếu chưa có dữ liệu."""
+    f = d.flows
+    if f is None or f.empty:
+        return None
+    f = f.sort_values("date")
+    px = d.prices.assign(value=d.prices["close"] * d.prices["volume"]).set_index("date")["value"]
+    out = {"last_date": f["date"].iloc[-1], "foreign_pct": f["foreign_pct"].dropna().iloc[-1]
+           if f["foreign_pct"].notna().any() else float("nan")}
+    for n in settings().get("flows", {}).get("windows", [5, 20]):
+        tail = f.tail(n)
+        traded = px[px.index.isin(tail["date"])].sum()
+        for who in ("foreign", "prop"):
+            net = tail[f"{who}_net"].sum(min_count=1)
+            out[f"{who}_{n}"] = net
+            out[f"{who}_{n}_pct"] = net / traded if traded > 0 and not pd.isna(net) else float("nan")
+    return out
 
 
 def market_regime(index: pd.DataFrame | None = None):
