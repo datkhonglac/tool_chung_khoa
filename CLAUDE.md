@@ -23,7 +23,8 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 
 ## Lệnh
 - `python -m vnsa.cli analyze MÃ... [--brief] [--refresh] [--full] [--offline]` — **mã bất kỳ** HOSE/HNX/
-  UPCoM: `data/autofetch.py` tự tải phần thiếu/cũ (sàn+ngành và BCTC qua vnstock, giá CafeF tải tăng dần,
+  UPCoM: `data/autofetch.py` tự tải phần thiếu/cũ (sàn+ngành và BCTC qua vnstock, giá CafeF tải tăng dần — CafeF
+  không trả một số mã HNX/UPCoM nên tự dự phòng sang vnstock `Quote` (VCI),
   tự tải lại toàn bộ khi CafeF điều chỉnh giá cũ) rồi in toàn bộ phân tích. Tham số `[auto]`.
   Biên độ/bước giá theo sàn qua `src/vnsa/market.py` (bảng `companies`; chưa biết sàn → HOSE), không
   dùng thẳng `band_hose`. Ngân hàng/CK/bảo hiểm (`model` ≠ general): `analysis.fa/valuation` báo

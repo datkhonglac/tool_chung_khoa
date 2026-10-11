@@ -556,9 +556,9 @@ def cmd_analyze(args) -> int:
                          ("RỦI RO", cmd_risk)]
             if analysis.load(sym, need_fin=False).fin.empty:
                 fin_note = None
-                sections.append(("TÀI CHÍNH", lambda _: print(
+                sections.append(("TÀI CHÍNH", lambda a: print(
                     "  Chưa có BCTC (nguồn vnstock lỗi hoặc chưa cài): bỏ qua chỉ số, điểm FA và "
-                    f"định giá. Thử lại: analyze {sym} --refresh") or 0))
+                    f"định giá. Thử lại: analyze {a.symbol} --refresh") or 0))
             else:
                 sections += ([("CHỈ SỐ TÀI CHÍNH", cmd_ratios)] if fin_note else
                              [("CHẤT LƯỢNG TÀI CHÍNH", cmd_fa_score), ("ĐỊNH GIÁ", cmd_value)])

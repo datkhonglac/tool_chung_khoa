@@ -1,4 +1,7 @@
-"""BCTC năm và danh sách niêm yết (sàn, ngành) qua thư viện vnstock (nguồn VCI - Vietcap).
+"""BCTC năm, danh sách niêm yết (sàn, ngành) và giá dự phòng qua thư viện vnstock (nguồn VCI).
+
+Giá: CafeF là nguồn chính, nhưng API của CafeF không trả dữ liệu cho một số mã HNX/UPCoM (đã thấy
+khi chạy thật với SHS, ACV); khi đó dùng lịch sử giá VCI qua vnstock (có đủ 3 sàn).
 
 vnstock không có trên PyPI, cài riêng:
     pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
@@ -17,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 from vnsa.data.providers.base import DataProvider
+from vnsa.data.providers.csv_provider import normalize_prices
 from vnsa.fa.ratios import FIELDS
 
 # Khoản mục chuẩn -> (báo cáo, các item_id có thể gặp, mẫu tên tiếng Anh dự phòng).
@@ -193,13 +197,31 @@ def _vnstock_listing() -> pd.DataFrame:
     return standardize_listing(ls.symbols_by_exchange(), by_industry)
 
 
+def _vnstock_history(symbol: str, start: str, end: str) -> pd.DataFrame:
+    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
+    try:
+        from vnstock import Quote
+    except ImportError as e:
+        raise RuntimeError(
+            "Chưa cài vnstock. Chạy: pip install -U --extra-index-url "
+            "https://vnstocks.com/api/simple vnstock vnai"
+        ) from e
+    return Quote(symbol=symbol.upper(), source="VCI").history(start=start, end=end, interval="1D")
+
+
+INDEX_SYMBOLS = {"VNINDEX", "VN30", "HNXINDEX", "HNX30", "UPCOMINDEX"}
+
+
 class VnstockProvider(DataProvider):
     name = "vnstock-vci"
 
     def __init__(self, get_statements: Callable[[str], dict[str, pd.DataFrame]] = _vnstock_statements,
-                 get_listing: Callable[[], pd.DataFrame] = _vnstock_listing):
+                 get_listing: Callable[[], pd.DataFrame] = _vnstock_listing,
+                 get_history: Callable[[str, str, str], pd.DataFrame] = _vnstock_history):
         self.get_statements = get_statements   # thay được trong test, không cần mạng
         self.get_listing = get_listing
+        self.get_history = get_history
+        self.repaired: list[str] = []
         self.missing: list[str] = []
 
     def symbols(self) -> list[str]:
@@ -210,7 +232,19 @@ class VnstockProvider(DataProvider):
         return self.get_listing()
 
     def ohlcv(self, symbol, start=None, end=None):
-        raise NotImplementedError("Giá lấy bằng 'fetch' (CafeF); vnstock chỉ dùng cho BCTC")
+        """Giá ngày (VCI) theo PRICE_COLUMNS, đồng. VCI ghi cổ phiếu bằng nghìn đồng, chỉ số bằng
+        điểm. Nguồn dự phòng khi CafeF không có mã (lệnh analyze tự chọn)."""
+        from datetime import date, timedelta
+
+        end = end or date.today()
+        start = start or end - timedelta(days=365 * 5)
+        raw = self.get_history(symbol, str(start), str(end))
+        if raw is None or len(raw) == 0:
+            raise ValueError(f"vnstock không có giá {symbol.upper()} từ {start} đến {end}")
+        unit = "dong" if symbol.upper() in INDEX_SYMBOLS else "auto"
+        df = normalize_prices(raw, symbol, price_unit=unit, adjust=False)
+        df = df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))]
+        return df.sort_values("date").drop_duplicates("date").reset_index(drop=True)
 
     def fundamentals(self, symbol: str) -> pd.DataFrame:
         """BCTC năm chuẩn hoá: symbol, year + FIELDS. Khoản không có thì NaN (xem self.missing)."""

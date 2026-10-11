@@ -47,14 +47,22 @@ class FakeCafeF:
 class FakeVnstock:
     name = "vnstock-vci"
 
-    def __init__(self, listing_error=False, fin_error=False):
+    def __init__(self, listing_error=False, fin_error=False, history=None):
         self.missing: list[str] = []
+        self.history, self.price_calls = history or {}, []
         self.listing_error, self.fin_error, self.fin_calls = listing_error, fin_error, 0
 
     def listing(self):
         if self.listing_error:
             raise RuntimeError("Chưa cài vnstock")
         return LISTING
+
+    def ohlcv(self, symbol, start, end):
+        self.price_calls.append((symbol, start, end))
+        if symbol not in self.history:
+            raise ValueError(f"vnstock không có giá {symbol}")
+        df = self.history[symbol]
+        return df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))]
 
     def fundamentals(self, symbol):
         self.fin_calls += 1
@@ -209,3 +217,32 @@ def test_cli_analyze(warehouse, monkeypatch, capsys):
         sym, [Step("giá", "error", "Mã có đúng không?")]))
     assert cli.main(["analyze", "XYZ", "--brief"]) == 1
     assert "không phân tích được" in capsys.readouterr().out
+
+
+def test_falls_back_to_vnstock_when_cafef_lacks_symbol(empty_db):
+    cafef = FakeCafeF()
+    only_vn = cafef.data.pop("DEMO_C")                 # như SHS/ACV: CafeF không trả dữ liệu
+    vn = FakeVnstock(history={"DEMO_C": only_vn})
+    rep = updater(cafef, vn).ensure("DEMO_C")
+    assert rep.ok and "nguồn vnstock-vci" in str(rep), str(rep)
+    with Store(empty_db) as store:
+        assert store.price_source("DEMO_C") == "vnstock-vci"
+        assert store.last_price_date("DEMO_C") == pd.Timestamp("2026-10-09")
+
+    cafef2, vn2 = FakeCafeF(), FakeVnstock(history={"DEMO_C": only_vn})
+    cafef2.data.pop("DEMO_C")
+    updater(cafef2, vn2, now=datetime(2026, 10, 13, 16, tzinfo=VN_TZ)).ensure("DEMO_C")
+    assert vn2.price_calls and not [c for c in cafef2.calls if c[0] == "DEMO_C"]   # dùng lại nguồn
+
+
+def test_vnstock_history_is_converted_to_dong():
+    from vnsa.data.providers.vnstock_provider import VnstockProvider
+
+    raw = pd.DataFrame({"time": pd.to_datetime(["2026-10-08", "2026-10-09"]),
+                        "open": [56.5, 56.9], "high": [57.0, 57.2], "low": [56.1, 56.5],
+                        "close": [56.9, 56.7], "volume": [4_000_000, 3_500_000]})
+    prov = VnstockProvider(get_history=lambda s, a, b: raw)
+    df = prov.ohlcv("VCB", date(2026, 10, 1), date(2026, 10, 9))
+    assert df["close"].tolist() == [56900, 56700] and df["symbol"].iloc[0] == "VCB"
+    idx = VnstockProvider(get_history=lambda s, a, b: raw.assign(close=[1290.5, 1301.2]))
+    assert idx.ohlcv("VNINDEX", date(2026, 10, 1), date(2026, 10, 9))["close"].iloc[-1] == 1301   # chỉ số: điểm, làm tròn như CafeF

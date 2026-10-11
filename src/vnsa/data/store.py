@@ -124,6 +124,12 @@ class Store:
             self.con.unregister("incoming")
         return len(frame)
 
+    def price_source(self, symbol: str) -> str | None:
+        """Nguồn của phiên mới nhất (để lần cập nhật sau dùng lại đúng nguồn đó)."""
+        row = self.con.execute("SELECT source FROM prices WHERE symbol = ? ORDER BY date DESC "
+                               "LIMIT 1", [symbol.upper()]).fetchone()
+        return row[0] if row else None
+
     def last_price_date(self, symbol: str) -> pd.Timestamp | None:
         d = self.con.execute("SELECT MAX(date) FROM prices WHERE symbol = ?",
                              [symbol.upper()]).fetchone()[0]

@@ -3,7 +3,8 @@
 Thứ tự cho mỗi mã (tham số ở mục [auto] trong settings):
 1. Danh sách niêm yết (vnstock/VCI): sàn, ngành, loại doanh nghiệp của mọi cổ phiếu. Tải lại khi
    cũ hơn `listing_max_age_days`. Sàn quyết định biên độ và bước giá của mã.
-2. Giá ngày (CafeF): chưa có thì tải `years` năm. Đã có nhưng thiếu phiên mới thì chỉ tải từ
+2. Giá ngày (CafeF; mã CafeF không có, thường là HNX/UPCoM, thì dùng vnstock/VCI và lần sau ưu
+   tiên nguồn đó): chưa có thì tải `years` năm. Đã có nhưng thiếu phiên mới thì chỉ tải từ
    (phiên cuối − `overlap_days`). Nếu giá đóng cửa các phiên chồng lấn lệch hơn `adjust_tolerance`
    thì nguồn đã điều chỉnh lại lịch sử (cổ tức/chia tách), nên tải lại toàn bộ cho khớp.
 3. Chỉ số thị trường (VNINDEX, để tính beta): như bước 2.
@@ -121,6 +122,9 @@ class Updater:
         exchange = prof.get("exchange") if prof.get("exchange") in market.EXCHANGES else None
         band = 1.0 if sym == self.index else market.band(exchange=exchange or settings()["market"]
                                                          .get("default_exchange", "HOSE"))
+        self._order = [self.cafef, self.vn]
+        if store.price_source(sym) == self.vn.name and not full:
+            self._order.reverse()                       # mã này lần trước lấy được từ vnstock
         try:
             if last is None or full:
                 df = self._download(sym, today - timedelta(days=round(365.25 * self.cfg["years"])),
@@ -151,18 +155,33 @@ class Updater:
         if errors:
             return Step(label, "error", "dữ liệu tải về có lỗi, không nạp: "
                         + "; ".join(str(i) for i in errors))
-        write(df, source=getattr(self.cafef, "name", "cafef"))
+        write(df, source=self._used.name)
         self._save_csv(store, sym)
-        repaired = getattr(self.cafef, "repaired", None)
+        repaired = getattr(self._used, "repaired", None)
         if repaired:
             note += f"; sửa cao/thấp cho {len(repaired)} phiên nguồn ghi sai"
+        if self._used is not self.cafef:
+            note += f" — nguồn {self._used.name}" + (f" (CafeF: {self._fallback_reason})"
+                                                     if self._fallback_reason else "")
         return Step(label, "ok", note)
 
     def _download(self, sym: str, start, end) -> pd.DataFrame:
-        df = self.cafef.ohlcv(sym, start, end)
-        if df.empty:
-            raise ValueError(f"nguồn không có giá {sym} từ {start} đến {end}. Mã có đúng không?")
-        return df
+        """Thử lần lượt các nguồn giá trong self._order; ghi nhận nguồn đã dùng vào self._used."""
+        errors = []
+        self._fallback_reason = None
+        for prov in self._order:
+            try:
+                df = prov.ohlcv(sym, start, end)
+                if df.empty:
+                    raise ValueError(f"không có giá {sym} từ {start} đến {end}")
+            except Exception as e:  # noqa: BLE001 - thử nguồn kế tiếp
+                errors.append(f"{prov.name}: {e}")
+                if prov is self.cafef:
+                    self._fallback_reason = "không có dữ liệu mã này"
+                continue
+            self._used = prov
+            return df
+        raise ValueError("; ".join(errors) + ". Mã có đúng không?")
 
     def _save_csv(self, store: Store, sym: str) -> None:
         """Giữ bản CSV trong data/raw/prices (như lệnh fetch) để nạp lại được bằng lệnh load."""

@@ -28,7 +28,8 @@ python -m vnsa.cli recommend SHS VCB --update # bảng khuyến nghị, cập nh
 Với mỗi mã, tool tự kiểm tra kho và chỉ tải phần còn thiếu (tham số ở `[auto]` trong settings):
 - **Sàn, ngành, loại doanh nghiệp** của mọi cổ phiếu (vnstock/VCI), tải lại sau 30 ngày. Sàn quyết
   định biên độ (HOSE ±7%, HNX ±10%, UPCoM ±15%) và bước giá (HNX/UPCoM 100 đồng).
-- **Giá**: lần đầu tải 5 năm từ CafeF; lần sau chỉ tải phiên mới. Nếu CafeF đã điều chỉnh lại giá cũ
+- **Giá**: lần đầu tải 5 năm từ CafeF; lần sau chỉ tải phiên mới. Mã CafeF không có dữ liệu
+  (đã gặp với SHS, ACV trên HNX/UPCoM) thì tự lấy từ vnstock/VCI và lần sau dùng lại nguồn đó. Nếu CafeF đã điều chỉnh lại giá cũ
   (cổ tức, chia tách) thì tự tải lại toàn bộ cho khớp. Trước 15h chưa tính phiên hôm nay.
 - **BCTC năm** (vnstock/VCI), tải lại sau 30 ngày. Lỗi BCTC không chặn phần kỹ thuật.
 

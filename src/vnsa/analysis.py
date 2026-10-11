@@ -209,6 +209,10 @@ def recommendation(symbol: str):
     fin_note = financial_note(d.symbol)
     if fin_note:
         pe, pb = multiples(d)
+        if not (pd.isna(pe) and pd.isna(pb)):
+            shown = ", ".join(f"{k} {v:.{n}f}" for k, v, n in (("P/E", pe, 1), ("P/B", pb, 2))
+                              if not pd.isna(v))
+            notes.append(f"{shown} (BCTC năm {int(d.fin['year'].iloc[-1])})")
         notes.append(fin_note)
     elif not d.fin.empty:
         _, z, s, v = fa(d)
