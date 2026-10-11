@@ -55,6 +55,7 @@ class Inputs:
     dividend_yield: float = 0.0         # cổ tức tiền 12 tháng / giá
     regime: str = "trung tính"          # trạng thái VNINDEX: tăng | trung tính | giảm
     zone_status: str = ""               # MUA TRONG VÙNG | CHỜ GIÁ (ta/entry.py)
+    rule_state: dict | None = None      # trạng thái quy tắc thời điểm đã kiểm định (strategies)
 
 
 @dataclass
@@ -90,8 +91,24 @@ def rate(expected: float, thresholds: list[float]) -> str:
 
 
 def timing(x: Inputs, cfg: dict) -> str:
+    """Trục thời điểm theo `timing_rule` ([recommend]):
+    - "ta": điểm TA (cách ban đầu);
+    - tên quy tắc trong strategies (vd "trend"): đang trong lệnh của quy tắc thì "Vào được", chưa
+      thì chờ tín hiệu — chỉ dùng quy tắc đã ĐẠT kiểm định (lệnh study-timing);
+    - "none": chỉ quản trị rủi ro (vùng mua + cắt lỗ), không đoán điểm vào."""
     if x.zone_status == "CHỜ GIÁ":
         return "Chờ giá về vùng mua"
+    rule = cfg.get("timing_rule", "ta")
+    if rule == "none":
+        return "Trong vùng mua (giữ kỷ luật cắt lỗ)"
+    if rule != "ta":
+        st = x.rule_state
+        if st is None:
+            return "Chưa đủ dữ liệu kỹ thuật"
+        if st["holding"]:
+            stop = f", cắt lỗ động {st['stop']:,.0f}" if not pd.isna(st["stop"]) else ""
+            return f"Vào được — xu hướng tăng xác nhận{stop}"
+        return "Chờ tín hiệu xu hướng"
     if pd.isna(x.ta_score):
         return "Chưa đủ dữ liệu kỹ thuật"
     if x.ta_score < cfg.get("timing_wait", 40):

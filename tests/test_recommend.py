@@ -118,3 +118,34 @@ def test_backtests_compares_two_formulas(warehouse):
     res = analysis.backtests(d)
     assert set(res) == {"TA thuần", "TA + VNINDEX + thanh khoản"}
     assert len(res["TA thuần"].equity) == len(res["TA + VNINDEX + thanh khoản"].equity)
+
+
+def test_timing_rule_modes():
+    from vnsa.recommend.engine import timing
+
+    x = _inputs(zone_status="MUA TRONG VÙNG")
+    assert timing(x, {**CFG, "timing_rule": "none"}).startswith("Trong vùng mua")
+    x.rule_state = {"holding": True, "stop": 52_300.0, "since": None, "signal_today": False,
+                    "rule": "trend"}
+    assert timing(x, {**CFG, "timing_rule": "trend"}) == ("Vào được — xu hướng tăng xác nhận, "
+                                                         "cắt lỗ động 52,300")
+    x.rule_state = {**x.rule_state, "holding": False}
+    assert timing(x, {**CFG, "timing_rule": "trend"}) == "Chờ tín hiệu xu hướng"
+    x.zone_status = "CHỜ GIÁ"                                    # định giá vẫn chặn trước
+    assert timing(x, {**CFG, "timing_rule": "trend"}) == "Chờ giá về vùng mua"
+
+
+def test_rule_state_reports_open_position():
+    from vnsa.recommend.strategies import rule_state
+
+    n = 400
+    close = pd.Series(np.linspace(10_000, 20_000, n))            # xu hướng tăng đều
+    ind = pd.DataFrame({"date": pd.bdate_range("2024-01-01", periods=n), "open": close,
+                        "high": close + 50, "low": close - 50, "close": close,
+                        "volume": 1_000.0, "atr": 100.0})
+    ind["sma50"] = ind["close"].rolling(50).mean()
+    ind["sma200"] = ind["close"].rolling(200).mean()
+    ind["vol_ma20"] = 1_000.0
+    st = rule_state(ind, pd.Series(np.nan, index=ind.index), None, "trend", 3.0,
+                    {**BT, "fee": 0, "sell_tax": 0}, 0.07)
+    assert st["holding"] and st["stop"] == pytest.approx(20_000 - 300)

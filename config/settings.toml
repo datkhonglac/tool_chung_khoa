@@ -208,6 +208,10 @@ seed = 42
 # Khuyến nghị hai trục (recommend/engine.py)
 # Trục 1 — xếp hạng theo lợi nhuận kỳ vọng 12 tháng = upside so với giá trị hợp lý + tỷ suất cổ tức:
 rating_thresholds = [0.15, 0.05, -0.05, -0.15]   # ≥ MUA · ≥ KHẢ QUAN · ≥ NẮM GIỮ · ≥ KÉM KHẢ QUAN · dưới: BÁN
+# Trục THỜI ĐIỂM: "ta" (điểm TA) | tên quy tắc đã ĐẠT kiểm định study-timing (vd "trend") | "none"
+# (chỉ vùng mua + cắt lỗ). timing_atr_k: hệ số cắt lỗ động của quy tắc (chọn ở giai đoạn kiểm định).
+timing_rule = "ta"
+timing_atr_k = 3.0
 max_dividend_yield = 0.10   # cổ tức 12 tháng > 10% giá: dùng bình quân 3 năm, tối đa 10% (thường là 2 đợt dồn vào 12 tháng)
 bear_market_extra = 0.05    # VNINDEX xu hướng giảm: mọi ngưỡng cao thêm 5%
 min_fa_quality = 50         # điểm FA dưới mức này: hạ một bậc xếp hạng

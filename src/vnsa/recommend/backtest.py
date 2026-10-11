@@ -54,6 +54,7 @@ class BacktestResult:
     benchmark: pd.Series      # mua và nắm giữ (= 1 ở phiên đầu)
     trades: list[Trade] = field(default_factory=list)
     exposure: float = 0.0     # tỷ lệ số phiên đang giữ cổ phiếu
+    open_stop: float = float("nan")   # cắt lỗ hiện tại nếu cuối kỳ vẫn đang giữ (strategies.simulate)
 
     @staticmethod
     def _stats(curve: pd.Series) -> dict:

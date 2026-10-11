@@ -109,7 +109,28 @@ def simulate(df: pd.DataFrame, rule: Rule, band: float, fee: float, tax: float,
     for t in trades:
         in_market |= ((sel >= t.entry_date) & (sel < t.exit_date)).to_numpy()
     return BacktestResult(equity=held, benchmark=bench, trades=trades,
-                          exposure=float(in_market.mean()))
+                          exposure=float(in_market.mean()),
+                          open_stop=float(stop) if trades and trades[-1].reason == "cuối kỳ"
+                          else float("nan"))
+
+
+def rule_state(ind: pd.DataFrame, score: pd.Series, regime: pd.Series | None, name: str,
+               atr_k: float, cfg: dict, band: float, sessions: int = 750) -> dict | None:
+    """Trạng thái HIỆN TẠI của quy tắc `name` (mô phỏng `sessions` phiên gần nhất, cùng cách khớp
+    lệnh như kiểm định): đang giữ hay không, từ ngày nào, cắt lỗ hiện tại, tín hiệu mua mới hôm nay.
+    Dùng cho trục "Thời điểm" khi `[recommend] timing_rule` là quy tắc đã qua kiểm định."""
+    rule = rule_set(ind, score, regime, atr_k, cfg)[name]
+    d = ind.reset_index(drop=True)
+    start = pd.Timestamp(d["date"].iloc[max(0, len(d) - sessions)])
+    try:
+        res = simulate(d, rule, band, cfg["fee"], cfg["sell_tax"], start)
+    except ValueError:
+        return None
+    last = res.trades[-1] if res.trades else None
+    holding = last is not None and last.reason == "cuối kỳ"
+    return {"holding": holding, "since": last.entry_date if holding else None,
+            "stop": res.open_stop, "signal_today": bool(rule.entry.iloc[-1]),
+            "rule": name}
 
 
 def _regime_on(df: pd.DataFrame, regime: pd.Series | None) -> pd.Series:

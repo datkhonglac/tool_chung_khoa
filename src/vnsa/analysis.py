@@ -613,8 +613,26 @@ def assess(symbol: str) -> Assessment:
         quant_score=q, dividend_yield=dividend_yield(d), regime=reg.state,
         zone_status=p.zone.status if p is not None and p.zone is not None else "",
     )
+    inputs.rule_state = timing_state(d, ind)
     rec = recommend(inputs, settings()["recommend"], notes)
     return Assessment(d, fa_score, fair, pe, pb, z_em, upside, ind, t, p, r, q, rec)
+
+
+def timing_state(d: Data, ind: pd.DataFrame) -> dict | None:
+    """Trạng thái quy tắc thời điểm `[recommend] timing_rule` (khi không phải "ta"/"none")."""
+    from vnsa import market
+    from vnsa.recommend.strategies import rule_state
+    from vnsa.ta.regime import regime_series
+    from vnsa.ta.score import ta_score_series
+
+    cfg = settings()["recommend"]
+    name = cfg.get("timing_rule", "ta")
+    if name in ("ta", "none") or len(ind) < 260:
+        return None
+    score = ta_score_series(ind, settings()["ta_score"]["weights"], require_all=True)
+    reg = regime_series(d.index, settings().get("regime", {}))
+    return rule_state(ind, score, reg, name, cfg.get("timing_atr_k", 3.0), settings()["backtest"],
+                      market.band(d.symbol))
 
 
 def recommendation(symbol: str):
