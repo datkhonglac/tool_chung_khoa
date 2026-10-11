@@ -289,6 +289,8 @@ def _print_fair(d, v) -> None:
     print(f"\nBội số lịch sử (vốn hoá bình quân năm / LNST, vốn chủ; {hist['basis'].iloc[-1]}):")
     print("  " + " · ".join(f"{int(r.year)}: P/E {_num(r.pe, 1)}, P/B {_num(r.pb, 2)}"
                             for r in hist.itertuples()))
+    print(f"  Trung vị lịch sử: P/E {_num(fair.pe_median, 1)}, P/B {_num(fair.pb_median, 2)}; mục tiêu "
+          f"thu hẹp {settings()['valuation'].get('multiple_reversion', 1):.0%} khoảng cách từ mức hiện tại")
     print(f"  P/E mục tiêu {_num(fair.pe_target, 1)} × EPS {_num(c.eps if c else nan)} = "
           f"{_num(fair.methods['pe_hist'])} · P/B mục tiêu {_num(fair.pb_target, 2)} × BVPS "
           f"{_num(c.bvps if c else nan)} = {_num(fair.methods['pb_hist'])}"
@@ -371,7 +373,8 @@ def _fin_value(d) -> int:
           f"+ PV(giá trị cuối) {ri.pv_terminal:,.0f} = {ri.value_per_share:,.0f} đ/cp")
     print(f"P/B hợp lý theo ROE = (ROE − g) / (k_e − g) = {_num(ri.justified_pb, 2)} "
           f"→ {_num(ri.justified_pb * ri.book0)} đ/cp")
-    print(f"P/B lịch sử (trung vị) {_num(fair.pb_target, 2)} → {_num(fair.pb_target * ri.book0)} đ/cp")
+    print(f"P/B lịch sử: trung vị {_num(fair.pb_median, 2)}, mục tiêu {_num(fair.pb_target, 2)} "
+          f"→ {_num(fair.pb_target * ri.book0)} đ/cp")
     print("\n⇒ Giá trị hợp lý (bình quân có trọng số: "
           + ", ".join(f"{METHOD_NAMES[k]} {w:.0%}" for k, w in fair.weights.items())
           + f"): {_num(fair.value)} đ/cp, {_pct(fair.upside)} so với giá")

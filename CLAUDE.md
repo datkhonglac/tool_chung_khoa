@@ -50,8 +50,9 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   `scripts/probe_vnstock.py` + input `probe` của workflow để dò cấu trúc dữ liệu vnstock mới.
 - Giá mua: `ta/entry.py` vùng mua (neo hỗ trợ/VWAP20/SMA20, chặn bởi giá trị hợp lý × (1 − biên an
   toàn), "CHỜ GIÁ" nếu quá cao; `[entry]`); `analysis.plan` dùng giữa vùng làm giá vào, KHÔNG dùng
-  giá đóng cửa. Giá trị hợp lý `fa/fair_value.py` = trung vị DCF + P/E, P/B lịch sử (EPS/BVPS theo
-  số cp hiện tại); định chế tài chính: thu nhập thặng dư + P/B theo ROE (`analysis.financial`,
+  giá đóng cửa. Giá trị hợp lý `fa/fair_value.py` = bình quân DCF + P/E, P/B lịch sử (EPS/BVPS theo
+  số cp hiện tại; bội số mục tiêu = hiện tại + `multiple_reversion` × (trung vị − hiện tại),
+  `fv.revert`; `pe_median`/`pb_median` là trung vị thật, dùng cho điểm FA tương đối); định chế tài chính: thu nhập thặng dư + P/B theo ROE (`analysis.financial`,
   `scores.financial_score`, `[valuation.financials]`). Khuyến nghị tự lưu vào bảng `signals` +
   `data/signals.csv` (`analysis.record_signals`); `review-signals` chấm sau 5/20/60 phiên
   (`recommend/review.py`); test cô lập CSV bằng `VNSA_SIGNALS_CSV`.

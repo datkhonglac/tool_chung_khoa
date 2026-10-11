@@ -89,6 +89,9 @@ T+2). Thay vào đó (`src/vnsa/ta/entry.py`, tham số `[entry]`):
 **Giá trị hợp lý** (`src/vnsa/fa/fair_value.py`) = trung vị các phương pháp ra số dương:
 - Doanh nghiệp thường: DCF-FCFF, **P/E lịch sử** và **P/B lịch sử** của chính mã (giá bình quân năm
   chia EPS/BVPS theo số cổ phiếu hiện tại) — vì DCF không ra số khi FCFF âm (HPG, ACV...).
+  Bội số **mục tiêu 12 tháng** không giả định quay hẳn về trung vị lịch sử (thị trường có thể đã
+  định giá lại mã): mục tiêu = hiện tại + 50% × (trung vị − hiện tại), chỉnh ở
+  `[valuation] multiple_reversion` (1 = quay hẳn về trung vị).
 - **Ngân hàng / chứng khoán / bảo hiểm**: ½ × trung bình của **thu nhập thặng dư** (ROE giảm dần về
   chi phí vốn chủ) và **P/B hợp lý = (ROE − g) / (k_e − g)**, cộng ½ × **P/B lịch sử**; ROE xuất phát
   là bình quân 3 năm có trọng số (năm gần nhất nặng nhất); điểm FA riêng (ROE, tăng trưởng, vốn chủ /

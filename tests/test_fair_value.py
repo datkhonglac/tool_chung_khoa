@@ -207,3 +207,19 @@ def test_recommend_records_signals_and_review_cli(warehouse, capsys, monkeypatch
     # Kho mới (đổi Codespace) nạp lại lịch sử từ CSV
     monkeypatch.setenv("VNSA_WAREHOUSE", str(warehouse.parent / "fresh.duckdb"))
     assert analysis.import_signals_csv() == 2
+
+
+def test_partial_reversion_to_historical_multiples():
+    assert fv.revert(10.0, 20.0, 0.5) == 15.0                        # thu hẹp nửa khoảng cách
+    assert fv.revert(10.0, 20.0, 1.0) == 20.0                        # cách cũ: quay hẳn về trung vị
+    assert fv.revert(float("nan"), 20.0, 0.5) == 20.0                # EPS âm: dùng trung vị
+    fin = _fundamentals("X")
+    px = _prices(price=40_000)
+    price = 20_000.0                                                  # rẻ một nửa so với lịch sử
+    full = fv.combine(price, fin, px)
+    half = fv.combine(price, fin, px, reversion=0.5)
+    assert half.pe_median == pytest.approx(full.pe_target)
+    eps = full.methods["pe_hist"] / full.pe_target
+    pe_now = price / eps
+    assert half.pe_target == pytest.approx(pe_now + 0.5 * (full.pe_median - pe_now))
+    assert price < half.value < full.value                           # upside nhỏ hơn, vẫn dương

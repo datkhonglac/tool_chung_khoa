@@ -15,6 +15,9 @@ Doanh nghiệp thường (mặc định DCF 40% · P/E lịch sử 30% · P/B l�
      nên làm P/E quá khứ thấp đi; chỉ dùng cách cũ (giá điều chỉnh / EPS theo số cp hiện tại) khi
      nguồn không có giá chưa điều chỉnh (giá lấy từ vnstock).
   3. P/B lịch sử: tương tự với vốn chủ công ty mẹ cuối năm; × BVPS hiện tại (quý gần nhất).
+  Bội số MỤC TIÊU 12 tháng không giả định quay hẳn về trung vị lịch sử (thị trường có thể đã định
+  giá lại mã): mục tiêu = bội số hiện tại + `multiple_reversion` × (trung vị − hiện tại), mặc định
+  0,5 ([valuation]); 1 = quay hẳn về trung vị như cách cũ. Áp dụng cả cho kịch bản P10/P90.
 
 Ngân hàng / chứng khoán / bảo hiểm (mặc định RI 25% · P/B theo ROE 25% · P/B lịch sử 50%): hai
 phương pháp đầu cùng dựa vào ROE và k_e nên tổng chỉ bằng P/B lịch sử — mức thị trường vẫn trả
@@ -159,9 +162,11 @@ class FairValue:
     price: float
     methods: dict[str, float]    # tên phương pháp -> giá trị/cp (đồng); NaN = không dùng được
     value: float                 # bình quân có trọng số các phương pháp dùng được
-    pe_target: float = float("nan")
+    pe_target: float = float("nan")    # P/E mục tiêu (đã tính mức hồi quy về lịch sử)
     pb_target: float = float("nan")
     ri: ResidualIncome | None = None
+    pe_median: float = float("nan")    # trung vị P/E, P/B lịch sử của mã
+    pb_median: float = float("nan")
     weights: dict[str, float] = field(default_factory=dict)   # trọng số thực dùng (tổng = 1)
     p10: float = float("nan")    # dải giá trị nội tại theo kịch bản (scenario_range)
     p90: float = float("nan")
@@ -194,6 +199,14 @@ def weighted_value(methods: dict[str, float], weights: dict[str, float]
     return float(sum(ok[k] * w for k, w in used.items())), used, notes
 
 
+def revert(now: float, median: float, reversion: float = 1.0) -> float:
+    """Bội số mục tiêu = hiện tại + reversion × (trung vị lịch sử − hiện tại). Thiếu bội số hiện
+    tại (EPS âm...) thì dùng trung vị."""
+    if pd.isna(now) or now <= 0:
+        return median
+    return now + reversion * (median - now)
+
+
 def scenario_range(values: list[float], center: float) -> tuple[float, float]:
     """(P10, P90) của các giá trị kịch bản dương; luôn bao lấy giá trị trung tâm."""
     v = np.array([x for x in values if not pd.isna(x) and x > 0], dtype=float)
@@ -205,15 +218,20 @@ def scenario_range(values: list[float], center: float) -> tuple[float, float]:
 
 def combine(price: float, fin: pd.DataFrame, prices: pd.DataFrame, par_value: float = 10_000,
             dcf: float = float("nan"), ri: ResidualIncome | None = None,
-            weights: dict[str, float] | None = None, current=None) -> FairValue:
+            weights: dict[str, float] | None = None, current=None,
+            reversion: float = 1.0) -> FairValue:
     """Giá trị hợp lý = bình quân có trọng số (mục [valuation.weights]) các phương pháp:
     doanh nghiệp thường DCF, P/E lịch sử, P/B lịch sử; định chế tài chính (truyền `ri`) thu nhập
-    thặng dư, P/B theo ROE, P/B lịch sử."""
+    thặng dư, P/B theo ROE, P/B lịch sử. reversion: phần chênh lệch bội số hiện tại so với trung vị
+    lịch sử được giả định thu hẹp trong 12 tháng (revert)."""
     hist = historical_multiples(fin, prices, par_value)
     last = hist.iloc[-1].copy()
     if current is not None:                     # EPS TTM, BVPS quý gần nhất, số cp hiện tại
         last["eps"], last["bvps"] = current.eps, current.bvps
-    pe_t, pb_t = _median_positive(hist["pe"]), _median_positive(hist["pb"])
+    pe_med, pb_med = _median_positive(hist["pe"]), _median_positive(hist["pb"])
+    bvps = last["bvps"] if ri is None else ri.book0
+    pe_t = revert(price / last["eps"] if last["eps"] > 0 else np.nan, pe_med, reversion)
+    pb_t = revert(price / bvps if bvps > 0 else np.nan, pb_med, reversion)
     notes = []
     if ri is None:
         methods = {"dcf": dcf,
@@ -231,4 +249,4 @@ def combine(price: float, fin: pd.DataFrame, prices: pd.DataFrame, par_value: fl
         notes.append("ít năm có đủ giá để tính bội số lịch sử: P/E, P/B lịch sử kém tin cậy")
     value, used, more = weighted_value(methods, weights)
     return FairValue(price=price, methods=methods, value=value, pe_target=pe_t, pb_target=pb_t,
-                     ri=ri, weights=used, notes=notes + more)
+                     ri=ri, weights=used, notes=notes + more, pe_median=pe_med, pb_median=pb_med)

@@ -59,6 +59,7 @@ default_beta = 1.0
 beta_years = 3
 adjust_beta = true             # beta Blume = 0,67 × beta thô + 0,33
 par_value = 10000              # mệnh giá cổ phiếu (đồng)
+multiple_reversion = 0.5       # P/E, P/B mục tiêu 12 tháng thu hẹp 50% khoảng cách hiện tại → trung vị lịch sử (1 = quay hẳn về)
 
 [valuation.weights]
 # Trọng số các phương pháp tính giá trị hợp lý (fa/fair_value.py); thiếu phương pháp nào thì chia lại

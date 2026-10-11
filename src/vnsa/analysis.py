@@ -139,8 +139,9 @@ def financial(d: Data):
     ke, _, _, _ = cost_of_equity(d)
     ri = fv.residual_income(d.fin, ke, g, cfg["financials"], par, current=d.current)
     price = float(d.prices["close"].iloc[-1])
+    rev = cfg.get("multiple_reversion", 1.0)
     fair = fv.combine(price, d.fin, d.prices, par, ri=ri, weights=_weights("financial"),
-                      current=d.current)
+                      current=d.current, reversion=rev)
     scenarios = []
     for k in (ke - 0.01, ke, ke + 0.01):
         for keep in (0.25, 0.75):
@@ -149,13 +150,13 @@ def financial(d: Data):
                                          par, current=d.current)
                 scenarios += [alt.value_per_share, alt.justified_pb * alt.book0]
     hist = fv.historical_multiples(d.fin, d.prices, par)
-    scenarios += list(hist["pb"] * ri.book0)
-    fair.p10, fair.p90 = fv.scenario_range(scenarios, fair.value)
     pb = price / ri.book0
+    scenarios += [fv.revert(pb, x, rev) * ri.book0 for x in hist["pb"]]
+    fair.p10, fair.p90 = fv.scenario_range(scenarios, fair.value)
     score = financial_score(d.fin, settings()["fa_score"]["financials"],
                             market.profile(d.symbol)["model"], pb=pb, fair_upside=fair.upside,
                             roe=d.current.roe if d.current is not None else None,
-                            pb_hist=fair.pb_target, sector=sector(d))
+                            pb_hist=fair.pb_median, sector=sector(d))
     return score, fair
 
 
@@ -167,13 +168,17 @@ def general_fair_value(d: Data, v=None):
 
     nan = float("nan")
     par = settings()["valuation"]["par_value"]
+    rev = settings()["valuation"].get("multiple_reversion", 1.0)
     price = float(d.prices["close"].iloc[-1])
     fair = fv.combine(price, d.fin, d.prices, par, dcf=v.value_per_share if v else nan,
-                      weights=_weights("general"), current=d.current)
+                      weights=_weights("general"), current=d.current, reversion=rev)
     hist = fv.historical_multiples(d.fin, d.prices, par)
     c = d.current
     eps, bvps = (c.eps, c.bvps) if c is not None else (hist["eps"].iloc[-1], hist["bvps"].iloc[-1])
-    scenarios = list(hist["pe"] * eps) + list(hist["pb"] * bvps)
+    pe_now = price / eps if eps > 0 else nan
+    pb_now = price / bvps if bvps > 0 else nan
+    scenarios = ([fv.revert(pe_now, x, rev) * eps for x in hist["pe"]]
+                 + [fv.revert(pb_now, x, rev) * bvps for x in hist["pb"]])
     if v is not None and v.fcff_base > 0:
         a = val.Assumptions.from_settings(settings()["valuation"])
         scenarios += [x for x in val.sensitivity(v, a).to_numpy().ravel()]

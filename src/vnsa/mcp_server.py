@@ -170,7 +170,8 @@ def get_valuation(symbol: str, growth: float | None = None, wacc: float | None =
         return {"symbol": d.symbol, "model": "residual_income", "price": fair.price,
                 "cost_of_equity": ke, "beta": b, "raw_beta": raw, "residual_income": fair.ri,
                 "fair_value": fair.value, "upside": fair.upside, "methods": fair.methods,
-                "pb_hist_target": fair.pb_target, "notes": fair.notes + [financial_note(d.symbol)]}
+                "pb_hist_target": fair.pb_target, "pb_hist_median": fair.pb_median,
+                "notes": fair.notes + [financial_note(d.symbol)]}
     a, v, raw_beta = analysis.valuation(d, growth, wacc)
     fair = analysis.general_fair_value(d, v)
     table = val.sensitivity(v, a)
@@ -186,6 +187,7 @@ def get_valuation(symbol: str, growth: float | None = None, wacc: float | None =
         "value_per_share": v.value_per_share, "upside": v.upside, "notes": v.notes + fair.notes,
         "fair_value": fair.value, "fair_upside": fair.upside, "fair_methods": fair.methods,
         "pe_hist_target": fair.pe_target, "pb_hist_target": fair.pb_target,
+        "pe_hist_median": fair.pe_median, "pb_hist_median": fair.pb_median,
         "sensitivity": {f"wacc={w:.4f}": {f"g={g:.3f}": table.at[w, g] for g in table.columns}
                         for w in table.index},
         "assumptions": asdict(a),

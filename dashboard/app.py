@@ -259,7 +259,8 @@ with tab_val:
             c[2].metric("P/B hợp lý theo ROE", fmt_num(ri.justified_pb, 2))
             c[3].metric("Chi phí vốn chủ k_e", fmt_pct(ri.cost_of_equity))
             st.write(f"B0 = {ri.book0:,.0f} đ/cp · ROE bình quân {fmt_pct(ri.roe0)} → dài hạn "
-                     f"{fmt_pct(ri.roe_terminal)} · P/B lịch sử {fmt_num(fair.pb_target, 2)}")
+                     f"{fmt_pct(ri.roe_terminal)} · P/B lịch sử: trung vị "
+                     f"{fmt_num(fair.pb_median, 2)}, mục tiêu {fmt_num(fair.pb_target, 2)}")
             st.dataframe(pd.DataFrame([{"Phương pháp": METHOD_NAMES[k], "Giá trị/cp": v}
                                        for k, v in fair.methods.items()]), hide_index=True,
                          column_config={"Giá trị/cp": st.column_config.NumberColumn(
@@ -292,9 +293,11 @@ with tab_val:
             c = st.columns(4)
             c[0].metric("Giá trị hợp lý", fmt_num(fair.value), fmt_pct(fair.upside))
             c[1].metric("DCF", fmt_num(fair.methods["dcf"]))
-            c[2].metric(f"P/E lịch sử ({fmt_num(fair.pe_target, 1)}x)",
+            c[2].metric(f"P/E mục tiêu ({fmt_num(fair.pe_target, 1)}x, "
+                        f"trung vị {fmt_num(fair.pe_median, 1)}x)",
                         fmt_num(fair.methods["pe_hist"]))
-            c[3].metric(f"P/B lịch sử ({fmt_num(fair.pb_target, 2)}x)",
+            c[3].metric(f"P/B mục tiêu ({fmt_num(fair.pb_target, 2)}x, "
+                        f"trung vị {fmt_num(fair.pb_median, 2)}x)",
                         fmt_num(fair.methods["pb_hist"]))
             for n in fair.notes:
                 st.caption(f"! {n}")
