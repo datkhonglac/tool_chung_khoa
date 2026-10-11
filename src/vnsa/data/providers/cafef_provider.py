@@ -41,6 +41,7 @@ FIELDS = {
 }
 WINDOW_DAYS = 365   # CafeF cắt mỗi lần gọi còn khoảng 1 năm tính lùi từ ngày kết thúc
 PAGE_SIZE = 300     # > số phiên trong 1 năm, thường chỉ cần 1 trang mỗi đoạn
+MAX_PAGES = 100     # chặn vòng lặp vô hạn nếu CafeF đổi cách phân trang
 
 
 def _http_get_json(url: str, timeout: float = 20) -> dict:
@@ -87,15 +88,18 @@ class CafeFProvider(DataProvider):
 
     def _window(self, symbol: str, start: date, end: date) -> list[dict]:
         rows: list[dict] = []
-        page = 1
-        while True:
+        seen: set[str] = set()
+        for page in range(1, MAX_PAGES + 1):
             data = self._call(symbol, start, end, page)
-            batch = data.get("Data") or []
+            batch = [r for r in data.get("Data") or [] if r.get("Ngay") not in seen]
+            seen.update(r.get("Ngay") for r in batch)
             rows.extend(batch)
+            # Dừng khi hết trang, đủ số phiên, hoặc CafeF trả lại trang cũ (không có ngày mới)
             if not batch or len(rows) >= int(data.get("TotalCount") or 0):
-                return rows
-            page += 1
+                break
             time.sleep(self.pause)
+        print(f"      {start} → {end}: {len(rows)} phiên ({page} trang)", flush=True)
+        return rows
 
     def raw_rows(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         """Bảng thô (tiêu đề tiếng Việt như file Excel CafeF), mọi đoạn 1 năm đã ghép."""
