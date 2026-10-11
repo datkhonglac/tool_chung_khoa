@@ -104,6 +104,19 @@ Cần vnstock (Codespace đã cài sẵn; máy khác: `pip install -U --extra-in
 https://vnstocks.com/api/simple vnstock vnai`). Bản miễn phí của vnstock chỉ trả 4 năm gần nhất.
 Cách tính từng chỉ số ghi ở đầu file `src/vnsa/fa/ratios.py` (ROE dùng vốn chủ công ty mẹ bình quân).
 
+## 5. Định giá (ngày 3)
+
+```bash
+python -m vnsa.cli value FPT                 # P/E, P/B, WACC, DCF-FCFF, ma trận độ nhạy
+python -m vnsa.cli value FPT --growth 0.10   # tự đặt tăng trưởng năm đầu g1
+python -m vnsa.cli value FPT --wacc 0.11     # tự đặt WACC
+```
+
+Cần giá của mã và của VNINDEX (để tính beta; `fetch` tự tải kèm) cùng BCTC (`fetch-bctc`).
+Giả định (lãi suất phi rủi ro, phần bù rủi ro, tăng trưởng dài hạn…) nằm ở mục `[valuation]` của
+`config/settings.toml`; cách tính ghi ở đầu file `src/vnsa/fa/valuation.py`. Kết quả DCF rất nhạy
+với giả định, hãy xem ma trận độ nhạy thay vì chỉ một con số.
+
 ## Ý nghĩa các kết quả kiểm tra
 
 | Mã | Mức | Ý nghĩa |
@@ -131,6 +144,7 @@ src/vnsa/
   data/store.py               kho DuckDB
   data/providers/vnstock_provider.py  BCTC năm qua vnstock (VCI)
   fa/ratios.py                bộ chỉ số tài chính
+  fa/valuation.py             WACC, DCF-FCFF, P/E, P/B, độ nhạy
   report/charts.py            biểu đồ nến
   cli.py                      dòng lệnh
 scripts/make_sample_data.py   sinh dữ liệu mẫu
@@ -141,6 +155,6 @@ tests/                        pytest
 Thêm nguồn mới (vnstock, DNSE, SSI…) = viết một lớp con của `DataProvider`
 trong `data/providers/`, không phải sửa phần còn lại.
 
-## Việc tiếp theo (ngày 3)
+## Việc tiếp theo (ngày 4)
 
-WACC, định giá DCF-FCFF, P/E, P/B và ma trận độ nhạy.
+F-Score, Altman Z, điểm FA; chỉ báo kỹ thuật (TA).

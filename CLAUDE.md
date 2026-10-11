@@ -27,13 +27,15 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 - `python -m vnsa.cli fetch-bctc [MÃ...]` — BCTC năm hợp nhất qua vnstock nguồn VCI → `data/raw/bctc/`
   và bảng `fundamentals` trong kho. Bản miễn phí chỉ 4 năm gần nhất. KHÔNG dùng nguồn KBS (nhãn năm
   bị đảo ngược). `python -m vnsa.cli ratios FPT` — bộ chỉ số (`src/vnsa/fa/ratios.py`, quy ước ở đầu file).
+- `python -m vnsa.cli value FPT [--growth 0.1] [--wacc 0.11]` — WACC (beta tuần so với VNINDEX), DCF-FCFF
+  hai giai đoạn (g1 giảm dần về g), P/E, P/B, ma trận độ nhạy. Giả định ở `[valuation]` trong settings.
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
 - `python -m vnsa.cli load [--sample]` · `check FPT` · `list` · `chart FPT`
 
-## Lộ trình sprint 10 ngày (đang ở ngày 3)
+## Lộ trình sprint 10 ngày (đang ở ngày 4)
 1. Dữ liệu giá ✔ — 5 năm cho FPT, HPG, MWG, VNM, DGC (lệnh `fetch`)
 2. BCTC + bộ chỉ số tài chính ✔ (4 năm 2022–2025; còn đối chiếu thêm với BCTC gốc)
-3. WACC, DCF-FCFF, P/E, P/B, ma trận độ nhạy
+3. WACC, DCF-FCFF, P/E, P/B, ma trận độ nhạy ✔ (lệnh `value`; giả định cần người dùng duyệt)
 4. F-Score, Altman Z, điểm FA; chỉ báo TA
 5. Hỗ trợ/kháng cự, điểm TA, kế hoạch giao dịch (cắt lỗ theo ATR)
 6. GARCH, Monte Carlo P10–P90, VaR

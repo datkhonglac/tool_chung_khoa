@@ -215,8 +215,9 @@ def cmd_value(args) -> int:
     print(f"  k_d {pct(v.cost_of_debt)}, thuế {pct(v.tax_rate)}, tỷ trọng vốn chủ {pct(v.weight_equity)}")
     print("\nFCFF lịch sử (CFO + lãi vay × (1−t) − capex):")
     print("  " + " · ".join(f"{y}: {bn(x)}" for y, x in v.fcff_history.items()))
-    print(f"  gốc (TB 3 năm) {bn(v.fcff_base)}; tăng {pct(v.g1)}/năm × {a.forecast_years} năm, "
-          f"sau đó {pct(v.g)}")
+    path_ = " → ".join(pct(x) for x in val.growth_path(v.g1, v.g, a.forecast_years, a.fade_growth))
+    print(f"  gốc (TB 3 năm) {bn(v.fcff_base)}; tăng {path_} trong {a.forecast_years} năm, "
+          f"sau đó {pct(v.g)}/năm")
     d, br = v.dcf, v.net_debt_bridge
     print(f"\nDCF: PV dòng tiền {bn(d['pv_flows'])} + PV giá trị cuối {bn(d['pv_terminal'])} "
           f"= EV {bn(d['ev'])}")

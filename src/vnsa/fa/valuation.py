@@ -12,8 +12,9 @@ Công thức (để đối chiếu):
 - WACC = E/(D+E) × k_e + D/(D+E) × k_d × (1 − t); E = giá thị trường × số cổ phiếu, D = vay (sổ sách).
 - FCFF = CFO + lãi vay × (1 − t) − capex. Điểm xuất phát = trung bình FCFF 3 năm gần nhất
   (capex từng năm dao động mạnh).
-- DCF: FCFF tăng g1 trong `forecast_years` năm, sau đó tăng đều g (Gordon):
-  TV = FCFF_N × (1 + g) / (WACC − g). EV = Σ PV(FCFF) + PV(TV).
+- DCF: năm 1 FCFF tăng g1, tốc độ giảm dần tuyến tính về g ở năm `forecast_years` (`fade_growth`;
+  tắt thì tăng đều g1), sau đó tăng đều g (Gordon): TV = FCFF_N × (1 + g) / (WACC − g).
+  EV = Σ PV(FCFF) + PV(TV). g1 mặc định = CAGR LNST công ty mẹ, chặn trong [0, max_stage1_growth].
 - Giá trị vốn chủ = EV − vay + tiền + đầu tư ngắn hạn − lợi ích cổ đông không kiểm soát.
 - Số cổ phiếu = vốn góp / mệnh giá 10.000 đ (năm BCTC gần nhất).
 - P/E = giá / (LNST cty mẹ / số cổ phiếu); P/B = giá / (VCSH cty mẹ / số cổ phiếu).
@@ -33,7 +34,8 @@ class Assumptions:
     equity_risk_premium: float = 0.08  # phần bù rủi ro thị trường VN
     terminal_growth: float = 0.03      # tăng trưởng dài hạn của FCFF
     forecast_years: int = 5
-    max_stage1_growth: float = 0.20    # chặn trên cho g1 lấy từ lịch sử
+    max_stage1_growth: float = 0.15    # chặn trên cho g1 lấy từ lịch sử
+    fade_growth: bool = True           # g1 giảm dần về g trong giai đoạn dự phóng
     default_tax_rate: float = 0.20
     default_beta: float = 1.0          # dùng khi không đủ dữ liệu giá để tính beta
     beta_years: int = 3
@@ -53,7 +55,7 @@ def beta(stock: pd.DataFrame, index: pd.DataFrame, years: int = 3) -> tuple[floa
     end = min(s.index.max(), m.index.max())
     start = end - pd.DateOffset(years=years)
     weekly = pd.concat([s, m], axis=1, keys=["s", "m"]).loc[start:end].resample("W-FRI").last()
-    r = weekly.pct_change().dropna()
+    r = weekly.pct_change(fill_method=None).dropna()
     if len(r) < 52 or r["m"].var() == 0:
         return float("nan"), len(r)
     return float(r["s"].cov(r["m"]) / r["m"].var()), len(r)
@@ -97,11 +99,22 @@ def historical_growth(fin: pd.DataFrame, cap: float) -> float:
     return float(min(max(g, 0.0), cap))
 
 
-def dcf_enterprise_value(fcff0: float, g1: float, years: int, g: float, wacc: float) -> dict:
+def growth_path(g1: float, g: float, years: int, fade: bool = True) -> list[float]:
+    """Tốc độ tăng từng năm dự phóng: g1 ở năm 1, giảm tuyến tính về g ở năm cuối (nếu fade)."""
+    if not fade or years == 1:
+        return [g1] * years
+    return [g1 + (g - g1) * (t - 1) / (years - 1) for t in range(1, years + 1)]
+
+
+def dcf_enterprise_value(fcff0: float, g1: float, years: int, g: float, wacc: float,
+                         fade: bool = True) -> dict:
     """EV theo DCF hai giai đoạn. fcff0 là FCFF năm gốc (năm 0)."""
     if wacc <= g:
         raise ValueError(f"WACC ({wacc:.1%}) phải lớn hơn tăng trưởng dài hạn ({g:.1%})")
-    flows = [fcff0 * (1 + g1) ** t for t in range(1, years + 1)]
+    flows, f = [], fcff0
+    for rate in growth_path(g1, g, years, fade):
+        f *= 1 + rate
+        flows.append(f)
     pv_flows = sum(f / (1 + wacc) ** t for t, f in enumerate(flows, start=1))
     tv = flows[-1] * (1 + g) / (wacc - g)
     pv_tv = tv / (1 + wacc) ** years
@@ -197,7 +210,8 @@ def value(
         result = {"flows": [], "pv_flows": np.nan, "terminal_value": np.nan, "pv_terminal": np.nan,
                   "ev": np.nan}
     else:
-        result = dcf_enterprise_value(base, growth, a.forecast_years, a.terminal_growth, w)
+        result = dcf_enterprise_value(base, growth, a.forecast_years, a.terminal_growth, w,
+                                      a.fade_growth)
     eq = equity_from_ev(result["ev"], br)
 
     parent_equity = last["equity"] - (0 if pd.isna(last.get("minority_interest")) else last["minority_interest"])
@@ -224,7 +238,7 @@ def sensitivity(v: Valuation, a: Assumptions, wacc_step: float = 0.01,
             if v.fcff_base <= 0 or w <= g:
                 col.append(np.nan)
                 continue
-            ev = dcf_enterprise_value(v.fcff_base, v.g1, a.forecast_years, g, w)["ev"]
+            ev = dcf_enterprise_value(v.fcff_base, v.g1, a.forecast_years, g, w, a.fade_growth)["ev"]
             col.append(equity_from_ev(ev, v.net_debt_bridge) / v.shares)
         table[g] = col
     return pd.DataFrame(table, index=waccs)

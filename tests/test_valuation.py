@@ -37,7 +37,7 @@ def test_fcff_and_growth_by_hand():
 
 
 def test_dcf_two_stage_by_hand():
-    d = val.dcf_enterprise_value(100.0, g1=0.10, years=2, g=0.03, wacc=0.12)
+    d = val.dcf_enterprise_value(100.0, g1=0.10, years=2, g=0.03, wacc=0.12, fade=False)
     f1, f2 = 110.0, 121.0
     tv = f2 * 1.03 / (0.12 - 0.03)
     assert d["pv_flows"] == pytest.approx(f1 / 1.12 + f2 / 1.12**2)
@@ -45,6 +45,14 @@ def test_dcf_two_stage_by_hand():
     assert d["ev"] == pytest.approx(f1 / 1.12 + f2 / 1.12**2 + tv / 1.12**2)
     with pytest.raises(ValueError):
         val.dcf_enterprise_value(100.0, 0.1, 2, g=0.12, wacc=0.12)
+
+
+def test_growth_fades_linearly_to_terminal():
+    assert val.growth_path(0.15, 0.03, 5) == pytest.approx([0.15, 0.12, 0.09, 0.06, 0.03])
+    assert val.growth_path(0.15, 0.03, 5, fade=False) == [0.15] * 5
+    d = val.dcf_enterprise_value(100.0, g1=0.15, years=5, g=0.03, wacc=0.12)
+    assert d["flows"][0] == pytest.approx(115.0)
+    assert d["flows"][1] == pytest.approx(115.0 * 1.12)
 
 
 def test_full_valuation_wacc_bridge_and_multiples():
@@ -59,7 +67,7 @@ def test_full_valuation_wacc_bridge_and_multiples():
     assert v.weight_equity == pytest.approx(e / (e + d))
     assert v.wacc == pytest.approx(e / (e + d) * 0.13 + d / (e + d) * 0.10 * 0.8)
     assert v.fcff_base == pytest.approx(132 * B)
-    ev = val.dcf_enterprise_value(132 * B, 0.10, 5, 0.03, v.wacc)["ev"]
+    ev = val.dcf_enterprise_value(132 * B, 0.10, 5, 0.03, v.wacc, fade=True)["ev"]
     # Cầu nối: − vay 400 + tiền 100 + ĐTNH 50 − thiểu số 200
     assert v.equity_value == pytest.approx(ev - 400 * B + 150 * B - 200 * B)
     assert v.value_per_share == pytest.approx(v.equity_value / 1e8)
