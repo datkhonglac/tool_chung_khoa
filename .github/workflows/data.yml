@@ -1,0 +1,48 @@
+name: Kiểm tra và tải dữ liệu
+
+# Chạy test và tải 5 năm giá từ CafeF trên máy chủ GitHub.
+# Kết quả (CSV + kho DuckDB) nằm ở mục Artifacts của mỗi lần chạy.
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Các mã, cách nhau bằng dấu cách (bỏ trống = danh sách theo dõi)"
+        required: false
+        default: ""
+      years:
+        description: "Số năm"
+        required: false
+        default: "5"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  fetch:
+    needs: test
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python -m vnsa.cli fetch ${{ inputs.symbols }} --years ${{ inputs.years }}
+      - run: python -m vnsa.cli list
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: du-lieu-gia
+          path: |
+            data/raw/prices/*.csv
+            data/warehouse.duckdb
+          if-no-files-found: ignore
