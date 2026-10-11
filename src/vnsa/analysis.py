@@ -83,6 +83,61 @@ def symbols() -> list[str]:
     return [s for s in inv["symbol"].tolist() if s != index] if len(inv) else []
 
 
+def cost_of_equity(d: Data) -> tuple[float, float, float, int]:
+    """(k_e, beta dùng trong CAPM, beta thô, số tuần) — beta tuần so với VNINDEX, Blume nếu bật."""
+    from vnsa.fa import valuation as val
+
+    a = val.Assumptions.from_settings(settings()["valuation"])
+    raw, weeks = (val.beta(d.prices, d.index, a.beta_years) if not d.index.empty
+                  else (float("nan"), 0))
+    b = a.default_beta if pd.isna(raw) else (0.67 * raw + 0.33 if a.adjust_beta else raw)
+    return a.risk_free + b * a.equity_risk_premium, b, raw, weeks
+
+
+def financial(d: Data):
+    """Định chế tài chính: (FAScore, FairValue) bằng thu nhập thặng dư + P/B theo ROE + P/B lịch
+    sử (fa/fair_value.py) và điểm FA riêng (scores.financial_score). ValueError nếu thiếu số."""
+    from vnsa import market
+    from vnsa.fa import fair_value as fv
+    from vnsa.fa.scores import financial_score
+
+    if d.fin.empty or d.prices.empty:
+        raise ValueError(f"{d.symbol}: thiếu BCTC hoặc giá")
+    cfg = settings()["valuation"]
+    ke, _, _, _ = cost_of_equity(d)
+    ri = fv.residual_income(d.fin, ke, cfg["terminal_growth"], cfg["financials"], cfg["par_value"])
+    price = float(d.prices["close"].iloc[-1])
+    fair = fv.combine(price, d.fin, d.prices, cfg["par_value"], ri=ri)
+    pb = price / ri.book0
+    score = financial_score(d.fin, settings()["fa_score"]["financials"],
+                            market.profile(d.symbol)["model"], pb=pb, fair_upside=fair.upside)
+    return score, fair
+
+
+def fundamentals_view(d: Data):
+    """(điểm FA 0–100, FairValue hoặc None, P/E, P/B) cho mọi loại doanh nghiệp; thiếu BCTC ->
+    (NaN, None, NaN, NaN). Dùng cho khuyến nghị và vùng mua."""
+    from vnsa.fa import fair_value as fv
+    from vnsa.market import financial_note
+
+    nan = float("nan")
+    if d.fin.empty or d.prices.empty:
+        return nan, None, nan, nan
+    if financial_note(d.symbol):
+        try:
+            score, fair = financial(d)
+        except ValueError:
+            pe, pb = multiples(d)
+            return nan, None, pe, pb
+        pe, pb = multiples(d)
+        return score.total, fair, pe, pb
+    _, _, score, v = fa(d)
+    dcf = v.value_per_share if v is not None else nan
+    fair = fv.combine(float(d.prices["close"].iloc[-1]), d.fin, d.prices,
+                      settings()["valuation"]["par_value"], dcf=dcf)
+    return score.total, fair, (v.pe if v else nan), (v.pb if v else nan)
+
+
 def valuation(d: Data, growth: float | None = None, wacc: float | None = None):
     """(Assumptions, Valuation, beta thô). ValueError nếu không định giá được."""
     from vnsa.fa import valuation as val
@@ -137,15 +192,35 @@ def ta(ind: pd.DataFrame):
     return ta_score(ind, settings()["ta_score"]["weights"])
 
 
-def plan(ind: pd.DataFrame):
-    """Kế hoạch mua theo giá đóng cửa phiên cuối. ValueError nếu chưa đủ dữ liệu tính ATR."""
+def _value_anchor(symbol: str) -> tuple[float, float]:
+    """(giá trị hợp lý/cp, điểm FA) của mã trong kho; NaN nếu không tính được."""
+    nan = float("nan")
+    try:
+        score, fair, _, _ = fundamentals_view(load(symbol, need_fin=False))
+    except (DataMissing, ValueError, KeyError, IndexError):
+        return nan, nan
+    return (fair.value if fair else nan), score
+
+
+def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | None = None):
+    """Kế hoạch mua với giá vào = đỉnh VÙNG MUA khuyến nghị (ta/entry.py: hỗ trợ / VWAP20 / SMA20,
+    chặn bởi giá trị hợp lý trừ biên an toàn), không phải giá đóng cửa. Không truyền fair_value thì
+    tự tính từ kho. ValueError nếu chưa đủ dữ liệu tính ATR."""
     from vnsa import market
+    from vnsa.ta.entry import entry_zone
     from vnsa.ta.plan import trade_plan
 
     sup, res = levels(ind)
     last = ind.iloc[-1]
-    ticks = market.ticks(last["symbol"]) if "symbol" in ind else market.ticks()
-    return trade_plan(float(last["close"]), float(last["atr"]), sup, res, settings()["plan"], ticks)
+    sym = last["symbol"] if "symbol" in ind else None
+    ticks = market.ticks(sym) if sym else market.ticks()
+    if fair_value is None:
+        fair_value, fa_score = _value_anchor(sym) if sym else (float("nan"), float("nan"))
+    zone = entry_zone(ind, sup, settings()["entry"], ticks, fair_value,
+                      float("nan") if fa_score is None else fa_score)
+    p = trade_plan(zone.entry, float(last["atr"]), sup, res, settings()["plan"], ticks)
+    p.zone = zone
+    return p
 
 
 def backtest_config(symbol: str) -> dict:
@@ -204,29 +279,29 @@ def recommendation(symbol: str):
     from vnsa.recommend.engine import Inputs, recommend
 
     d = load(symbol, need_fin=False)
-    fa_score = z_em = upside = pe = pb = float("nan")
+    nan = float("nan")
+    z_em = upside = nan
     notes = []
-    fin_note = financial_note(d.symbol)
-    if fin_note:
-        pe, pb = multiples(d)
-        if not (pd.isna(pe) and pd.isna(pb)):
-            shown = ", ".join(f"{k} {v:.{n}f}" for k, v, n in (("P/E", pe, 1), ("P/B", pb, 2))
-                              if not pd.isna(v))
-            notes.append(f"{shown} (BCTC năm {int(d.fin['year'].iloc[-1])})")
-        notes.append(fin_note)
+    fa_score, fair, pe, pb = fundamentals_view(d)
+    if financial_note(d.symbol):
+        notes.append(financial_note(d.symbol))
     elif not d.fin.empty:
-        _, z, s, v = fa(d)
-        fa_score, z_em = s.total, float(z["z_em"].iloc[-1])
-        if v is not None:
-            upside, pe, pb = v.upside, v.pe, v.pb
+        _, z, _, v = fa(d)
+        z_em = float(z["z_em"].iloc[-1])
+        upside = v.upside if v is not None else nan
     else:
         notes.append("chưa có BCTC: chỉ dựa vào kỹ thuật")
     ind = indicators(d.prices)
     t = ta(ind)
     try:
-        p = plan(ind)
+        p = plan(ind, fair.value if fair else nan, fa_score)
     except ValueError:
         p = None
+    if p is not None and p.zone is not None:
+        zn = p.zone
+        notes.insert(0, f"{zn.status.lower()} {zn.low:,.0f}–{zn.high:,.0f} "
+                        f"(neo {zn.anchor_source})" if zn.status == "MUA TRONG VÙNG" else
+                        f"chờ giá về ≤ {zn.high:,.0f} mới mua")
     r = None
     try:
         r = risk(d.prices)
@@ -236,9 +311,79 @@ def recommendation(symbol: str):
         symbol=d.symbol, price=float(d.prices["close"].iloc[-1]),
         date=d.prices["date"].iloc[-1], fa_score=fa_score, ta_score=t.total, z_em=z_em,
         dcf_upside=upside, pe=pe, pb=pb,
+        fair_value=fair.value if fair else nan, fair_upside=fair.upside if fair else nan,
         vol_annual=r.fit.current_vol_annual if r else float("nan"),
         prob_up=r.sim.prob_above(day=max(r.horizons)) if r else float("nan"),
         first_target_rr=p.targets[0].reward_risk if p and p.targets else float("nan"),
         horizon=max(r.horizons) if r else 60,
     )
     return recommend(inputs, settings()["recommend"], notes), p
+
+
+def _params_hash() -> str:
+    """Mã băm phần cấu hình quyết định khuyến nghị: đổi quy tắc thì đổi mã, để chấm riêng từng bộ."""
+    import hashlib
+    import json
+
+    cfg = settings()
+    keys = ["recommend", "fa_score", "ta_score", "entry", "plan", "valuation"]
+    blob = json.dumps({k: cfg.get(k) for k in keys}, sort_keys=True, default=str)
+    return hashlib.sha1(blob.encode()).hexdigest()[:8]
+
+
+def record_signals(items) -> int:
+    """Lưu khuyến nghị [(Recommendation, TradePlan | None), ...] vào bảng signals và xuất toàn bộ
+    lịch sử ra data/signals.csv (file này không bị .gitignore — commit để giữ khi đổi Codespace)."""
+    from vnsa.data.store import Store
+
+    if not settings().get("signals", {}).get("record", True) or not items:
+        return 0
+    nan = float("nan")
+    params = _params_hash()
+    rows = []
+    for rec, p in items:
+        x, zn = rec.inputs, (p.zone if p is not None else None)
+        rows.append({
+            "as_of": x.date, "symbol": rec.symbol, "action": rec.action, "score": rec.score,
+            "fa_score": x.fa_score, "ta_score": x.ta_score, "price": x.price,
+            "fair_value": x.fair_value, "zone_status": zn.status if zn else None,
+            "buy_low": zn.low if zn else nan, "buy_high": zn.high if zn else nan,
+            "stop": p.stop if p else nan,
+            "target": p.targets[0].price if p and p.targets else nan, "params": params,
+        })
+    with Store(path("warehouse")) as store:
+        n = store.write_signals(pd.DataFrame(rows))
+        hist = store.signals()
+    out = path("signals_csv")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    hist.assign(as_of=hist["as_of"].dt.strftime("%Y-%m-%d")).to_csv(out, index=False)
+    return n
+
+
+def import_signals_csv() -> int:
+    """Nạp lại data/signals.csv vào kho (khi mở Codespace mới, kho trống nhưng file CSV còn trong Git)."""
+    from vnsa.data.store import Store
+
+    src = path("signals_csv")
+    if not src.exists():
+        return 0
+    df = pd.read_csv(src)
+    with Store(path("warehouse")) as store:
+        if len(store.signals()) >= len(df):
+            return 0
+        return store.write_signals(df)
+
+
+def review(horizons: list[int] | None = None):
+    """(bảng chấm từng khuyến nghị, bảng tổng hợp theo kỳ × khuyến nghị, số khuyến nghị đã lưu)."""
+    from vnsa.data.store import Store
+    from vnsa.recommend.review import evaluate, summarize
+
+    import_signals_csv()
+    horizons = horizons or settings()["signals"]["horizons"]
+    with Store(path("warehouse")) as store:
+        sig = store.signals()
+        prices = {s: store.prices(s) for s in sig["symbol"].unique()}
+        index = store.prices(settings()["valuation"]["index"])
+    ev = evaluate(sig, prices, index, horizons)
+    return ev, summarize(ev), len(sig)

@@ -7,6 +7,7 @@ raw_bctc_dir = "data/raw/bctc"         # BCTC năm đã chuẩn hoá, mỗi mã 
 sample_prices_dir = "data/sample/prices"
 warehouse = "data/warehouse.duckdb"
 charts_dir = "data/charts"
+signals_csv = "data/signals.csv"       # bản sao lịch sử khuyến nghị (không bị .gitignore, commit để giữ lại)
 
 # Đơn vị giá trong file CSV: "auto" | "dong" | "nghin"
 # auto: nếu trung vị giá đóng cửa < 1000 thì coi là nghìn đồng và nhân 1000.
@@ -53,6 +54,13 @@ beta_years = 3
 adjust_beta = true             # beta Blume = 0,67 × beta thô + 0,33
 par_value = 10000              # mệnh giá cổ phiếu (đồng)
 
+[valuation.financials]
+# Ngân hàng / chứng khoán / bảo hiểm: thu nhập thặng dư + P/B hợp lý theo ROE (fa/fair_value.py)
+forecast_years = 5
+roe_years = 3               # ROE xuất phát = bình quân 3 năm gần nhất
+roe_persistence = 0.5       # ROE dài hạn = k_e + 50% × (ROE hiện tại − k_e)
+retention = 0.8             # tỷ lệ lợi nhuận giữ lại làm tăng vốn chủ (NH Việt Nam chia cổ tức tiền ít)
+
 [fa_score]
 # Điểm FA 0–100. Mỗi chỉ tiêu quy về 0–100 tuyến tính giữa [mức xấu, mức tốt].
 issue_materiality = 0.01    # F-Score: tiền thu phát hành cp ≤ 1% vốn chủ coi như không phát hành
@@ -73,6 +81,23 @@ cfo_to_ni = [0.5, 1.0]        # CFO / LNST cộng dồn 3 năm
 pe = [25, 8]
 pb = [4.0, 1.0]
 dcf_upside = [-0.2, 0.3]
+
+[fa_score.financials]
+# Điểm FA cho định chế tài chính (scores.financial_score)
+[fa_score.financials.weights]
+sinh_loi = 35        # ROE
+tang_truong = 20     # tăng trưởng kép LNST cty mẹ
+an_toan = 15         # vốn chủ / tổng tài sản
+dinh_gia = 30        # P/B, chênh lệch so với giá trị hợp lý
+[fa_score.financials.thresholds]
+roe = [0.08, 0.20]
+ni_cagr = [0.0, 0.20]
+pb = [3.0, 0.8]
+fair_upside = [-0.2, 0.3]
+[fa_score.financials.equity_to_assets]   # [mức xấu, mức tốt] theo loại doanh nghiệp
+bank = [0.05, 0.11]
+securities = [0.25, 0.60]
+insurance = [0.10, 0.30]
 
 [ta]
 # Độ dài các chỉ báo kỹ thuật (phiên)
@@ -106,6 +131,20 @@ reward_multiples = [2.0, 3.0]
 min_reward_risk = 2.0
 lot_size = 100
 # Bước giá theo sàn nằm ở [market.ticks]
+
+[entry]
+# Vùng giá mua khuyến nghị (ta/entry.py) — không lấy thẳng giá đóng cửa làm giá vào
+max_pullback_atr = 2.0      # điểm neo (hỗ trợ / VWAP20 / SMA20) cách giá hiện tại tối đa 2 ATR
+zone_atr = 0.5              # vùng mua rộng 0,5 ATR tính từ điểm neo
+chase_atr = 2.0             # giá cách SMA20 > 2 ATR: cảnh báo không đuổi giá
+vwap_sessions = 20
+margin_of_safety = 0.15     # trần giá mua = giá trị hợp lý × (1 − 15%)
+weak_fa_extra = 0.10        # điểm FA < 50: biên an toàn thêm 10%
+
+[signals]
+# Lịch sử khuyến nghị: mỗi lần recommend/analyze ghi vào bảng signals và file CSV (đưa lên Git được)
+record = true
+horizons = [5, 20, 60]      # số phiên để chấm lại khuyến nghị (lệnh review-signals)
 
 [risk]
 garch_window = 1000         # số phiên gần nhất dùng ước lượng GARCH

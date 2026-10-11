@@ -11,7 +11,7 @@ APP = str(Path(__file__).resolve().parents[1] / "dashboard" / "app.py")
 def test_dashboard_renders_all_tabs_without_errors(warehouse):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception, at.exception
-    assert len(at.tabs) == 6
+    assert len(at.tabs) == 7
     assert at.selectbox[0].options == ["DEMO_A", "DEMO_B", "DEMO_C"]
     labels = " | ".join(m.label for m in at.metric)
     for label in ("Điểm TA", "Điểm FA", "Giá trị DCF/cp", "Lợi nhuận/năm", "VaR 95% 1 ngày"):
@@ -47,7 +47,7 @@ def test_dashboard_fetches_any_symbol_from_sidebar(warehouse, monkeypatch):
     assert any("DEMO_C: đã sẵn sàng" in s.value for s in at.success)
 
 
-def test_dashboard_bank_shows_note_instead_of_dcf(warehouse):
+def test_dashboard_bank_uses_residual_income(warehouse):
     import pandas as pd
     from conftest import _fundamentals
 
@@ -60,5 +60,7 @@ def test_dashboard_bank_shows_note_instead_of_dcf(warehouse):
     at = AppTest.from_file(APP, default_timeout=120).run()
     at.selectbox[0].select("DEMO_B").run()
     assert not at.exception, at.exception
-    assert sum("ngân hàng" in i.value for i in at.info) == 2       # tab Tài chính và Định giá
-    assert "P/B" in " | ".join(m.label for m in at.metric)
+    assert any("ngân hàng" in i.value for i in at.info)            # tab Tài chính
+    labels = " | ".join(m.label for m in at.metric)
+    for label in ("P/B", "Thu nhập thặng dư", "P/B hợp lý theo ROE", "Vùng mua"):
+        assert label in labels, label

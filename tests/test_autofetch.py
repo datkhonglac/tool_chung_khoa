@@ -184,7 +184,8 @@ def test_exchange_rules_band_ticks_and_financials(warehouse):
     with pytest.raises(ValueError, match="ngân hàng"):
         analysis.valuation(d)
     rec, _ = analysis.recommendation("DEMO_B")
-    assert pd.isna(rec.inputs.fa_score) and rec.inputs.pe > 0 and rec.inputs.pb > 0
+    assert rec.inputs.fa_score > 0 and rec.inputs.pe > 0 and rec.inputs.pb > 0
+    assert rec.inputs.fair_value > 0 and pd.isna(rec.inputs.z_em)   # RI, không có Altman Z
     assert any("ngân hàng" in r for r in rec.reasons)
 
 

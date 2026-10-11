@@ -50,7 +50,31 @@ CREATE TABLE IF NOT EXISTS companies (
 );
 """
 
+SCHEMA += """
+-- Lịch sử khuyến nghị: mỗi mã một dòng cho mỗi ngày giá (chạy lại trong ngày thì ghi đè)
+CREATE TABLE IF NOT EXISTS signals (
+    as_of       DATE    NOT NULL,   -- phiên giá dùng để khuyến nghị
+    symbol      VARCHAR NOT NULL,
+    action      VARCHAR,            -- MUA | THEO DÕI | TRÁNH
+    score       DOUBLE,
+    fa_score    DOUBLE,
+    ta_score    DOUBLE,
+    price       DOUBLE,             -- giá đóng cửa phiên as_of
+    fair_value  DOUBLE,
+    zone_status VARCHAR,            -- MUA TRONG VÙNG | CHỜ GIÁ
+    buy_low     DOUBLE,
+    buy_high    DOUBLE,
+    stop        DOUBLE,
+    target      DOUBLE,             -- mục tiêu 1
+    params      VARCHAR,            -- mã băm cấu hình chấm điểm (đổi quy tắc -> đổi mã)
+    recorded_at TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (as_of, symbol)
+);
+"""
+
 COMPANY_COLUMNS = ["symbol", "name", "exchange", "industry", "model"]
+SIGNAL_COLUMNS = ["as_of", "symbol", "action", "score", "fa_score", "ta_score", "price",
+                  "fair_value", "zone_status", "buy_low", "buy_high", "stop", "target", "params"]
 
 
 class Store:
@@ -212,6 +236,37 @@ class Store:
     def companies_loaded_at(self) -> pd.Timestamp | None:
         t = self.con.execute("SELECT MAX(loaded_at) FROM companies").fetchone()[0]
         return None if t is None else pd.Timestamp(t)
+
+    def write_signals(self, df: pd.DataFrame) -> int:
+        """Ghi đè khuyến nghị cùng (ngày, mã); cột SIGNAL_COLUMNS."""
+        if df.empty:
+            return 0
+        frame = df.reindex(columns=SIGNAL_COLUMNS).copy()
+        frame["as_of"] = pd.to_datetime(frame["as_of"]).dt.date
+        cols = ", ".join(SIGNAL_COLUMNS)
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute("BEGIN")
+            self.con.execute("DELETE FROM signals s USING incoming i "
+                             "WHERE s.as_of = i.as_of AND s.symbol = i.symbol")
+            self.con.execute(f"INSERT INTO signals ({cols}) SELECT {cols} FROM incoming")
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming")
+        return len(frame)
+
+    def signals(self, symbol: str | None = None) -> pd.DataFrame:
+        sql = f"SELECT {', '.join(SIGNAL_COLUMNS)}, recorded_at FROM signals"
+        params: list = []
+        if symbol:
+            sql += " WHERE symbol = ?"
+            params.append(symbol.upper())
+        df = self.con.execute(sql + " ORDER BY as_of, symbol", params).df()
+        df["as_of"] = pd.to_datetime(df["as_of"])
+        return df
 
     def inventory(self) -> pd.DataFrame:
         """Mỗi mã có bao nhiêu phiên, từ ngày nào đến ngày nào."""
