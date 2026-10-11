@@ -63,11 +63,41 @@ def items(symbols: list[str]) -> int:
     return 0
 
 
+def foreign(symbols: list[str]) -> int:
+    """--foreign: dò nguồn giao dịch khối ngoại miễn phí (CafeF GDKhoiNgoai, vnstock)."""
+    import requests
+
+    for sym in symbols:
+        for page in ("GDKhoiNgoai", "GDTuDoanh"):
+            url = (f"https://cafef.vn/du-lieu/Ajax/PageNew/DataHistory/{page}.ashx?Symbol={sym}"
+                   "&StartDate=&EndDate=&PageIndex=1&PageSize=3")
+            print(f"\n===== CafeF {page} {sym}")
+            try:
+                r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+                print(f"  HTTP {r.status_code}: {r.text[:2500]}")
+            except Exception as e:  # noqa: BLE001
+                print(f"  LỖI: {e}")
+            time.sleep(1)
+    try:
+        import vnstock
+
+        for name in ("Trading", "Quote", "Company"):
+            cls = getattr(vnstock, name, None)
+            if cls is not None:
+                obj = cls(source="VCI", symbol=symbols[0]) if name != "Trading" else cls(source="VCI")
+                print(f"\n  {name}: {[m for m in dir(obj) if not m.startswith('_')]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"vnstock: {e}")
+    return 0
+
+
 def main() -> int:
     from vnstock import Company, Finance, Quote
 
     if sys.argv[1:2] == ["--items"]:
         return items([s.upper() for s in sys.argv[2:]])
+    if sys.argv[1:2] == ["--foreign"]:
+        return foreign([s.upper() for s in sys.argv[2:]] or ["FPT"])
     for sym in [s.upper() for s in sys.argv[1:]] or ["FPT", "VCB"]:
         fin = Finance(source="VCI", symbol=sym)
         for name in ("income_statement", "balance_sheet", "cash_flow"):
