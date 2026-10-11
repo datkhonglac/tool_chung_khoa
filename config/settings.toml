@@ -17,6 +17,23 @@ price_unit = "auto"
 band_hose = 0.07
 band_hnx = 0.10
 band_upcom = 0.15
+default_exchange = "HOSE"   # dùng khi chưa biết sàn của mã (chưa tải được danh sách niêm yết)
+
+[market.ticks]
+# Bước giá theo sàn: giá ≥ ngưỡng -> bước giá (đồng)
+HOSE = [[0, 10], [10_000, 50], [50_000, 100]]
+HNX = [[0, 100]]
+UPCOM = [[0, 100]]
+
+[auto]
+# Tự lấy dữ liệu khi phân tích một mã bất kỳ (lệnh analyze, ô nhập mã trên dashboard, MCP)
+years = 5                   # số năm giá tải lần đầu
+overlap_days = 10           # tải lại 10 ngày cuối để so khớp và bắt các phiên nguồn sửa lại
+adjust_tolerance = 0.005    # giá cũ lệch > 0,5% so với lần tải mới -> có sự kiện quyền, tải lại toàn bộ
+market_close_hour = 15      # trước 15h (giờ Việt Nam) chưa có giá phiên hôm nay
+bctc_max_age_days = 30      # BCTC trong kho cũ hơn số ngày này thì tải lại
+listing_max_age_days = 30   # danh sách niêm yết (sàn, ngành) cũ hơn số ngày này thì tải lại
+pause = 0.3                 # giây nghỉ giữa các lần gọi CafeF
 
 [watchlist]
 symbols = ["FPT", "HPG", "MWG", "VNM", "DGC"]
@@ -88,8 +105,7 @@ support_buffer_atr = 0.5    # đặt cắt lỗ dưới hỗ trợ 0,5 ATR
 reward_multiples = [2.0, 3.0]
 min_reward_risk = 2.0
 lot_size = 100
-# Bước giá HOSE: giá ≥ ngưỡng -> bước giá (đồng)
-ticks = [[0, 10], [10_000, 50], [50_000, 100]]
+# Bước giá theo sàn nằm ở [market.ticks]
 
 [risk]
 garch_window = 1000         # số phiên gần nhất dùng ước lượng GARCH

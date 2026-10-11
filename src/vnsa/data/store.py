@@ -37,7 +37,20 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     loaded_at TIMESTAMP DEFAULT current_timestamp,
     PRIMARY KEY (symbol, year)
 );
+
+-- Danh sách niêm yết: sàn (biên độ, bước giá), ngành và loại doanh nghiệp (mô hình FA)
+CREATE TABLE IF NOT EXISTS companies (
+    symbol   VARCHAR PRIMARY KEY,
+    name     VARCHAR,
+    exchange VARCHAR,     -- HOSE | HNX | UPCOM
+    industry VARCHAR,
+    model    VARCHAR,     -- general | bank | securities | insurance
+    source   VARCHAR,
+    loaded_at TIMESTAMP DEFAULT current_timestamp
+);
 """
+
+COMPANY_COLUMNS = ["symbol", "name", "exchange", "industry", "model"]
 
 
 class Store:
@@ -84,6 +97,44 @@ class Store:
             self.con.unregister("incoming")
         return len(frame) if symbols else 0
 
+    def upsert_prices(self, df: pd.DataFrame, source: str) -> int:
+        """Chỉ thay các phiên trong khoảng ngày của df (tải tăng dần), giữ nguyên phiên cũ hơn."""
+        if df.empty:
+            return 0
+        frame = df[PRICE_COLUMNS].copy()
+        frame["date"] = pd.to_datetime(frame["date"]).dt.date
+        frame["source"] = source
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute("BEGIN")
+            self.con.execute(
+                "DELETE FROM prices p USING (SELECT symbol, MIN(date) AS d0, MAX(date) AS d1 "
+                "FROM incoming GROUP BY symbol) r "
+                "WHERE p.symbol = r.symbol AND p.date BETWEEN r.d0 AND r.d1"
+            )
+            self.con.execute(
+                "INSERT INTO prices (symbol, date, open, high, low, close, volume, source) "
+                "SELECT symbol, date, open, high, low, close, volume, source FROM incoming"
+            )
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming")
+        return len(frame)
+
+    def price_source(self, symbol: str) -> str | None:
+        """Nguồn của phiên mới nhất (để lần cập nhật sau dùng lại đúng nguồn đó)."""
+        row = self.con.execute("SELECT source FROM prices WHERE symbol = ? ORDER BY date DESC "
+                               "LIMIT 1", [symbol.upper()]).fetchone()
+        return row[0] if row else None
+
+    def last_price_date(self, symbol: str) -> pd.Timestamp | None:
+        d = self.con.execute("SELECT MAX(date) FROM prices WHERE symbol = ?",
+                             [symbol.upper()]).fetchone()[0]
+        return None if d is None else pd.Timestamp(d)
+
     def prices(self, symbol: str, start: str | None = None, end: str | None = None) -> pd.DataFrame:
         sql = "SELECT symbol, date, open, high, low, close, volume FROM prices WHERE symbol = ?"
         params: list = [symbol.upper()]
@@ -124,6 +175,43 @@ class Store:
         return self.con.execute(
             f"SELECT {cols} FROM fundamentals WHERE symbol = ? ORDER BY year", [symbol.upper()]
         ).df()
+
+    def fundamentals_loaded_at(self, symbol: str) -> pd.Timestamp | None:
+        t = self.con.execute("SELECT MAX(loaded_at) FROM fundamentals WHERE symbol = ?",
+                             [symbol.upper()]).fetchone()[0]
+        return None if t is None else pd.Timestamp(t)
+
+    def write_companies(self, df: pd.DataFrame, source: str) -> int:
+        """Ghi đè thông tin các mã có trong df (cột COMPANY_COLUMNS, thiếu cột nào để trống)."""
+        if df.empty:
+            return 0
+        frame = df.reindex(columns=COMPANY_COLUMNS).drop_duplicates("symbol").copy()
+        frame["symbol"] = frame["symbol"].str.upper()
+        frame["source"] = source
+        cols = ", ".join([*COMPANY_COLUMNS, "source"])
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute("BEGIN")
+            self.con.execute("DELETE FROM companies WHERE symbol IN (SELECT symbol FROM incoming)")
+            self.con.execute(f"INSERT INTO companies ({cols}) SELECT {cols} FROM incoming")
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming")
+        return len(frame)
+
+    def company(self, symbol: str) -> dict | None:
+        """Sàn, ngành, loại doanh nghiệp của một mã; None nếu chưa có."""
+        cols = [*COMPANY_COLUMNS, "loaded_at"]
+        row = self.con.execute(f"SELECT {', '.join(cols)} FROM companies WHERE symbol = ?",
+                               [symbol.upper()]).fetchone()
+        return dict(zip(cols, row)) if row else None
+
+    def companies_loaded_at(self) -> pd.Timestamp | None:
+        t = self.con.execute("SELECT MAX(loaded_at) FROM companies").fetchone()[0]
+        return None if t is None else pd.Timestamp(t)
 
     def inventory(self) -> pd.DataFrame:
         """Mỗi mã có bao nhiêu phiên, từ ngày nào đến ngày nào."""

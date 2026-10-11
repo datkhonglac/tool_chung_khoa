@@ -3,8 +3,8 @@
 Chạy:  streamlit run dashboard/app.py
 Cài:   pip install -e ".[dashboard]"
 
-Chỉ đọc kho DuckDB (data/warehouse.duckdb) qua vnsa.analysis — cùng con số với dòng lệnh.
-Cập nhật dữ liệu bằng dòng lệnh: python -m vnsa.cli fetch && python -m vnsa.cli fetch-bctc
+Đọc kho DuckDB (data/warehouse.duckdb) qua vnsa.analysis — cùng con số với dòng lệnh.
+Ô "Mã bất kỳ" ở thanh bên tự tải giá (CafeF), BCTC và sàn/ngành (vnstock) cho mã chưa có hoặc đã cũ.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from vnsa import analysis
+from vnsa import analysis, market
 from vnsa.config import path, settings
 from vnsa.report import charts
 
@@ -55,8 +55,25 @@ def fmt_num(x, d: int = 0) -> str:
     return "—" if pd.isna(x) else f"{x:,.{d}f}"
 
 
-stamp = _stamp()
 st.title("📈 VN Stock Analyzer")
+with st.sidebar:
+    with st.form("auto_fetch", clear_on_submit=True):
+        new = st.text_input("Mã bất kỳ (HOSE/HNX/UPCoM)", placeholder="VD: SHS, VCB, ACV")
+        go = st.form_submit_button("Lấy dữ liệu & phân tích")
+    if go and new.strip():
+        sym = new.strip().upper()
+        with st.spinner(f"Đang tải {sym} từ CafeF và vnstock (lần đầu khoảng 10–30 giây)..."):
+            rep = analysis.update(sym)
+        st.session_state["update_log"] = (sym, rep.ok, [str(x).strip() for x in rep.steps])
+        if rep.ok:
+            st.session_state["symbol"] = sym
+            st.cache_data.clear()
+    if "update_log" in st.session_state:
+        sym, ok, lines = st.session_state["update_log"]
+        (st.success if ok else st.error)(f"{sym}: " + ("đã sẵn sàng" if ok else "không có giá"))
+        st.caption("  \n".join(lines))
+
+stamp = _stamp()
 if not stamp:
     st.error("Chưa có kho dữ liệu. Chạy `python -m vnsa.cli fetch` và `python -m vnsa.cli "
              "fetch-bctc` (hoặc `python -m vnsa.cli load --sample` để thử) rồi tải lại trang.")
@@ -66,8 +83,14 @@ available = analysis.symbols()
 watch = [s for s in settings()["watchlist"]["symbols"] if s in available] or available
 with st.sidebar:
     st.header("Chọn mã")
-    symbol = st.selectbox("Mã cổ phiếu", available, index=available.index(watch[0]) if watch else 0)
-    st.caption(f"Kho: {len(available)} mã. Dữ liệu chỉ cập nhật khi chạy lệnh fetch.")
+    if st.session_state.get("symbol") not in available:
+        st.session_state["symbol"] = watch[0] if watch else available[0]
+    symbol = st.selectbox("Mã cổ phiếu", available, key="symbol")
+    prof = market.profile(symbol)
+    st.caption(" · ".join(x for x in (prof["name"], prof["exchange"] if prof["known"] else None,
+                                      prof["industry"]) if x))
+    st.caption(f"Kho: {len(available)} mã. Mã trong kho cập nhật khi nhập lại ở ô phía trên "
+               "hoặc chạy lệnh fetch.")
     st.caption("Kết quả là sàng lọc theo quy tắc trong config/settings.toml, "
                "không phải lời khuyên đầu tư.")
 
@@ -140,26 +163,38 @@ with tab_fa:
         from vnsa.fa.ratios import compute_ratios, format_ratios
         from vnsa.fa.scores import FSCORE_CRITERIA, GROUPS, z_zone
 
-        f, z, s, _ = analysis.fa(data)
-        c = st.columns(3)
-        c[0].metric(f"Điểm FA ({s.rating.lower()})", fmt_num(s.total))
-        c[1].metric("F-Score năm gần nhất", fmt_num(f["f_score"].iloc[-1]) + "/9")
-        c[2].metric(f"Altman Z'' ({z_zone(z['z_em'].iloc[-1])})", fmt_num(z["z_em"].iloc[-1], 2))
-        st.subheader("Chỉ số tài chính")
-        st.dataframe(format_ratios(compute_ratios(data.fin)), width="stretch")
-        st.subheader("Piotroski F-Score")
-        ft = f.set_index("year")[[*FSCORE_CRITERIA, "f_score"]].T
-        ft.index = [*FSCORE_CRITERIA.values(), "F-Score (/9)"]
-        st.dataframe(ft, width="stretch")
-        st.subheader("Điểm FA theo nhóm")
-        st.dataframe(pd.DataFrame([{"Nhóm": g, "Điểm": s.groups[g],
-                                    "Chỉ tiêu": ", ".join(f"{k} = {fmt_num(s.items[k][0], 2)}"
-                                                          for k in keys)}
-                                   for g, keys in GROUPS.items()]), hide_index=True)
+        fin_note = market.financial_note(symbol)
+        if fin_note:
+            pe, pb = analysis.multiples(data)
+            c = st.columns(2)
+            c[0].metric("P/E", fmt_num(pe, 1))
+            c[1].metric("P/B", fmt_num(pb, 2))
+            st.info(fin_note)
+            st.subheader("Chỉ số tài chính")
+            st.dataframe(format_ratios(compute_ratios(data.fin)), width="stretch")
+        else:
+            f, z, s, _ = analysis.fa(data)
+            c = st.columns(3)
+            c[0].metric(f"Điểm FA ({s.rating.lower()})", fmt_num(s.total))
+            c[1].metric("F-Score năm gần nhất", fmt_num(f["f_score"].iloc[-1]) + "/9")
+            c[2].metric(f"Altman Z'' ({z_zone(z['z_em'].iloc[-1])})", fmt_num(z["z_em"].iloc[-1], 2))
+            st.subheader("Chỉ số tài chính")
+            st.dataframe(format_ratios(compute_ratios(data.fin)), width="stretch")
+            st.subheader("Piotroski F-Score")
+            ft = f.set_index("year")[[*FSCORE_CRITERIA, "f_score"]].T
+            ft.index = [*FSCORE_CRITERIA.values(), "F-Score (/9)"]
+            st.dataframe(ft, width="stretch")
+            st.subheader("Điểm FA theo nhóm")
+            st.dataframe(pd.DataFrame([{"Nhóm": g, "Điểm": s.groups[g],
+                                        "Chỉ tiêu": ", ".join(f"{k} = {fmt_num(s.items[k][0], 2)}"
+                                                              for k in keys)}
+                                       for g, keys in GROUPS.items()]), hide_index=True)
 
 with tab_val:
     if data.fin.empty:
         st.info(f"Chưa có BCTC. Chạy `python -m vnsa.cli fetch-bctc {symbol}`.")
+    elif market.financial_note(symbol):
+        st.info(market.financial_note(symbol))
     else:
         from vnsa.fa import valuation as val
 
@@ -215,7 +250,7 @@ with tab_bt:
     from vnsa.recommend.backtest import backtest
     from vnsa.ta.score import ta_score_series
 
-    cfg = dict(settings()["backtest"], ticks=settings()["plan"].get("ticks"))
+    cfg = analysis.backtest_config(symbol)
     c = st.columns(2)
     cfg["entry_score"] = c[0].slider("Mua khi điểm TA ≥", 40, 90, int(cfg["entry_score"]))
     cfg["exit_score"] = c[1].slider("Bán khi điểm TA <", 10, 70, int(cfg["exit_score"]))

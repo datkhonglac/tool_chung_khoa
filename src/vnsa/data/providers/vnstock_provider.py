@@ -1,4 +1,7 @@
-"""BCTC năm qua thư viện vnstock (nguồn VCI - Vietcap).
+"""BCTC năm, danh sách niêm yết (sàn, ngành) và giá dự phòng qua thư viện vnstock (nguồn VCI).
+
+Giá: CafeF là nguồn chính, nhưng API của CafeF không trả dữ liệu cho một số mã HNX/UPCoM (đã thấy
+khi chạy thật với SHS, ACV); khi đó dùng lịch sử giá VCI qua vnstock (có đủ 3 sàn).
 
 vnstock không có trên PyPI, cài riêng:
     pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
@@ -16,7 +19,9 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
+from vnsa.data.cleaning import repair_ohlc
 from vnsa.data.providers.base import DataProvider
+from vnsa.data.providers.csv_provider import normalize_prices
 from vnsa.fa.ratios import FIELDS
 
 # Khoản mục chuẩn -> (báo cáo, các item_id có thể gặp, mẫu tên tiếng Anh dự phòng).
@@ -126,18 +131,123 @@ def _vnstock_statements(symbol: str, period: str = "year") -> dict[str, pd.DataF
     return {name: getattr(fin, name)(period=period) for name in STATEMENTS}
 
 
+# Sàn trong danh sách niêm yết VCI -> tên chuẩn của tool
+EXCHANGE_NAMES = {"HSX": "HOSE", "HOSE": "HOSE", "HNX": "HNX", "UPCOM": "UPCOM"}
+# Mã loại doanh nghiệp của VCI (com_type_code) -> mô hình phân tích
+COM_TYPES = {"NH": "bank", "CK": "securities", "BH": "insurance"}
+# Dự phòng khi thiếu com_type_code: tên ngành ICB cấp 2
+INDUSTRY_MODELS = [(r"ngân hàng|^banks?$", "bank"),
+                   (r"dịch vụ tài chính|financial services", "securities"),
+                   (r"bảo hiểm|insurance", "insurance")]
+
+
+def _col(df: pd.DataFrame, *names: str) -> pd.Series | None:
+    for n in names:
+        if n in df.columns:
+            return df[n]
+    return None
+
+
+def standardize_listing(by_exchange: pd.DataFrame,
+                        by_industry: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Hai bảng của vnstock Listing -> symbol, name, exchange, industry, model (chỉ cổ phiếu)."""
+    df = by_exchange.copy()
+    kind = _col(df, "type")
+    if kind is not None:
+        df = df[kind.astype(str).str.upper() == "STOCK"]
+    out = pd.DataFrame({
+        "symbol": df["symbol"].astype(str).str.upper().str.strip(),
+        "exchange": _col(df, "exchange", "board", "comGroupCode").astype(str).str.upper()
+                    .map(EXCHANGE_NAMES),
+        "name": _col(df, "organ_name", "organ_short_name", "company_name"),
+    }).dropna(subset=["exchange"])
+    out["industry"] = None
+    out["model"] = "general"
+    if by_industry is not None and len(by_industry):
+        ind = by_industry.assign(symbol=by_industry["symbol"].astype(str).str.upper())
+        ind = ind.drop_duplicates("symbol").set_index("symbol")
+        name2 = _col(ind, "icb_name2", "industry", "icb_name")
+        if name2 is not None:
+            out["industry"] = out["symbol"].map(name2)
+            for pattern, model in INDUSTRY_MODELS:
+                hit = out["industry"].fillna("").str.contains(pattern, case=False, regex=True)
+                out.loc[hit, "model"] = model
+        com = _col(ind, "com_type_code")
+        if com is not None:
+            mapped = out["symbol"].map(com.astype(str).str.upper().map(COM_TYPES))
+            out["model"] = mapped.fillna(out["model"])
+        if out["name"].isna().all():
+            out["name"] = out["symbol"].map(_col(ind, "organ_name"))
+    return out.reset_index(drop=True)
+
+
+def _vnstock_listing() -> pd.DataFrame:
+    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
+    try:
+        from vnstock import Listing
+    except ImportError as e:
+        raise RuntimeError(
+            "Chưa cài vnstock. Chạy: pip install -U --extra-index-url "
+            "https://vnstocks.com/api/simple vnstock vnai"
+        ) from e
+    ls = Listing(source="VCI")
+    try:
+        by_industry = ls.symbols_by_industries()
+    except Exception:  # noqa: BLE001 - thiếu ngành vẫn dùng được sàn
+        by_industry = None
+    return standardize_listing(ls.symbols_by_exchange(), by_industry)
+
+
+def _vnstock_history(symbol: str, start: str, end: str) -> pd.DataFrame:
+    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
+    try:
+        from vnstock import Quote
+    except ImportError as e:
+        raise RuntimeError(
+            "Chưa cài vnstock. Chạy: pip install -U --extra-index-url "
+            "https://vnstocks.com/api/simple vnstock vnai"
+        ) from e
+    return Quote(symbol=symbol.upper(), source="VCI").history(start=start, end=end, interval="1D")
+
+
+INDEX_SYMBOLS = {"VNINDEX", "VN30", "HNXINDEX", "HNX30", "UPCOMINDEX"}
+
+
 class VnstockProvider(DataProvider):
     name = "vnstock-vci"
 
-    def __init__(self, get_statements: Callable[[str], dict[str, pd.DataFrame]] = _vnstock_statements):
+    def __init__(self, get_statements: Callable[[str], dict[str, pd.DataFrame]] = _vnstock_statements,
+                 get_listing: Callable[[], pd.DataFrame] = _vnstock_listing,
+                 get_history: Callable[[str, str, str], pd.DataFrame] = _vnstock_history):
         self.get_statements = get_statements   # thay được trong test, không cần mạng
+        self.get_listing = get_listing
+        self.get_history = get_history
+        self.repaired: list[str] = []
         self.missing: list[str] = []
 
     def symbols(self) -> list[str]:
-        return []
+        return self.listing()["symbol"].tolist()
+
+    def listing(self) -> pd.DataFrame:
+        """Mọi cổ phiếu trên HOSE, HNX, UPCoM: symbol, name, exchange, industry, model."""
+        return self.get_listing()
 
     def ohlcv(self, symbol, start=None, end=None):
-        raise NotImplementedError("Giá lấy bằng 'fetch' (CafeF); vnstock chỉ dùng cho BCTC")
+        """Giá ngày (VCI) theo PRICE_COLUMNS, đồng. VCI ghi cổ phiếu bằng nghìn đồng, chỉ số bằng
+        điểm. Nguồn dự phòng khi CafeF không có mã (lệnh analyze tự chọn)."""
+        from datetime import date, timedelta
+
+        end = end or date.today()
+        start = start or end - timedelta(days=365 * 5)
+        raw = self.get_history(symbol, str(start), str(end))
+        if raw is None or len(raw) == 0:
+            raise ValueError(f"vnstock không có giá {symbol.upper()} từ {start} đến {end}")
+        unit = "dong" if symbol.upper() in INDEX_SYMBOLS else "auto"
+        df = normalize_prices(raw, symbol, price_unit=unit, adjust=False)
+        df = df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))]
+        df = df.sort_values("date").drop_duplicates("date").reset_index(drop=True)
+        df, self.repaired = repair_ohlc(df)
+        return df
 
     def fundamentals(self, symbol: str) -> pd.DataFrame:
         """BCTC năm chuẩn hoá: symbol, year + FIELDS. Khoản không có thì NaN (xem self.missing)."""

@@ -8,7 +8,8 @@ pytest.importorskip("mcp")
 from vnsa import mcp_server as srv
 
 EXPECTED = {"list_symbols", "get_prices", "get_ratios", "get_valuation", "get_fa_score",
-            "get_technical", "get_trade_plan", "get_risk", "get_recommendations", "run_backtest"}
+            "get_technical", "get_trade_plan", "get_risk", "get_recommendations", "run_backtest",
+            "update_symbol", "analyze_symbol"}
 
 
 def test_all_tools_registered_with_schemas():
@@ -49,3 +50,26 @@ def test_call_through_protocol(warehouse):
     result = asyncio.run(srv.mcp.call_tool("get_prices", {"symbol": "DEMO_A", "sessions": 3}))
     text = json.dumps(result, default=str)
     assert "DEMO_A" in text
+
+
+def test_analyze_symbol_updates_first_and_keeps_stdout_clean(warehouse, monkeypatch, capsys):
+    from vnsa import analysis
+    from vnsa.data.autofetch import Step, UpdateReport
+
+    def fake_update(sym, refresh=False, **kw):
+        print("tiến trình tải")                      # stdout là kênh MCP: phải bị chuyển hướng
+        return UpdateReport(sym.upper(), [Step("giá", "ok", "thêm 1 phiên")], has_prices=True)
+
+    monkeypatch.setattr(analysis, "update", fake_update)
+    out = srv.analyze_symbol("demo_a")
+    json.dumps(out, allow_nan=False)
+    assert out["action"] in {"MUA", "THEO DÕI", "TRÁNH"} and out["profile"]["exchange"] == "HOSE"
+    assert out["data_update"] == ["✓ giá: thêm 1 phiên"]
+    up = srv.update_symbol("DEMO_A")
+    assert up["ready"] and up["steps"][0]["status"] == "ok"
+    captured = capsys.readouterr()
+    assert "tiến trình tải" not in captured.out and "tiến trình tải" in captured.err
+
+    monkeypatch.setattr(analysis, "update", lambda sym, refresh=False, **kw: UpdateReport(
+        sym.upper(), [Step("giá", "error", "Mã có đúng không?")]))
+    assert "Mã có đúng không" in srv.analyze_symbol("XYZ")["error"]
