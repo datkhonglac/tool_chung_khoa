@@ -1,0 +1,51 @@
+name: Kiểm định quy tắc thời điểm
+
+# Tải 10 năm giá cho rổ [study] universe + VNINDEX, so sánh các quy tắc thời điểm với mua & giữ
+# (chọn tham số 2016–2021, kiểm tra độc lập 2022 → nay). Kết quả in trong log và ở mục Artifacts.
+on:
+  push:                         # chạy một lần khi file này hoặc phần mô phỏng thay đổi
+    paths:
+      - ".github/workflows/study.yml"
+      - "src/vnsa/recommend/strategies.py"
+      - "src/vnsa/recommend/study.py"
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Các mã (bỏ trống = [study] universe trong settings)"
+        required: false
+        default: ""
+
+jobs:
+  study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      PYTHONUNBUFFERED: "1"
+      VNSTOCK_TELEMETRY: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+      - name: Lấy kho giá của lần kiểm định trước
+        uses: actions/cache/restore@v4
+        with:
+          path: data/warehouse.duckdb
+          key: study-${{ github.run_id }}
+          restore-keys: study-
+      - name: Kiểm định
+        run: python -m vnsa.cli study-timing ${{ inputs.symbols }}
+      - name: Lưu kho giá cho lần sau
+        if: always() && hashFiles('data/warehouse.duckdb') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/warehouse.duckdb
+          key: study-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kiem-dinh-thoi-diem
+          path: data/study/
+          if-no-files-found: ignore

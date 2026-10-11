@@ -405,6 +405,36 @@ def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | N
     return p
 
 
+def timing_study(symbols: list[str], split: str = "2022-01-01", start: str = "2016-01-01"):
+    """Kiểm định các quy tắc thời điểm trên danh mục `symbols` (recommend/study.py). Dùng giá trong
+    kho (cần đủ năm: lệnh study-timing --years 10 tự tải)."""
+    from vnsa import market
+    from vnsa.data.store import Store
+    from vnsa.recommend.study import study
+    from vnsa.ta.regime import regime_series
+    from vnsa.ta.score import ta_score_series
+
+    data, skipped = {}, []
+    weights = settings()["ta_score"]["weights"]
+    with Store(path("warehouse")) as store:
+        prices = {s: store.prices(s) for s in symbols}
+        index = store.prices(settings()["valuation"]["index"])
+    for s in symbols:
+        if len(prices[s]) < 300:
+            skipped.append(s)
+            continue
+        ind = indicators(prices[s])
+        data[s] = {"ind": ind, "score": ta_score_series(ind, weights, require_all=True),
+                   "band": market.band(s)}
+    if not data:
+        raise ValueError("không mã nào đủ dữ liệu giá")
+    data["__regime__"] = {"series": regime_series(index, settings().get("regime", {}))}
+    grid = tuple(settings().get("study", {}).get("atr_grid", (2.5, 3.0, 4.0)))
+    res = study(data, settings()["backtest"], split, start, grid)
+    res.skipped = skipped
+    return res
+
+
 def backtest_config(symbol: str) -> dict:
     """Tham số [backtest] kèm bước giá theo sàn của mã."""
     from vnsa import market

@@ -266,6 +266,24 @@ class Updater:
             return Step("khối ngoại", "error", "CafeF không có dữ liệu mã này")
         return Step("khối ngoại", "ok", f"{n} phiên (khối ngoại, tự doanh — CafeF)")
 
+    def long_prices(self, symbols: list[str], years: int) -> list[Step]:
+        """Chỉ tải GIÁ (kèm VNINDEX và danh sách sàn để biết biên độ) đủ `years` năm cho kiểm định
+        nhiều mã (lệnh study-timing); mã đã có đủ thì chỉ tải phần mới."""
+        steps = []
+        cfg_years = self.cfg.get("years")
+        self.cfg = {**self.cfg, "years": years}
+        want = pd.Timestamp(self.now().date()) - pd.Timedelta(days=round(365.25 * years) - 30)
+        try:
+            with Store(path("warehouse")) as store:
+                steps.append(self._listing(store, False))
+                for sym in [*symbols, self.index]:
+                    have = store.prices(sym)
+                    short = have.empty or have["date"].min() > want
+                    steps.append(self._prices(store, sym, sym, full=short))
+        finally:
+            self.cfg = {**self.cfg, "years": cfg_years}
+        return steps
+
     # ---- điểm vào ----------------------------------------------------------------------------
     def ensure(self, symbol: str, refresh: bool = False, full: bool = False) -> UpdateReport:
         """Bảo đảm kho có dữ liệu mới cho `symbol`. refresh: tải lại BCTC và danh sách dù chưa cũ;

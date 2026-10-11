@@ -766,6 +766,34 @@ def cmd_review_signals(args) -> int:
     return 0
 
 
+def cmd_study_timing(args) -> int:
+    """Kiểm định các quy tắc thời điểm trên nhiều mã, nhiều năm (recommend/study.py)."""
+    from vnsa import analysis
+    from vnsa.recommend.study import format_study
+
+    cfg = settings()["study"]
+    syms = [s.upper() for s in args.symbols] or cfg["universe"]
+    if not args.no_fetch:
+        from vnsa.data.autofetch import Updater
+
+        print(f"Tải giá {args.years or cfg['years']} năm cho {len(syms)} mã + VNINDEX ...")
+        for step in Updater().long_prices(syms, args.years or cfg["years"]):
+            print(step)
+    try:
+        res = analysis.timing_study(syms, cfg["split"], cfg["start"])
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    text = format_study(res)
+    print("\n" + text)
+    out = path("warehouse").parent / "study"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "timing_study.txt").write_text(text, encoding="utf-8")
+    res.table.to_csv(out / "timing_study.csv", index=False)
+    print(f"\nĐã lưu {out / 'timing_study.txt'} và timing_study.csv")
+    return 0
+
+
 def cmd_history(args) -> int:
     """Lưu/nạp lịch sử khuyến nghị và BCTC năm/quý tích luỹ (history.py)."""
     from vnsa import history
@@ -922,6 +950,12 @@ def main(argv: list[str] | None = None) -> int:
                      help="Cập nhật giá các mã này trước khi chấm (để có phiên mới)")
     prv.add_argument("--detail", action="store_true", help="In từng khuyến nghị")
     prv.set_defaults(func=cmd_review_signals)
+
+    pst = sub.add_parser("study-timing", help="Kiểm định quy tắc thời điểm trên nhiều mã, 10 năm")
+    pst.add_argument("symbols", nargs="*", help="Bỏ trống = [study] universe trong settings")
+    pst.add_argument("--years", type=int, help="Số năm giá cần có (mặc định [study] years)")
+    pst.add_argument("--no-fetch", action="store_true", help="Không tải, chỉ dùng giá trong kho")
+    pst.set_defaults(func=cmd_study_timing)
 
     ph = sub.add_parser("history", help="Lưu/nạp lịch sử khuyến nghị và BCTC tích luỹ")
     ph.add_argument("action", choices=["export", "import"])

@@ -172,6 +172,17 @@ horizons = [5, 20, 60]      # số phiên để chấm lại khuyến nghị (l�
 # Mã workflow hằng ngày (.github/workflows/daily.yml) phân tích và lưu khuyến nghị vào nhánh `signals`
 daily = ["FPT", "HPG", "MWG", "VNM", "DGC", "VCB", "TCB", "MBB", "SSI", "ACV", "TNG", "GMD"]
 
+[study]
+# Kiểm định quy tắc thời điểm (lệnh study-timing, recommend/study.py): VN30 + một số mã vừa
+universe = ["ACB", "BID", "BVH", "CTG", "FPT", "GAS", "HDB", "HPG", "MBB", "MSN", "MWG", "PLX",
+            "POW", "SAB", "SSI", "STB", "TCB", "TPB", "VCB", "VHM", "VIC", "VJC", "VNM", "VPB",
+            "VRE", "SHB", "DGC", "PNJ", "REE", "GMD", "DPM", "DCM", "KDH", "NLG", "HSG", "PVD",
+            "PVS", "VND", "HCM", "KBC", "DIG", "DXG", "NKG", "FRT", "CTD"]
+years = 10                  # số năm giá tải cho kiểm định
+start = "2016-01-01"        # giai đoạn chọn tham số: từ ngày này đến trước `split`
+split = "2022-01-01"        # giai đoạn kiểm tra độc lập: từ ngày này đến nay
+atr_grid = [2.5, 3.0, 4.0]  # hệ số cắt lỗ động thử ở giai đoạn chọn tham số
+
 [risk]
 garch_window = 1000         # số phiên gần nhất dùng ước lượng GARCH
 var_window = 750            # số phiên cho VaR lịch sử
