@@ -4,6 +4,10 @@
   python -m vnsa.cli fetch-bctc       # tải BCTC năm (vnstock/VCI) của danh sách theo dõi vào kho
   python -m vnsa.cli ratios FPT       # bộ chỉ số tài chính năm: ROE, ROA, biên LN, D/E, CFO/LNST, EPS
   python -m vnsa.cli value FPT        # định giá: beta, WACC, DCF-FCFF, P/E, P/B, ma trận độ nhạy
+  python -m vnsa.cli fa-score FPT     # Piotroski F-Score, Altman Z, điểm FA 0–100
+  python -m vnsa.cli ta FPT           # chỉ báo kỹ thuật, hỗ trợ/kháng cự, điểm TA 0–100
+  python -m vnsa.cli plan FPT         # kế hoạch mua: giá vào, cắt lỗ theo ATR, mục tiêu, khối lượng
+  python -m vnsa.cli risk FPT         # GARCH, Monte Carlo P10–P90, VaR/CVaR
   python -m vnsa.cli import-excel FPT  # ghép data/raw/excel/FPT/*.xlsx -> data/raw/prices/FPT.csv rồi nạp
   python -m vnsa.cli load            # nạp mọi CSV trong data/raw/prices vào DuckDB
   python -m vnsa.cli load --sample   # nạp dữ liệu MẪU (giả lập) để chạy thử
@@ -15,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 
 from vnsa.config import PROJECT_ROOT, path, settings
@@ -171,35 +176,66 @@ def cmd_ratios(args) -> int:
     return 0
 
 
-def cmd_value(args) -> int:
-    import pandas as pd
+def _nan(x) -> bool:
+    return x is None or (isinstance(x, float) and math.isnan(x))
 
+
+def _bn(x: float) -> str:
+    return "—" if _nan(x) else f"{x / 1e9:,.0f} tỷ"
+
+
+def _pct(x: float, digits: int = 1) -> str:
+    return "—" if _nan(x) else f"{x:.{digits}%}"
+
+
+def _num(x: float, digits: int = 0) -> str:
+    return "—" if _nan(x) else f"{x:,.{digits}f}"
+
+
+def _load(sym: str, need_fin: bool = True, need_prices: bool = True):
+    """(BCTC, giá, giá chỉ số) từ kho; báo lệnh cần chạy nếu thiếu."""
     from vnsa.data.store import Store
-    from vnsa.fa import valuation as val
 
-    sym = args.symbol.upper()
-    a = val.Assumptions.from_settings(settings()["valuation"])
     with Store(path("warehouse")) as store:
         fin = store.fundamentals(sym)
         prices = store.prices(sym)
         index = store.prices(settings()["valuation"]["index"])
-    if fin.empty or prices.empty:
-        print(f"{sym}: cần cả giá và BCTC trong kho. Chạy 'fetch {sym}' và 'fetch-bctc {sym}' trước.")
-        return 1
+    if (need_fin and fin.empty) or (need_prices and prices.empty):
+        steps = [f"'{c} {sym}'" for c, miss in (("fetch", need_prices and prices.empty),
+                                                ("fetch-bctc", need_fin and fin.empty)) if miss]
+        print(f"{sym}: kho chưa có đủ dữ liệu. Chạy {' và '.join(steps)} trước.")
+        return None
+    return fin, prices, index
+
+
+def _valuation(sym, fin, prices, index, growth=None, wacc=None):
+    """(Assumptions, Valuation, beta thô) cho mã; ValueError nếu không định giá được."""
+    from vnsa.fa import valuation as val
+
+    a = val.Assumptions.from_settings(settings()["valuation"])
     b, weeks = (val.beta(prices, index, a.beta_years) if not index.empty else (float("nan"), 0))
     price = float(prices["close"].iloc[-1])
+    v = val.value(sym, fin, price, a, beta_value=b, beta_weeks=weeks, g1=growth, wacc_override=wacc)
+    return a, v, b
+
+
+def cmd_value(args) -> int:
+    import pandas as pd
+
+    from vnsa.fa import valuation as val
+
+    sym = args.symbol.upper()
+    loaded = _load(sym)
+    if loaded is None:
+        return 1
+    fin, prices, index = loaded
     try:
-        v = val.value(sym, fin, price, a, beta_value=b, beta_weeks=weeks,
-                      g1=args.growth, wacc_override=args.wacc)
+        a, v, b = _valuation(sym, fin, prices, index, args.growth, args.wacc)
     except ValueError as e:
         print(f"  ✗ {e}")
         return 1
-
-    def bn(x: float) -> str:
-        return "—" if pd.isna(x) else f"{x / 1e9:,.0f} tỷ"
-
-    def pct(x: float) -> str:
-        return "—" if pd.isna(x) else f"{x:.1%}"
+    price = v.price
+    bn, pct = _bn, _pct
 
     day = prices["date"].iloc[-1].date()
     print(f"{sym} — giá {price:,.0f} đ ({day}), {v.shares / 1e6:,.1f} triệu cp, "
@@ -234,6 +270,214 @@ def cmd_value(args) -> int:
         t.index = [pct(w) for w in t.index]
         t.columns = [pct(g) for g in t.columns]
         print(t.to_string())
+    return 0
+
+
+def cmd_fa_score(args) -> int:
+    import pandas as pd
+
+    from vnsa.fa import scores as sc
+
+    sym = args.symbol.upper()
+    loaded = _load(sym, need_prices=False)
+    if loaded is None:
+        return 1
+    fin, prices, index = loaded
+    pe = pb = upside = float("nan")
+    if not prices.empty:
+        try:
+            _, v, _ = _valuation(sym, fin, prices, index)
+            pe, pb, upside = v.pe, v.pb, v.upside
+        except ValueError as e:
+            print(f"  ! không định giá được ({e}); bỏ nhóm định giá")
+    par = settings()["valuation"]["par_value"]
+    f = sc.piotroski(fin)
+    z = sc.altman(fin, sc.year_end_market_caps(fin, prices, par))
+
+    print(f"{sym} — chất lượng tài chính (BCTC năm {int(fin['year'].iloc[0])}–"
+          f"{int(fin['year'].iloc[-1])})")
+    print("\nPiotroski F-Score (1 = đạt, 0 = không đạt, — = thiếu số liệu)")
+    t = f.set_index("year")[list(sc.FSCORE_CRITERIA) + ["f_score"]].T
+    t.index = [*sc.FSCORE_CRITERIA.values(), "F-Score (/9)"]
+    print(t.map(lambda x: "—" if pd.isna(x) else f"{x:.0f}").to_string())
+
+    print("\nAltman Z")
+    zt = z.set_index("year")[["z_em", "z_orig"]]
+    for y, row in zt.iterrows():
+        print(f"  {y}: Z'' = {_num(row['z_em'], 2)} ({sc.z_zone(row['z_em'])})"
+              f" · Z gốc = {_num(row['z_orig'], 2)} ({sc.z_zone(row['z_orig'], 'orig')})")
+    print("  Z'' dùng cho mọi ngành (chuẩn thị trường mới nổi); Z gốc chỉ hợp với DN sản xuất.")
+
+    s = sc.fa_score(fin, settings()["fa_score"], pe=pe, pb=pb, dcf_upside=upside)
+    names = {"sinh_loi": "Sinh lời", "tang_truong": "Tăng trưởng", "suc_khoe": "Sức khoẻ TC",
+             "chat_luong": "Chất lượng LN", "dinh_gia": "Định giá"}
+    labels = {"roe": ("ROE", "pct"), "ni_cagr": ("Tăng trưởng kép LNST cty mẹ", "pct"),
+              "z_em": ("Altman Z''", "x"), "debt_to_equity": ("Vay/VCSH", "x"),
+              "f_score": ("F-Score", "x0"), "cfo_to_ni": ("CFO/LNST TB 3 năm", "x"),
+              "pe": ("P/E", "x1"), "pb": ("P/B", "x"), "dcf_upside": ("Chênh lệch DCF", "pct")}
+    print(f"\nĐiểm FA: {_num(s.total)}/100 — {s.rating}")
+    for g, keys in sc.GROUPS.items():
+        w = settings()["fa_score"]["weights"][g]
+        print(f"  {names[g]} ({w}%): {_num(s.groups[g])}")
+        for k in keys:
+            val_, pts = s.items[k]
+            label, kind = labels[k]
+            shown = (_pct(val_) if kind == "pct" else _num(val_, 0 if kind == "x0" else
+                                                            1 if kind == "x1" else 2))
+            print(f"      {label}: {shown} → {_num(pts)} điểm")
+    for n in s.notes:
+        print(f"  ! {n}")
+    return 0
+
+
+def _indicators(prices):
+    from vnsa.ta.indicators import add_indicators
+
+    return add_indicators(prices, settings()["ta"])
+
+
+def cmd_ta(args) -> int:
+    from vnsa.ta.levels import support_resistance
+    from vnsa.ta.score import ta_score
+
+    sym = args.symbol.upper()
+    loaded = _load(sym, need_fin=False)
+    if loaded is None:
+        return 1
+    ind = _indicators(loaded[1])
+    if len(ind) < 220:
+        print(f"{sym}: cần ít nhất 220 phiên để tính SMA200, mới có {len(ind)}.")
+        return 1
+    cfg = settings()["ta"]
+    last = ind.iloc[-1]
+    s = ta_score(ind, settings()["ta_score"]["weights"])
+    sup, res = support_resistance(ind, cfg["swing_window"], cfg["lookback"], cfg["level_tolerance"])
+    close = last["close"]
+
+    def vs(x):
+        return "—" if _nan(x) else f"{_num(x)} ({close / x - 1:+.1%})"
+
+    print(f"{sym} — kỹ thuật phiên {last['date']:%d/%m/%Y}, giá {close:,.0f} đ")
+    print(f"  SMA20 {vs(last['sma20'])} · SMA50 {vs(last['sma50'])} · SMA200 {vs(last['sma200'])}")
+    print(f"  RSI14 {_num(last['rsi'], 1)} · MACD {_num(last['macd'])} / tín hiệu "
+          f"{_num(last['macd_signal'])} (histogram {_num(last['macd_hist'])})")
+    print(f"  Bollinger {_num(last['bb_lower'])}–{_num(last['bb_upper'])} (%B {_num(last['bb_pctb'], 2)})"
+          f" · ATR14 {_num(last['atr'])} ({last['atr'] / close:.1%} giá)")
+    print(f"  ADX {_num(last['adx'], 1)} (+DI {_num(last['plus_di'], 1)}, −DI {_num(last['minus_di'], 1)})"
+          f" · KL TB20 {_num(last['vol_ma20'])} / TB50 {_num(last['vol_ma50'])}")
+    print(f"\nHỗ trợ ({cfg['lookback']} phiên gần nhất): "
+          + ("; ".join(str(lv) for lv in sup[:3]) or "không có"))
+    print("Kháng cự: " + ("; ".join(str(lv) for lv in res[:3]) or "không có (giá ở vùng đỉnh)"))
+    names = {"xu_huong": "Xu hướng", "dong_luong": "Động lượng", "suc_manh": "Sức mạnh (ADX)",
+             "dong_tien": "Dòng tiền (KL)"}
+    print(f"\nĐiểm TA: {_num(s.total)}/100 — {s.rating}")
+    print("  " + " · ".join(f"{names[g]} {_num(x)}" for g, x in s.groups.items()))
+    return 0
+
+
+def _plan(ind):
+    from vnsa.ta.levels import support_resistance
+    from vnsa.ta.plan import trade_plan
+
+    cfg = settings()["ta"]
+    sup, res = support_resistance(ind, cfg["swing_window"], cfg["lookback"], cfg["level_tolerance"])
+    last = ind.iloc[-1]
+    plan_cfg = settings()["plan"]
+    return trade_plan(float(last["close"]), float(last["atr"]), sup, res, plan_cfg,
+                      plan_cfg.get("ticks"))
+
+
+def cmd_plan(args) -> int:
+    from vnsa.ta.score import ta_score
+
+    sym = args.symbol.upper()
+    loaded = _load(sym, need_fin=False)
+    if loaded is None:
+        return 1
+    ind = _indicators(loaded[1])
+    try:
+        p = _plan(ind)
+    except ValueError as e:
+        print(f"  ✗ {sym}: {e}")
+        return 1
+    s = ta_score(ind, settings()["ta_score"]["weights"]) if len(ind) >= 220 else None
+    print(f"{sym} — kế hoạch mua tham khảo (giá đóng cửa {ind['date'].iloc[-1]:%d/%m/%Y})")
+    print(f"  Giá vào   {p.entry:,.0f}")
+    print(f"  Cắt lỗ    {p.stop:,.0f} ({p.stop_pct:+.1%}; {p.stop_source}; ATR14 = {p.atr:,.0f})")
+    for i, t in enumerate(p.targets, 1):
+        print(f"  Mục tiêu {i} {t.price:,.0f} ({t.price / p.entry - 1:+.1%}; {t.reward_risk:.1f}R; "
+              f"{t.source})")
+    print(f"  Khối lượng {p.shares:,} cp ≈ {p.position_value / 1e6:,.1f} triệu "
+          f"({p.position_value / p.capital:.0%} vốn {p.capital / 1e6:,.0f} triệu); "
+          f"lỗ tối đa {p.max_loss / 1e6:,.2f} triệu (giới hạn {p.risk_budget / 1e6:,.2f} triệu)")
+    if s is not None:
+        print(f"  Điểm TA {_num(s.total)}/100 ({s.rating})"
+              + ("; xu hướng chưa ủng hộ, cân nhắc chờ" if s.total < 45 else ""))
+    for n in p.notes:
+        print(f"  ! {n}")
+    print("  Đây là kế hoạch tính theo quy tắc, không phải khuyến nghị đầu tư.")
+    return 0
+
+
+def cmd_risk(args) -> int:
+    from vnsa.risk.garch import fit_garch, log_returns_pct
+    from vnsa.risk.simulate import garch_var, historical_var, simulate
+
+    sym = args.symbol.upper()
+    loaded = _load(sym, need_fin=False)
+    if loaded is None:
+        return 1
+    prices = loaded[1]
+    cfg = settings()["risk"]
+    close = prices["close"]
+    try:
+        fit = fit_garch(log_returns_pct(close.tail(cfg["garch_window"] + 1)))
+    except ValueError as e:
+        print(f"  ✗ {sym}: {e}")
+        return 1
+    p0 = float(close.iloc[-1])
+    hist_vol = float(close.pct_change().tail(250).std() * 252 ** 0.5)
+    print(f"{sym} — rủi ro, giá {p0:,.0f} đ ({prices['date'].iloc[-1]:%d/%m/%Y})")
+    print(f"\nGARCH(1,1) trên {len(fit.resid)} phiên: alpha {fit.alpha:.3f}, beta {fit.beta:.3f}, "
+          f"bền vững {fit.persistence:.3f} (cú sốc giảm một nửa sau ~{fit.half_life:.1f} phiên)"
+          + ("" if fit.converged else " — ! tối ưu chưa hội tụ"))
+    print(f"  Biến động năm: hiện tại {fit.current_vol_annual:.1%} · dài hạn "
+          f"{fit.long_run_vol_annual:.1%} · lịch sử 1 năm {hist_vol:.1%}")
+
+    print("\nVaR 1 ngày (lỗ tối đa với xác suất tin cậy):")
+    for q in cfg["confidence"]:
+        hv, cv = historical_var(close, q, cfg["var_window"])
+        print(f"  {q:.0%}: lịch sử {hv:.2%} (CVaR {cv:.2%}) · GARCH {garch_var(fit, q):.2%}")
+
+    band = settings()["market"]["band_hose"]
+    plan = None
+    if len(prices) >= 30:
+        try:
+            plan = _plan(_indicators(prices))
+        except ValueError:
+            plan = None
+    horizons = [args.days] if args.days else cfg["horizons"]
+    sim = simulate(fit, p0, max(horizons), n_paths=args.paths or cfg["n_paths"], band=band,
+                   bootstrap=cfg["bootstrap"], seed=cfg["seed"])
+    print(f"\nMonte Carlo {sim.paths.shape[0]:,} đường (FHS, chặn biên độ ±{band:.0%}/phiên):")
+    for h in sorted(horizons):
+        pc = sim.percentiles(h)
+        print(f"  Sau {h} phiên: " + " · ".join(f"P{k} {v:,.0f}" for k, v in pc.items()))
+        print(f"      xác suất cao hơn giá hiện tại {sim.prob_above(day=h):.0%} · VaR "
+              + " · ".join(f"{q:.0%} {sim.var(q, h):.1%}" for q in cfg["confidence"]))
+    if plan and plan.targets:
+        h = max(horizons)
+        sub = type(sim)(sim.start_price, sim.paths[:, : h + 1])
+        ft = sub.first_touch(plan.stop, plan.targets[0].price)
+        print(f"\nTheo kế hoạch (cắt lỗ {plan.stop:,.0f}, mục tiêu 1 {plan.targets[0].price:,.0f}) "
+              f"trong {h} phiên: chạm mục tiêu trước {ft['target']:.0%} · chạm cắt lỗ trước "
+              f"{ft['stop']:.0%} · chưa chạm {ft['neither']:.0%}")
+        if plan.shares:
+            q = cfg["confidence"][0]
+            loss = historical_var(close, q, cfg["var_window"])[0] * plan.position_value
+            print(f"  Vị thế {plan.shares:,} cp ({plan.position_value / 1e6:,.1f} triệu): "
+                  f"VaR {q:.0%} 1 ngày ≈ {loss / 1e6:,.2f} triệu")
+    print("  Mô phỏng dựa trên biến động quá khứ, không dự báo được sự kiện bất thường.")
     return 0
 
 
@@ -321,6 +565,24 @@ def main(argv: list[str] | None = None) -> int:
                     "CAGR LNST cty mẹ, tối đa max_stage1_growth)")
     pv.add_argument("--wacc", type=float, help="Dùng WACC này thay vì tự tính, vd 0.13")
     pv.set_defaults(func=cmd_value)
+
+    pfa = sub.add_parser("fa-score", help="Piotroski F-Score, Altman Z, điểm FA 0–100")
+    pfa.add_argument("symbol")
+    pfa.set_defaults(func=cmd_fa_score)
+
+    pta = sub.add_parser("ta", help="Chỉ báo kỹ thuật, hỗ trợ/kháng cự, điểm TA 0–100")
+    pta.add_argument("symbol")
+    pta.set_defaults(func=cmd_ta)
+
+    ppl = sub.add_parser("plan", help="Kế hoạch mua: giá vào, cắt lỗ theo ATR, mục tiêu, khối lượng")
+    ppl.add_argument("symbol")
+    ppl.set_defaults(func=cmd_plan)
+
+    prk = sub.add_parser("risk", help="GARCH, Monte Carlo P10–P90, VaR/CVaR")
+    prk.add_argument("symbol")
+    prk.add_argument("--days", type=int, help="Số phiên mô phỏng (mặc định: horizons trong settings)")
+    prk.add_argument("--paths", type=int, help="Số đường mô phỏng (mặc định: n_paths trong settings)")
+    prk.set_defaults(func=cmd_risk)
 
     pc = sub.add_parser("check", help="Kiểm tra chất lượng dữ liệu")
     pc.add_argument("symbol")

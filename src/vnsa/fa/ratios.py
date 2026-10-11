@@ -45,6 +45,11 @@ FIELDS = [
     "cash",               # tiền và tương đương tiền
     "short_term_investments",  # đầu tư tài chính ngắn hạn (chủ yếu tiền gửi có kỳ hạn)
     "paid_in_capital",    # vốn góp của chủ sở hữu (mệnh giá 10.000 đ/cp -> số cổ phiếu)
+    # Dùng cho F-Score, Altman Z (ngày 4).
+    "current_assets",     # tài sản ngắn hạn
+    "current_liabilities",  # nợ ngắn hạn
+    "retained_earnings",  # lợi nhuận sau thuế chưa phân phối
+    "equity_issued",      # tiền thu từ phát hành cổ phiếu, góp vốn (lưu chuyển tiền tài chính)
 ]
 
 RATIO_COLUMNS = [

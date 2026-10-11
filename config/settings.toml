@@ -35,3 +35,65 @@ default_beta = 1.0
 beta_years = 3
 adjust_beta = true             # beta Blume = 0,67 × beta thô + 0,33
 par_value = 10000              # mệnh giá cổ phiếu (đồng)
+
+[fa_score]
+# Điểm FA 0–100. Mỗi chỉ tiêu quy về 0–100 tuyến tính giữa [mức xấu, mức tốt].
+[fa_score.weights]
+sinh_loi = 25        # ROE
+tang_truong = 20     # tăng trưởng kép LNST cty mẹ
+suc_khoe = 20        # Altman Z'', vay/VCSH
+chat_luong = 15      # Piotroski F-Score, CFO/LNST trung bình 3 năm
+dinh_gia = 20        # P/E, P/B, chênh lệch DCF
+
+[fa_score.thresholds]
+roe = [0.05, 0.25]
+ni_cagr = [0.0, 0.20]
+z_em = [1.1, 2.6]
+debt_to_equity = [1.5, 0.3]   # số nhỏ là tốt
+f_score = [2, 8]
+cfo_to_ni = [0.5, 1.0]
+pe = [25, 8]
+pb = [4.0, 1.0]
+dcf_upside = [-0.2, 0.3]
+
+[ta]
+# Độ dài các chỉ báo kỹ thuật (phiên)
+sma = [20, 50, 200]
+rsi = 14
+macd = [12, 26, 9]
+bollinger = [20, 2.0]
+atr = 14
+adx = 14
+volume_ma = [20, 50]
+# Hỗ trợ/kháng cự: đỉnh/đáy cục bộ trong ±swing_window phiên, xét lookback phiên gần nhất,
+# gom các mức chênh nhau không quá level_tolerance
+swing_window = 5
+lookback = 250
+level_tolerance = 0.02
+
+[ta_score.weights]
+xu_huong = 40
+dong_luong = 30
+suc_manh = 15
+dong_tien = 15
+
+[plan]
+capital = 100_000_000       # vốn dùng để tính khối lượng (đồng)
+risk_per_trade = 0.01       # rủi ro tối đa mỗi lệnh: 1% vốn
+atr_stop = 2.0              # cắt lỗ = giá vào − 2 × ATR14
+max_stop_atr = 3.0          # chỉ dời cắt lỗ xuống dưới hỗ trợ nếu hỗ trợ cách giá vào ≤ 3 ATR
+support_buffer_atr = 0.5    # đặt cắt lỗ dưới hỗ trợ 0,5 ATR
+reward_multiples = [2.0, 3.0]
+min_reward_risk = 2.0
+lot_size = 100
+# Bước giá HOSE: giá ≥ ngưỡng -> bước giá (đồng)
+ticks = [[0, 10], [10_000, 50], [50_000, 100]]
+
+[risk]
+garch_window = 1000         # số phiên gần nhất dùng ước lượng GARCH
+var_window = 750            # số phiên cho VaR lịch sử
+confidence = [0.95, 0.99]
+horizons = [20, 60]         # số phiên mô phỏng (≈ 1 tháng, 3 tháng)
+n_paths = 10000
+bootstrap = true            # rút phần dư thật (true) hay phân phối chuẩn (false)
+seed = 42

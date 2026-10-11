@@ -64,6 +64,15 @@ jobs:
       - name: Định giá từng mã
         if: ${{ !inputs.skip_prices }}
         run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli value $s; echo; done
+      - name: Điểm FA (F-Score, Altman Z)
+        if: ${{ !inputs.skip_prices }}
+        run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli fa-score $s; echo; done
+      - name: Kỹ thuật và kế hoạch giao dịch
+        if: ${{ !inputs.skip_prices }}
+        run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli ta $s; echo; python -m vnsa.cli plan $s; echo; done
+      - name: Rủi ro (GARCH, Monte Carlo, VaR)
+        if: ${{ !inputs.skip_prices }}
+        run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli risk $s; echo; done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

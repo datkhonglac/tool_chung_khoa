@@ -1,0 +1,118 @@
+"""Kế hoạch giao dịch mua (chỉ chiều mua, vì nhà đầu tư cá nhân VN không bán khống được).
+
+Quy tắc (tham số ở mục [plan] trong settings):
+- Giá vào = giá đóng cửa phiên gần nhất (làm tròn theo bước giá HOSE).
+- Cắt lỗ = giá vào − `atr_stop` × ATR14. Nếu có hỗ trợ gần trong khoảng `max_stop_atr` × ATR dưới
+  giá vào, đặt cắt lỗ dưới hỗ trợ đó `support_buffer_atr` × ATR (để không bị quét ngay trên hỗ trợ).
+  Làm tròn XUỐNG theo bước giá.
+- Rủi ro mỗi cp R = giá vào − cắt lỗ. Mục tiêu: các kháng cự phía trên có lãi/lỗ ≥ 1R (tối đa 2),
+  thiếu thì bổ sung giá vào + k × R với k trong `reward_multiples`.
+- Khối lượng: rủi ro tối đa = vốn × `risk_per_trade`; số cp = rủi ro tối đa / R, làm tròn xuống
+  lô 100 cp, không vượt quá số vốn (không dùng margin).
+- Lưu ý T+2: cổ phiếu mua hôm nay chiều T+2 mới về tài khoản, trước đó không bán (cắt lỗ) được.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+
+import pandas as pd
+
+from vnsa.ta.levels import Level
+
+DEFAULT_TICKS = [[0, 10], [10_000, 50], [50_000, 100]]   # HOSE: giá ≥ ngưỡng -> bước giá
+
+
+def tick_size(price: float, ticks: list[list[float]] | None = None) -> float:
+    size = 10.0
+    for threshold, step in ticks or DEFAULT_TICKS:
+        if price >= threshold:
+            size = step
+    return float(size)
+
+
+def round_tick(price: float, mode: str = "nearest", ticks: list[list[float]] | None = None) -> float:
+    step = tick_size(price, ticks)
+    f = {"nearest": round, "down": math.floor, "up": math.ceil}[mode]
+    return float(f(price / step) * step)
+
+
+@dataclass
+class Target:
+    price: float
+    reward_risk: float
+    source: str        # "kháng cự" hoặc "k×R"
+
+
+@dataclass
+class TradePlan:
+    entry: float
+    stop: float
+    stop_source: str
+    atr: float
+    targets: list[Target]
+    shares: int
+    capital: float
+    risk_budget: float
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def risk_per_share(self) -> float:
+        return self.entry - self.stop
+
+    @property
+    def position_value(self) -> float:
+        return self.shares * self.entry
+
+    @property
+    def max_loss(self) -> float:
+        return self.shares * self.risk_per_share
+
+    @property
+    def stop_pct(self) -> float:
+        return self.stop / self.entry - 1
+
+
+def trade_plan(close: float, atr: float, supports: list[Level], resistances: list[Level],
+               cfg: dict, ticks: list[list[float]] | None = None) -> TradePlan:
+    if pd.isna(atr) or atr <= 0:
+        raise ValueError("chưa đủ dữ liệu để tính ATR")
+    entry = round_tick(close, "nearest", ticks)
+    stop, source = entry - cfg["atr_stop"] * atr, f"{cfg['atr_stop']:g} × ATR"
+    near = [s for s in supports if entry - cfg["max_stop_atr"] * atr <= s.price < entry]
+    if near:
+        stop = near[0].price - cfg["support_buffer_atr"] * atr
+        source = f"dưới hỗ trợ {near[0].price:,.0f}"
+    stop = round_tick(stop, "down", ticks)
+    risk = entry - stop
+    notes = []
+
+    targets = [Target(round_tick(r.price, "nearest", ticks), (r.price - entry) / risk, "kháng cự")
+               for r in resistances if r.price - entry >= risk][:2]
+    if not resistances:
+        notes.append("giá đang ở vùng cao nhất của giai đoạn xét, chưa có kháng cự phía trên")
+    for k in cfg["reward_multiples"]:
+        if len(targets) >= 2:
+            break
+        price = round_tick(entry + k * risk, "nearest", ticks)
+        if all(abs(price - t.price) > tick_size(price, ticks) for t in targets):
+            targets.append(Target(price, k, f"{k:g}R"))
+    targets.sort(key=lambda t: t.price)
+    if targets and targets[0].reward_risk < cfg.get("min_reward_risk", 2):
+        notes.append(f"mục tiêu đầu chỉ {targets[0].reward_risk:.1f}R, thấp hơn mức tối thiểu "
+                     f"{cfg.get('min_reward_risk', 2):g}R")
+
+    capital = float(cfg["capital"])
+    budget = capital * cfg["risk_per_trade"]
+    lot = int(cfg.get("lot_size", 100))
+    shares = int(budget / risk // lot * lot)
+    max_by_cash = int(capital / entry // lot * lot)
+    if shares > max_by_cash:
+        shares = max_by_cash
+        notes.append("khối lượng bị giới hạn bởi số vốn (không dùng margin)")
+    if shares == 0:
+        notes.append("vốn/rủi ro cho phép không đủ mua 1 lô 100 cp")
+    notes.append("T+2: cổ phiếu mua hôm nay chiều T+2 mới về, trước đó chưa bán cắt lỗ được")
+    return TradePlan(entry=entry, stop=stop, stop_source=source, atr=atr, targets=targets,
+                     shares=shares, capital=capital, risk_budget=budget, notes=notes)

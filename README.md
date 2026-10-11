@@ -117,6 +117,21 @@ Giả định (lãi suất phi rủi ro, phần bù rủi ro, tăng trưởng d�
 `config/settings.toml`; cách tính ghi ở đầu file `src/vnsa/fa/valuation.py`. Kết quả DCF rất nhạy
 với giả định, hãy xem ma trận độ nhạy thay vì chỉ một con số.
 
+## 6. Điểm FA, kỹ thuật, kế hoạch giao dịch, rủi ro (ngày 4–6)
+
+```bash
+python -m vnsa.cli fa-score FPT   # Piotroski F-Score, Altman Z, điểm FA 0–100
+python -m vnsa.cli ta FPT         # SMA, RSI, MACD, Bollinger, ATR, ADX; hỗ trợ/kháng cự; điểm TA
+python -m vnsa.cli plan FPT       # giá vào, cắt lỗ theo ATR, mục tiêu, khối lượng theo 1% rủi ro
+python -m vnsa.cli risk FPT       # GARCH(1,1), Monte Carlo P10–P90, VaR/CVaR
+python -m vnsa.cli risk FPT --days 40 --paths 20000
+```
+
+Ngưỡng chấm điểm, vốn, % rủi ro mỗi lệnh, hệ số ATR, số đường mô phỏng... nằm ở các mục
+`[fa_score]`, `[ta]`, `[ta_score]`, `[plan]`, `[risk]` trong `config/settings.toml`. Công thức ghi ở
+đầu từng file trong `src/vnsa/fa/scores.py`, `src/vnsa/ta/` và `src/vnsa/risk/`.
+Kế hoạch giao dịch là kết quả tính theo quy tắc, không phải khuyến nghị đầu tư.
+
 ## Ý nghĩa các kết quả kiểm tra
 
 | Mã | Mức | Ý nghĩa |
@@ -145,6 +160,12 @@ src/vnsa/
   data/providers/vnstock_provider.py  BCTC năm qua vnstock (VCI)
   fa/ratios.py                bộ chỉ số tài chính
   fa/valuation.py             WACC, DCF-FCFF, P/E, P/B, độ nhạy
+  fa/scores.py                Piotroski F-Score, Altman Z, điểm FA
+  ta/indicators.py            chỉ báo kỹ thuật
+  ta/levels.py, ta/score.py   hỗ trợ/kháng cự, điểm TA
+  ta/plan.py                  kế hoạch giao dịch (cắt lỗ ATR, khối lượng, bước giá HOSE)
+  risk/garch.py               GARCH(1,1)
+  risk/simulate.py            Monte Carlo, VaR, CVaR
   report/charts.py            biểu đồ nến
   cli.py                      dòng lệnh
 scripts/make_sample_data.py   sinh dữ liệu mẫu
@@ -155,6 +176,6 @@ tests/                        pytest
 Thêm nguồn mới (vnstock, DNSE, SSI…) = viết một lớp con của `DataProvider`
 trong `data/providers/`, không phải sửa phần còn lại.
 
-## Việc tiếp theo (ngày 4)
+## Việc tiếp theo (ngày 7)
 
-F-Score, Altman Z, điểm FA; chỉ báo kỹ thuật (TA).
+Engine khuyến nghị (kết hợp điểm FA, TA, định giá, rủi ro) và backtest đơn giản.

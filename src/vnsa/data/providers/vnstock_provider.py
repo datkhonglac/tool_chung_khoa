@@ -54,9 +54,20 @@ MAPPING: dict[str, tuple[str, list[str], str]] = {
     "paid_in_capital": ("balance_sheet", ["paid_in_capital", "owner_s_capital", "common_shares",
                                           "charter_capital"],
                         r"^paid-in capital$|^common shares|^owner'?s'? capital$|charter capital"),
+    "current_assets": ("balance_sheet", ["current_assets", "short_term_assets"],
+                       r"^current assets$|^short-term assets$"),
+    "current_liabilities": ("balance_sheet", ["current_liabilities", "short_term_liabilities"],
+                            r"^current liabilities$|^short-term liabilities$"),
+    "retained_earnings": ("balance_sheet", ["undistributed_earnings", "retained_earnings",
+                                            "undistributed_earnings_after_tax"],
+                          r"^undistributed (?:earnings|profit)|^retained earnings"),
+    "equity_issued": ("cash_flow", ["proceeds_from_issue_of_shares",
+                                    "proceeds_from_issuing_shares_capital_contributions"],
+                      (r"^proceeds from (?:the )?issu\w* (?:of )?(?:shares|stocks|equity)"
+                       r"|capital contribution")),
 }
 # VCI ghi chi phí/khoản chi bằng số âm; lưu số dương cho dễ dùng.
-POSITIVE = {"tax_expense", "interest_expense", "capex"}
+POSITIVE = {"tax_expense", "interest_expense", "capex", "equity_issued"}
 STATEMENTS = ["income_statement", "balance_sheet", "cash_flow"]
 
 
