@@ -22,6 +22,10 @@ on:
         description: "Mã bất kỳ để thử lệnh analyze (tự tải giá, BCTC, sàn/ngành)"
         required: false
         default: "SHS VCB ACV"
+      probe:
+        description: "Mã để dò cấu trúc dữ liệu vnstock (scripts/probe_vnstock.py); bỏ trống = không dò"
+        required: false
+        default: ""
 
 jobs:
   test:
@@ -61,6 +65,10 @@ jobs:
       - name: Kiểm tra chất lượng từng mã
         if: ${{ !inputs.skip_prices }}
         run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli check $s; echo; done
+      - name: Dò cấu trúc dữ liệu vnstock
+        if: ${{ inputs.probe != '' }}
+        continue-on-error: true
+        run: python scripts/probe_vnstock.py ${{ inputs.probe }}
       - name: Tải BCTC năm (vnstock/VCI)
         run: python -m vnsa.cli fetch-bctc ${{ inputs.symbols }}
       - name: Chỉ số tài chính từng mã
