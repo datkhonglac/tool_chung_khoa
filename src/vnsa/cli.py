@@ -181,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     pf = sub.add_parser("fetch", help="Tải giá từ CafeF (tự chia từng năm) rồi nạp")
     pf.add_argument("symbols", nargs="*", help="Bỏ trống = danh sách theo dõi trong settings.toml")
     pf.add_argument("--years", type=int, default=5)
-    pf.add_argument("--pause", type=float, default=1.0, help="Giây nghỉ giữa các lần gọi")
+    pf.add_argument("--pause", type=float, default=0.3, help="Giây nghỉ giữa các lần gọi")
     pf.add_argument("--no-load", action="store_true", help="Chỉ tạo CSV, không nạp vào kho")
     pf.set_defaults(func=cmd_fetch)
 

@@ -40,7 +40,7 @@ FIELDS = {
     "KhoiLuongKhopLenh": "Khối lượng khớp lệnh",
 }
 WINDOW_DAYS = 365   # CafeF cắt mỗi lần gọi còn khoảng 1 năm tính lùi từ ngày kết thúc
-PAGE_SIZE = 300     # > số phiên trong 1 năm, thường chỉ cần 1 trang mỗi đoạn
+PAGE_SIZE = 30      # CafeF trả tối đa 30 dòng mỗi trang, ~9 trang cho 1 năm
 MAX_PAGES = 100     # chặn vòng lặp vô hạn nếu CafeF đổi cách phân trang
 
 
@@ -55,7 +55,7 @@ class CafeFProvider(DataProvider):
 
     def __init__(
         self,
-        pause: float = 1.0,
+        pause: float = 0.3,
         get_json: Callable[[str], dict] = _http_get_json,
         retries: int = 2,
     ):
