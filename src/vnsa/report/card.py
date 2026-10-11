@@ -146,7 +146,8 @@ def _confidence(a, cfg: dict) -> tuple[str, dict[str, bool]]:
         "đủ dữ liệu giá": len(a.data.prices) >= cfg["min_sessions"],
     }
     n = sum(checks.values())
-    level = ("Cao" if n >= cfg["high_confidence"] else
+    # "Cao" đòi hỏi các kịch bản định giá đồng thuận — dải P10–P90 rộng thì tối đa "Trung bình"
+    level = ("Cao" if n >= cfg["high_confidence"] and checks["kịch bản định giá hẹp"] else
              "Trung bình" if n >= cfg["medium_confidence"] else "Thấp")
     return level, checks
 
@@ -202,7 +203,9 @@ def build_card(a) -> Card:
         cash = recent["cash_per_share"].sum()
         stock = recent["stock_ratio"].dropna()
         if cash > 0:
-            extra.append(f"Cổ tức tiền 12 tháng {vn_num(cash)}đ/cp ({vn_pct(cash / x.price)})")
+            extra.append(f"Cổ tức tiền 12 tháng {vn_num(cash)}đ/cp ({vn_pct(cash / x.price)}"
+                         + (", cao bất thường — nên kiểm tra lại" if cash / x.price > 0.10
+                            else "") + ")")
         if len(stock):
             extra.append(f"cổ tức/thưởng cổ phiếu {vn_pct(stock.sum(), 0)}")
     pr = d.profile or {}

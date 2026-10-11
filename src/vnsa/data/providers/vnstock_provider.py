@@ -168,7 +168,10 @@ def standardize_dividends(events: pd.DataFrame, symbol: str) -> pd.DataFrame:
                         "cash_per_share": cash.where(cash > 0),
                         "stock_ratio": ratio.where(cash.isna() | (cash <= 0)),
                         "title": ev.get("event_title_vi")})
-    return out.dropna(subset=["exright_date"]).sort_values("exright_date").reset_index(drop=True)
+    out = out.dropna(subset=["exright_date"])
+    # nguồn có thể trả cùng một đợt chia nhiều lần (thông báo, điều chỉnh): bỏ dòng trùng
+    out = out.drop_duplicates(subset=["exright_date", "cash_per_share", "stock_ratio"])
+    return out.sort_values("exright_date").reset_index(drop=True)
 
 
 def _vnstock_company(symbol: str, method: str) -> pd.DataFrame:

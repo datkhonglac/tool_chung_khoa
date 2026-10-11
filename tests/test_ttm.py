@@ -92,7 +92,8 @@ def test_standardize_dividends_splits_cash_and_stock():
                        "value_per_share": [1000.0, np.nan, np.nan],
                        "exercise_ratio": [np.nan, 0.1, np.nan],
                        "event_title_vi": ["Cổ tức tiền", "Cổ phiếu thưởng 10%", "Niêm yết thêm"]})
-    d = standardize_dividends(ev, "fpt")
+    dup = pd.concat([ev, ev.iloc[[0]]])                                    # nguồn trả trùng 1 đợt
+    d = standardize_dividends(dup, "fpt")
     assert len(d) == 2 and d["symbol"].iloc[0] == "FPT"
     assert d["cash_per_share"].iloc[0] == 1000 and np.isnan(d["stock_ratio"].iloc[0])
     assert d["stock_ratio"].iloc[1] == 0.1 and np.isnan(d["cash_per_share"].iloc[1])
