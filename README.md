@@ -108,8 +108,18 @@ python -m vnsa.cli review-signals                 # chấm lại sau 5/20/60 phi
 python -m vnsa.cli review-signals --update FPT HPG --detail
 ```
 
-Bảng kết quả theo từng loại MUA/THEO DÕI/TRÁNH: lãi/lỗ bình quân, **vượt trội so với VNINDEX**,
+Bảng kết quả theo từng xếp hạng (MUA … BÁN): lãi/lỗ bình quân, **vượt trội so với VNINDEX**,
 tỷ lệ thắng, tỷ lệ chạm mục tiêu trước cắt lỗ, tỷ lệ khớp vùng mua. MUA tốt khi vượt trội dương.
+
+**Tự động mỗi ngày:** workflow `.github/workflows/daily.yml` chạy 16:40 (giờ VN) các ngày giao dịch,
+phân tích các mã ở `[signals] daily`, lưu khuyến nghị + BCTC năm/quý tích luỹ + kết quả chấm vào
+nhánh **`signals`** (thư mục `history/`). Lịch chạy có hiệu lực khi workflow nằm ở nhánh mặc định.
+Lấy về Codespaces:
+
+```bash
+python -m vnsa.cli history import --git origin/signals   # nạp lịch sử vào kho của bạn
+python -m vnsa.cli review-signals
+```
 Cần vài tháng và vài chục mẫu mới có ý nghĩa.
 Trên Claude Desktop: hỏi "phân tích mã SHS" — Claude gọi công cụ `analyze_symbol`, tự tải dữ liệu.
 

@@ -74,6 +74,11 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   ký quỹ/vốn chủ cho CK) từ khoản mục `SECTOR_FIELDS` (`fa/ratios.py`, đọc theo item_id VCI ở
   `SECTOR_MAPPING`, không báo thiếu với doanh nghiệp thường). NPL, CASA, CAR KHÔNG có trong nguồn
   miễn phí: báo thiếu, không ước lượng. Dò khoản mục: `python scripts/probe_vnstock.py --items VCB`.
+- Lịch sử bền vững (`history.py`): workflow `.github/workflows/daily.yml` (16:40 giờ VN, ngày giao
+  dịch) phân tích `[signals] daily`, ghi `history/{signals,fundamentals,fundamentals_q}.csv` + `review.txt`
+  vào nhánh `signals`. `python -m vnsa.cli history import --git origin/signals` nạp về kho (chỉ thêm
+  dòng chưa có, BCTC nạp vào đánh dấu cũ để autofetch vẫn tải mới); `history export DIR`. BCTC năm
+  ghi đè theo (mã, năm) nên năm cũ hơn 4 năm miễn phí được giữ lại (tích luỹ).
 - MCP server: `python -m vnsa.mcp_server` (extra `[mcp]`, chạy được mcp 1.x và 2.x); cấu hình mẫu cho
   Claude Desktop ở `docs/`. Dashboard: `streamlit run dashboard/app.py` (extra `[dashboard]`, cổng 8501).
 - `python scripts/smoke_test.py` gọi mọi công cụ MCP + dashboard trên kho thật. Test dùng fixture

@@ -226,7 +226,8 @@ class Store:
         return df
 
     def write_fundamentals(self, df: pd.DataFrame, source: str) -> int:
-        """Ghi đè BCTC năm của các mã có trong df. Cột: symbol, year + FIELDS (đồng)."""
+        """Ghi đè BCTC năm theo (mã, năm) có trong df; năm cũ hơn không có trong df được GIỮ (nguồn
+        miễn phí chỉ trả 4 năm gần nhất — kho tự tích luỹ dài dần). Cột: symbol, year + FIELDS."""
         if df.empty:
             return 0
         frame = df.reindex(columns=["symbol", "year", *FIELDS]).copy()  # khoản thiếu -> NULL
@@ -235,9 +236,8 @@ class Store:
         self.con.register("incoming", frame)
         try:
             self.con.execute("BEGIN")
-            self.con.execute(
-                "DELETE FROM fundamentals WHERE symbol IN (SELECT DISTINCT symbol FROM incoming)"
-            )
+            self.con.execute("DELETE FROM fundamentals f USING incoming i WHERE f.symbol = i.symbol "
+                             "AND f.year = i.year")
             self.con.execute(f"INSERT INTO fundamentals ({cols}) SELECT {cols} FROM incoming")
             self.con.execute("COMMIT")
         except Exception:
@@ -252,6 +252,28 @@ class Store:
         return self.con.execute(
             f"SELECT {cols} FROM fundamentals WHERE symbol = ? ORDER BY year", [symbol.upper()]
         ).df()
+
+    def mark_stale(self, table: str, keys: pd.DataFrame) -> None:
+        """Đặt loaded_at rất cũ cho các dòng (BCTC nạp từ lịch sử) để autofetch vẫn tải số mới."""
+        if keys.empty or table not in ("fundamentals", "fundamentals_q"):
+            return
+        cond = " AND ".join(f"t.{k} = k.{k}" for k in keys.columns)
+        self.con.register("stale_keys", keys)
+        try:
+            self.con.execute(f"UPDATE {table} t SET loaded_at = TIMESTAMP '2000-01-01' "
+                             f"FROM stale_keys k WHERE {cond}")
+        finally:
+            self.con.unregister("stale_keys")
+
+    def all_fundamentals(self) -> pd.DataFrame:
+        """Mọi BCTC năm trong kho (kèm nguồn) — để lưu lịch sử (history.py)."""
+        cols = ", ".join(["symbol", "year", *FIELDS, "source"])
+        return self.con.execute(f"SELECT {cols} FROM fundamentals ORDER BY symbol, year").df()
+
+    def all_quarterly(self) -> pd.DataFrame:
+        cols = ", ".join(["symbol", "year", "quarter", *FIELDS, "source"])
+        return self.con.execute(f"SELECT {cols} FROM fundamentals_q ORDER BY symbol, year, "
+                                "quarter").df()
 
     def fundamentals_loaded_at(self, symbol: str) -> pd.Timestamp | None:
         t = self.con.execute("SELECT MAX(loaded_at) FROM fundamentals WHERE symbol = ?",

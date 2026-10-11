@@ -766,6 +766,27 @@ def cmd_review_signals(args) -> int:
     return 0
 
 
+def cmd_history(args) -> int:
+    """Lưu/nạp lịch sử khuyến nghị và BCTC năm/quý tích luỹ (history.py)."""
+    from vnsa import history
+
+    if args.action == "export":
+        counts = history.export_history(args.dir)
+        print(f"Đã ghi lịch sử vào {args.dir}: " + ", ".join(f"{k} {v} dòng" for k, v in counts.items()))
+        return 0
+    if args.git:
+        import subprocess
+
+        branch = args.git.split("/", 1)[-1]
+        subprocess.run(["git", "fetch", "-q", "origin", f"{branch}:refs/remotes/origin/{branch}"],
+                       cwd=PROJECT_ROOT, check=False)
+    counts = history.import_history(None if args.git else args.dir, git_ref=args.git)
+    where = args.git or args.dir
+    print(f"Đã nạp từ {where} (chỉ thêm dòng kho chưa có): "
+          + ", ".join(f"{k} {v} dòng" for k, v in counts.items()))
+    return 0
+
+
 def cmd_check(args) -> int:
     from vnsa import market
     from vnsa.data.store import Store
@@ -901,6 +922,12 @@ def main(argv: list[str] | None = None) -> int:
                      help="Cập nhật giá các mã này trước khi chấm (để có phiên mới)")
     prv.add_argument("--detail", action="store_true", help="In từng khuyến nghị")
     prv.set_defaults(func=cmd_review_signals)
+
+    ph = sub.add_parser("history", help="Lưu/nạp lịch sử khuyến nghị và BCTC tích luỹ")
+    ph.add_argument("action", choices=["export", "import"])
+    ph.add_argument("dir", nargs="?", default="history", help="Thư mục CSV (mặc định history/)")
+    ph.add_argument("--git", help="Nạp từ nhánh Git, ví dụ origin/signals (workflow hằng ngày)")
+    ph.set_defaults(func=cmd_history)
 
     pc = sub.add_parser("check", help="Kiểm tra chất lượng dữ liệu")
     pc.add_argument("symbol")

@@ -165,6 +165,8 @@ weak_fa_extra = 0.10        # điểm FA < 50: biên an toàn thêm 10%
 # Lịch sử khuyến nghị: mỗi lần recommend/analyze ghi vào bảng signals và file CSV (đưa lên Git được)
 record = true
 horizons = [5, 20, 60]      # số phiên để chấm lại khuyến nghị (lệnh review-signals)
+# Mã workflow hằng ngày (.github/workflows/daily.yml) phân tích và lưu khuyến nghị vào nhánh `signals`
+daily = ["FPT", "HPG", "MWG", "VNM", "DGC", "VCB", "TCB", "MBB", "SSI", "ACV", "TNG", "GMD"]
 
 [risk]
 garch_window = 1000         # số phiên gần nhất dùng ước lượng GARCH
