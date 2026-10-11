@@ -41,8 +41,10 @@ KẾ HOẠCH      Vùng mua · Cắt lỗ · Chốt lời · Tỷ trọng gợi 
 **Khuyến nghị hai trục** (như các công ty chứng khoán): **xếp hạng** theo lợi nhuận kỳ vọng 12
 tháng = upside so với giá trị hợp lý + tỷ suất cổ tức (MUA ≥ 15% · KHẢ QUAN ≥ 5% · NẮM GIỮ ≥ −5% ·
 KÉM KHẢ QUAN ≥ −15% · BÁN), có rào chắn: VNINDEX xu hướng giảm thì cần thêm 5% và giảm khối lượng
-một nửa, FA yếu hạ một bậc, nguy cơ tài chính tối đa NẮM GIỮ. **Thời điểm** theo kỹ thuật và vùng
-mua ("Vào được", "Mua dần", "Chờ xu hướng", "Chờ giá"). Khối lượng không quá 15% vốn mỗi mã và 10%
+một nửa, FA yếu hạ một bậc, nguy cơ tài chính tối đa NẮM GIỮ. **Thời điểm** chỉ quản trị rủi ro
+("Trong vùng mua — giữ kỷ luật cắt lỗ" hoặc "Chờ giá về vùng mua"): kiểm định 10 năm × 45 mã cho
+thấy không quy tắc kỹ thuật nào (kể cả điểm TA cũ) thắng mua & giữ ở cả hai giai đoạn — chi tiết và
+cách đổi quy tắc ở [docs/kiem_dinh_thoi_diem.md](docs/kiem_dinh_thoi_diem.md). Khối lượng không quá 15% vốn mỗi mã và 10%
 GTGD bình quân 20 phiên. Điểm FA chấm P/E, P/B so với lịch sử của chính mã (không dùng ngưỡng chung).
 
 Độ tin cậy = số điều kiện đạt trong 6 (có BCTC, ≥ 2 phương pháp định giá, kịch bản định giá hẹp,
@@ -265,16 +267,22 @@ Kế hoạch giao dịch là kết quả tính theo quy tắc, không phải khu
 ```bash
 python -m vnsa.cli recommend                  # MUA / THEO DÕI / TRÁNH kèm lý do, cho danh sách theo dõi
 python -m vnsa.cli recommend FPT MWG
-python -m vnsa.cli backtest FPT               # TA thuần vs TA + VNINDEX + thanh khoản vs mua & giữ
+python -m vnsa.cli backtest FPT               # điểm TA vs phá nền 55 phiên vs mua & giữ
 python -m vnsa.cli backtest FPT --entry 70 --exit 40
 ```
 
 Xếp hạng theo lợi nhuận kỳ vọng, thời điểm theo kỹ thuật (xem mục "Khuyến nghị hai trục" ở trên).
 Backtest kiểm tra trục **thời điểm** (BCTC miễn phí quá ngắn để kiểm tra giá trị hợp lý không "nhìn
-trước" — trục xếp hạng theo dõi bằng `review-signals`); lệnh khớp ở giá mở cửa phiên sau tín hiệu,
-có cắt lỗ ATR, T+2, phí 0,15%/chiều và thuế bán 0,1% (`[backtest]`). So sánh hai công thức: **TA
-thuần** và **TA + VNINDEX + thanh khoản** (VNINDEX xu hướng giảm thì cần điểm TA cao thêm 10 và chỉ
-dùng 50% vốn; lệnh ≤ 10% GTGD bình quân 20 phiên), cùng mua & giữ.
+trước" — trục xếp hạng theo dõi bằng `review-signals`): khớp giá mở cửa phiên sau tín hiệu, không
+mua ở giá trần / không bán khi nằm sàn, T+2, phí 0,15%/chiều, thuế bán 0,1% (`[backtest]`). So sánh
+**điểm TA** (cách cũ), **phá nền 55 phiên** và quy tắc đang dùng, cùng mua & giữ.
+
+Kiểm định nhiều mã, nhiều năm (chọn tham số 2016–2021, kiểm tra độc lập 2022 → nay):
+
+```bash
+python -m vnsa.cli study-timing                 # 45 mã [study] universe, tự tải 10 năm giá
+python -m vnsa.cli study-timing FPT HPG VCB     # rổ tuỳ chọn
+```
 
 ## 8. Hỏi Claude Desktop qua MCP server (ngày 8)
 

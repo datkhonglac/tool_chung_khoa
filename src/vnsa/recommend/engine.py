@@ -11,11 +11,13 @@ Trục 1 — XẾP HẠNG theo tổng lợi nhuận kỳ vọng 12 tháng = chê
   - Điểm FA < `min_fa_quality`: hạ một bậc (không xếp MUA doanh nghiệp yếu chỉ vì rẻ).
   - Altman Z'' < 1,1 (nguy cơ tài chính): tối đa NẮM GIỮ (tránh bẫy giá trị).
   - Không có giá trị hợp lý (thiếu BCTC): KHÔNG XẾP HẠNG, chỉ có trục thời điểm.
-Trục 2 — THỜI ĐIỂM (kỹ thuật + vùng mua ta/entry.py):
-  - giá đang cao hơn trần giá trị → "Chờ giá về vùng mua";
-  - điểm TA < `timing_wait` → "Chờ xu hướng cải thiện";
-  - điểm TA ≥ `timing_go` → "Vào được trong vùng mua";
-  - còn lại → "Mua dần trong vùng mua".
+Trục 2 — THỜI ĐIỂM, theo `timing_rule` (xem timing()). Mặc định "none" vì kiểm định 10 năm × 45 mã
+(lệnh study-timing, docs/kiem_dinh_thoi_diem.md) cho thấy KHÔNG quy tắc kỹ thuật nào (kể cả điểm TA
+cũ) vừa có Sharpe cao hơn vừa sụt giảm nhỏ hơn mua & giữ ở cả giai đoạn chọn tham số lẫn giai đoạn
+kiểm tra độc lập — nên trục này chỉ quản trị rủi ro:
+  - giá đang cao hơn trần giá trị (giá trị hợp lý trừ biên an toàn) → "Chờ giá về vùng mua";
+  - còn lại → "Trong vùng mua (giữ kỷ luật cắt lỗ)".
+  "ta" (cách cũ, theo điểm TA) hoặc tên quy tắc trong recommend/strategies.py vẫn chọn được.
 Điểm tổng (`score`) = w_fa × FA + w_ta × TA chỉ để sắp xếp danh sách, KHÔNG quyết định xếp hạng;
 điểm Quant chỉ để tham khảo (xác suất tăng của Monte Carlo chủ yếu kéo dài xu hướng quá khứ).
 Đây là quy tắc sàng lọc, không phải lời khuyên đầu tư.

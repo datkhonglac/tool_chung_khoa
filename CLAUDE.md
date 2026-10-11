@@ -33,8 +33,10 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 - Khuyến nghị HAI TRỤC (`recommend/engine.py`, `[recommend]`): xếp hạng MUA/KHẢ QUAN/NẮM GIỮ/KÉM KHẢ
   QUAN/BÁN theo lợi nhuận kỳ vọng = upside giá trị hợp lý + cổ tức 12 tháng (ngưỡng 15/5/−5/−15%);
   rào chắn: VNINDEX giảm (`ta/regime.py`) nâng ngưỡng 5% và giảm rủi ro/lệnh 50%, FA < 50 hạ một bậc,
-  Altman Z'' < 1,1 tối đa NẮM GIỮ; thiếu giá trị hợp lý = KHÔNG XẾP HẠNG. Trục THỜI ĐIỂM theo TA +
-  vùng mua. Điểm FA/TA chỉ để sắp xếp; Quant chỉ tham khảo. Định giá trong điểm FA là TƯƠNG ĐỐI
+  Altman Z'' < 1,1 tối đa NẮM GIỮ; thiếu giá trị hợp lý = KHÔNG XẾP HẠNG. Trục THỜI ĐIỂM theo
+  `[recommend] timing_rule` = "none" (chỉ vùng mua + cắt lỗ) vì kiểm định 10 năm × 45 mã
+  (`study-timing`, `recommend/study.py`, docs/kiem_dinh_thoi_diem.md) không quy tắc nào thắng mua &
+  giữ cả hai giai đoạn; "ta" (cũ) hoặc quy tắc trong `recommend/strategies.py` (`rule_state`). Điểm FA/TA chỉ để sắp xếp; Quant chỉ tham khảo. Định giá trong điểm FA là TƯƠNG ĐỐI
   (P/E, P/B ÷ trung vị lịch sử của mã: `pe_rel`, `pb_rel`). Khối lượng chặn bởi trần 15% vốn/mã
   và 10% GTGD bình quân 20 phiên (`[plan]`).
 - `analyze` mặc định in THẺ BÁO CÁO (`report/card.py`, `--detail` để in thêm chi tiết): mọi số lấy
@@ -69,10 +71,10 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 - `fa-score FPT` (F-Score, Altman Z, điểm FA) · `ta FPT` (chỉ báo, hỗ trợ/kháng cự, điểm TA) ·
   `plan FPT` (cắt lỗ ATR, mục tiêu, khối lượng theo % rủi ro, bước giá HOSE) · `risk FPT [--days N]`
   (GARCH(1,1) tự viết bằng scipy, Monte Carlo lọc lịch sử chặn biên độ ±7%, VaR/CVaR).
-- `recommend [MÃ...]` (bảng xếp hạng hai trục) · `backtest FPT` (`analysis.backtests`: "TA thuần" so
-  với "TA + VNINDEX + thanh khoản" — `regime_series`, `[backtest]` bear_entry_extra/bear_position,
-  lệnh ≤ max_adv_pct × GTGD 20 phiên; khớp mở cửa phiên sau, T+2, phí + thuế). Mọi phép tính dùng
-  chung qua `src/vnsa/analysis.py`.
+- `recommend [MÃ...]` (bảng xếp hạng hai trục) · `backtest FPT` (`analysis.backtests` qua
+  `strategies.simulate`: điểm TA, phá nền 55 phiên, quy tắc đang dùng; khớp mở cửa phiên sau, không
+  mua ở trần/không bán khi nằm sàn, T+2, phí + thuế) · `study-timing` (walk-forward nhiều mã,
+  `[study]`, workflow `study.yml`). Mọi phép tính dùng chung qua `src/vnsa/analysis.py`.
 - Định chế tài chính: chỉ số ngành `fa/sector.py` (NIM xấp xỉ, CIR, chi phí tín dụng, LDR đơn giản;
   ký quỹ/vốn chủ cho CK) từ khoản mục `SECTOR_FIELDS` (`fa/ratios.py`, đọc theo item_id VCI ở
   `SECTOR_MAPPING`, không báo thiếu với doanh nghiệp thường). NPL, CASA, CAR KHÔNG có trong nguồn

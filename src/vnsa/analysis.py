@@ -479,8 +479,9 @@ def backtest_config(symbol: str) -> dict:
 def backtests(d: Data, entry: float | None = None, exit_: float | None = None) -> dict:
     """So sánh các quy tắc thời điểm trên cùng dữ liệu bằng máy mô phỏng chung
     (recommend/strategies.simulate: khớp mở cửa phiên sau, không mua khi mở cửa giá trần, không
-    bán khi cả phiên nằm sàn, T+2, phí + thuế): "Điểm TA", "Điểm TA + VNINDEX" và quy tắc đang
-    dùng cho trục thời điểm (`[recommend] timing_rule`, nếu khác hai quy tắc trên). Trả về
+    bán khi cả phiên nằm sàn, T+2, phí + thuế): "Điểm TA" (cách cũ), "Phá nền 55 phiên" (quy tắc
+    gần đạt nhất trong kiểm định study-timing) và quy tắc đang dùng cho trục thời điểm
+    (`[recommend] timing_rule`, nếu là quy tắc khác). Trả về
     {tên: BacktestResult}; mua & giữ nằm ở .benchmark_stats. ValueError nếu chưa đủ dữ liệu."""
     from vnsa import market
     from vnsa.recommend.strategies import NAMES, rule_set, simulate
@@ -501,7 +502,7 @@ def backtests(d: Data, entry: float | None = None, exit_: float | None = None) -
     rec = settings()["recommend"]
     rules = rule_set(ind, score, regime_series(d.index, settings().get("regime", {})),
                      rec.get("timing_atr_k", 3.0), cfg)
-    names = ["ta", "ta_vni"]
+    names = ["ta", "breakout"]
     if rec.get("timing_rule", "ta") in rules and rec["timing_rule"] not in names:
         names.append(rec["timing_rule"])
     band = market.band(d.symbol)

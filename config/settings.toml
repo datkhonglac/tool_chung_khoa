@@ -208,10 +208,14 @@ seed = 42
 # Khuyến nghị hai trục (recommend/engine.py)
 # Trục 1 — xếp hạng theo lợi nhuận kỳ vọng 12 tháng = upside so với giá trị hợp lý + tỷ suất cổ tức:
 rating_thresholds = [0.15, 0.05, -0.05, -0.15]   # ≥ MUA · ≥ KHẢ QUAN · ≥ NẮM GIỮ · ≥ KÉM KHẢ QUAN · dưới: BÁN
-# Trục THỜI ĐIỂM: "ta" (điểm TA) | tên quy tắc đã ĐẠT kiểm định study-timing (vd "trend") | "none"
-# (chỉ vùng mua + cắt lỗ). timing_atr_k: hệ số cắt lỗ động của quy tắc (chọn ở giai đoạn kiểm định).
-timing_rule = "ta"
-timing_atr_k = 3.0
+# Trục THỜI ĐIỂM: "none" (chỉ vùng mua + cắt lỗ) | "ta" (điểm TA, cách cũ) | tên quy tắc trong
+# recommend/strategies.py ("trend", "breakout", ...). Kiểm định 10 năm × 45 mã (docs/kiem_dinh_thoi_diem.md):
+# không quy tắc nào thắng mua & giữ ở cả hai giai đoạn → "none". "breakout" (phá nền 55 phiên) gần
+# đạt nhất: Sharpe 0,37 so 0,31 và sụt giảm −8% so −46% ở giai đoạn 2022–2026, nhưng lợi nhuận thấp
+# hơn nhiều (chỉ cầm cổ phiếu ~20% thời gian) — chọn nếu bạn ưu tiên tránh sụt giảm lớn.
+# timing_atr_k: hệ số cắt lỗ động của quy tắc xu hướng/phá nền (k = 4 chọn ở giai đoạn 2016–2021).
+timing_rule = "none"
+timing_atr_k = 4.0
 max_dividend_yield = 0.10   # cổ tức 12 tháng > 10% giá: dùng bình quân 3 năm, tối đa 10% (thường là 2 đợt dồn vào 12 tháng)
 bear_market_extra = 0.05    # VNINDEX xu hướng giảm: mọi ngưỡng cao thêm 5%
 min_fa_quality = 50         # điểm FA dưới mức này: hạ một bậc xếp hạng
