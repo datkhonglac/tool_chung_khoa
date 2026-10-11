@@ -57,3 +57,21 @@ def test_assess_reports_regime_and_dividend_yield(warehouse):
     assert x.dividend_yield == pytest.approx(1_000 / x.price)
     assert a.rec.expected_return == pytest.approx(x.fair_upside + x.dividend_yield)
     assert a.rec.timing
+
+
+def test_abnormal_dividend_uses_three_year_average(warehouse):
+    from vnsa import analysis
+    from vnsa.data.store import Store
+
+    with Store(warehouse) as store:
+        last = store.prices("DEMO_A")["date"].iloc[-1]
+        price = float(store.prices("DEMO_A")["close"].iloc[-1])
+        # Hai đợt 6% dồn vào 12 tháng gần nhất (12%), hai năm trước không chia
+        store.write_dividends(pd.DataFrame({
+            "symbol": "DEMO_A", "exright_date": [last - pd.Timedelta(days=40),
+                                                 last - pd.Timedelta(days=200)],
+            "cash_per_share": [0.06 * price] * 2, "stock_ratio": [None, None],
+            "title": ["Cổ tức", "Cổ tức"]}), "DEMO_A")
+    d = analysis.load("DEMO_A", need_fin=False)
+    assert analysis.dividend_yield(d, raw=True) == pytest.approx(0.12)
+    assert analysis.dividend_yield(d) == pytest.approx(0.04)          # 12% / 3 năm

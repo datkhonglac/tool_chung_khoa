@@ -104,3 +104,17 @@ def test_fa_score_reweights_when_valuation_missing():
     pricey = sc.fa_score(_fin(), cfg, pe=18, pb=2.25, pe_hist=12, pb_hist=1.5)
     assert pricey.items["pe_rel"] == (1.5, 0.0)                # đắt hơn lịch sử 50% -> 0 điểm
     assert np.isnan(sc.fa_score(_fin(), cfg, pe=8).items["pe_rel"][0])   # thiếu mốc lịch sử
+
+
+def test_piotroski_issue_uses_parent_capital_net_of_stock_dividends():
+    # Chạy thật FPT: dòng tiền "thu phát hành, nhận vốn góp" 1.196 tỷ phần lớn là cổ đông thiểu
+    # số góp vào công ty con; vốn góp công ty mẹ chỉ tăng đúng bằng cổ phiếu thưởng 10%.
+    fin = _fin()
+    fin.loc[1, "equity_issued"] = 80 * B          # dòng tiền lớn (> 1% vốn chủ)
+    fin.loc[1, "paid_in_capital"] = 330 * B       # +10% = đúng tỷ lệ thưởng
+    assert sc.piotroski(fin).iloc[1]["f_no_issue"] == 0                     # luật cũ: phạt
+    assert sc.piotroski(fin, stock_ratio={2025: 0.10}).iloc[1]["f_no_issue"] == 1
+    fin.loc[1, "paid_in_capital"] = 360 * B       # +20%, thưởng chỉ 10% -> phát hành thêm ~9%
+    assert sc.piotroski(fin, stock_ratio={2025: 0.10}).iloc[1]["f_no_issue"] == 0
+    fin.loc[1, "paid_in_capital"] = 300 * B       # không đổi, không thưởng: không phát hành
+    assert sc.piotroski(fin, stock_ratio={}).iloc[1]["f_no_issue"] == 1

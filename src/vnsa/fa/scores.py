@@ -8,11 +8,14 @@ Piotroski F-Score (9 tiêu chí, mỗi tiêu chí đạt = 1 điểm), so năm t
              4. CFO > LNST (lợi nhuận có tiền về, ít "dồn tích")
   Đòn bẩy,   5. Vay dài hạn / tổng tài sản giảm (không có vay cả hai năm cũng tính đạt)
   thanh khoản 6. Tỷ số thanh toán hiện hành (TSNH / nợ ngắn hạn) tăng
-             7. Không phát hành cổ phiếu thu tiền đáng kể: "tiền thu từ phát hành cổ phiếu, nhận
-                vốn góp" trong lưu chuyển tiền ≤ `issue_materiality` (mặc định 1%) vốn chủ. Khoản
-                này gồm cả ESOP và vốn cổ đông thiểu số góp vào công ty con, nên bỏ qua số nhỏ.
-                Nguồn không có thì dùng vốn góp không tăng (khi đó cổ phiếu thưởng/cổ tức bằng cổ
-                phiếu cũng bị tính là phát hành — cách làm thận trọng).
+             7. Không phát hành cổ phiếu thu tiền đáng kể (pha loãng cổ đông công ty mẹ):
+                - có lịch sử cổ tức/thưởng bằng cổ phiếu (`stock_ratio`): vốn góp công ty mẹ năm
+                  t / năm t−1 / (1 + tỷ lệ cổ phiếu thưởng, cổ tức cổ phiếu trong năm t) − 1
+                  ≤ max(`issue_materiality`, 2%) (2%: chênh thời điểm đăng ký vốn so với ngày
+                  GDKHQ). Không dùng dòng tiền vì "tiền thu phát hành, nhận vốn góp" gồm cả vốn cổ
+                  đông thiểu số góp vào công ty con (chạy thật: FPT 1.196 tỷ năm 2025);
+                - không có: tiền thu phát hành trong lưu chuyển tiền ≤ `issue_materiality` (1%) vốn
+                  chủ; thiếu nữa thì vốn góp không tăng (thận trọng: thưởng cổ phiếu cũng bị tính).
   Hiệu quả   8. Biên lợi nhuận gộp tăng   9. Vòng quay tài sản (doanh thu / tổng tài sản) tăng
   ROA ở đây = LNST / tổng tài sản cuối kỳ (để có F-Score cho cả năm thứ 2 khi chỉ có 4 năm BCTC).
   8–9: mạnh, 0–2: yếu (Piotroski, 2000).
@@ -70,8 +73,10 @@ def _flag(cond: pd.Series, *inputs: pd.Series) -> pd.Series:
     return cond.astype(float).where(ok)
 
 
-def piotroski(fin: pd.DataFrame, issue_materiality: float = 0.01) -> pd.DataFrame:
-    """Bảng: year, 9 cột tiêu chí (1/0/NaN) và f_score (tổng; NaN nếu thiếu tiêu chí nào)."""
+def piotroski(fin: pd.DataFrame, issue_materiality: float = 0.01,
+              stock_ratio: dict[int, float] | None = None) -> pd.DataFrame:
+    """Bảng: year, 9 cột tiêu chí (1/0/NaN) và f_score (tổng; NaN nếu thiếu tiêu chí nào).
+    stock_ratio: {năm: tổng tỷ lệ thưởng/cổ tức bằng cổ phiếu} (bảng dividends) — xem tiêu chí 7."""
     df, gap = _prepare(fin)
 
     def prev(s: pd.Series) -> pd.Series:
@@ -99,6 +104,11 @@ def piotroski(fin: pd.DataFrame, issue_materiality: float = 0.01) -> pd.DataFram
     cap_prev = prev(df["paid_in_capital"])
     by_capital = _flag(df["paid_in_capital"] <= cap_prev, df["paid_in_capital"], cap_prev)
     out["f_no_issue"] = by_cash.fillna(by_capital)
+    if stock_ratio is not None:
+        bonus = df["year"].map(lambda y: stock_ratio.get(int(y), 0.0)).astype(float)
+        net_new = df["paid_in_capital"] / cap_prev / (1 + bonus) - 1
+        by_parent = _flag(net_new <= max(issue_materiality, 0.02), df["paid_in_capital"], cap_prev)
+        out["f_no_issue"] = by_parent.fillna(out["f_no_issue"])
     out["f_dmargin"] = _flag(margin > prev(margin), margin, prev(margin))
     out["f_dturn"] = _flag(turn > prev(turn), turn, prev(turn))
     out["f_score"] = out[list(FSCORE_CRITERIA)].sum(axis=1, min_count=len(FSCORE_CRITERIA))
@@ -194,12 +204,13 @@ def _div_sum(a: pd.Series, b: pd.Series) -> float:
 
 def fa_score(fin: pd.DataFrame, cfg: dict, pe: float = np.nan, pb: float = np.nan,
              dcf_upside: float = np.nan, roe: float | None = None,
-             pe_hist: float = np.nan, pb_hist: float = np.nan) -> FAScore:
+             pe_hist: float = np.nan, pb_hist: float = np.nan,
+             stock_ratio: dict[int, float] | None = None) -> FAScore:
     """Điểm FA năm BCTC gần nhất. cfg = mục [fa_score] trong settings (trọng số + ngưỡng).
     roe: ROE hiện tại (TTM, fa/ttm.py) thay cho ROE năm gần nhất nếu có."""
     df = fin.sort_values("year").reset_index(drop=True)
     ratios = compute_ratios(df)
-    f = piotroski(df, cfg.get("issue_materiality", 0.01))
+    f = piotroski(df, cfg.get("issue_materiality", 0.01), stock_ratio)
     z = altman(df)
     span = int(df["year"].iloc[-1] - df["year"].iloc[0])
     values = {

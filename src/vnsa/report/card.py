@@ -91,6 +91,7 @@ class Card:
     plan: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     basis: str = ""          # kỳ số liệu tài chính: "TTM Q2/2026" | "năm 2025"
+    consensus: str = ""      # dòng đối chiếu giá mục tiêu CTCK (VCI tổng hợp)
 
 
 def red_flags(fin: pd.DataFrame, financial: bool, z_em: float, f_score: float) -> list[str]:
@@ -142,12 +143,28 @@ def industry_roe(symbol: str, industry: str | None) -> tuple[float, int]:
     return (float(np.median(roes)), len(roes)) if len(roes) >= 3 else (float("nan"), len(roes))
 
 
+def consensus(a) -> tuple[float, str, float]:
+    """(giá mục tiêu CTCK do VCI tổng hợp, khuyến nghị CTCK, độ lệch giá trị hợp lý của tool so
+    với giá mục tiêu đó); NaN nếu nguồn không có."""
+    nan = float("nan")
+    pr = a.data.profile or {}
+    target = pr.get("analyst_target")
+    target = float(target) if target is not None and not pd.isna(target) and target > 0 else nan
+    rating = str(pr.get("analyst_rating") or "")
+    rating = "" if rating in ("None", "nan") else rating
+    gap = (a.fair.value / target - 1) if a.fair is not None and target > 0 else nan
+    return target, rating, gap
+
+
 def _confidence(a, cfg: dict) -> tuple[str, dict[str, bool]]:
     fair = a.fair
     spread = (fair.p90 / fair.p10 if fair is not None and fair.p10 > 0 else float("inf"))
+    _, _, gap = consensus(a)
     checks = {
         "có BCTC và điểm FA": not pd.isna(a.fa_score),
-        "≥ 2 phương pháp định giá": fair is not None and len(fair.weights) >= 2,
+        # P/E và P/B lịch sử cùng gốc (bội số quá khứ của mã): cần thêm DCF/RI/ngành
+        "≥ 2 phương pháp, có phương pháp độc lập": (fair is not None and len(fair.weights) >= 2
+                                                     and fair.independent),
         "kịch bản định giá hẹp": spread <= cfg["max_value_spread"],
         "giá trị hợp lý không quá xa giá": (fair is not None
                                             and abs(fair.upside) <= cfg["max_abs_upside"]),
@@ -158,8 +175,11 @@ def _confidence(a, cfg: dict) -> tuple[str, dict[str, bool]]:
     n = sum(checks.values())
     # "Cao" đòi hỏi các kịch bản định giá đồng thuận — dải P10–P90 rộng thì tối đa "Trung bình"
     # và giá trị hợp lý không quá xa giá (chênh quá lớn thường do mô hình, không phải cơ hội)
+    # và có phương pháp độc lập, không lệch quá xa giá mục tiêu của các CTCK (nếu nguồn có)
+    near_consensus = pd.isna(gap) or abs(gap) <= cfg.get("max_consensus_gap", 0.3)
     level = ("Cao" if n >= cfg["high_confidence"] and checks["kịch bản định giá hẹp"]
-             and checks["giá trị hợp lý không quá xa giá"] else
+             and checks["giá trị hợp lý không quá xa giá"]
+             and checks["≥ 2 phương pháp, có phương pháp độc lập"] and near_consensus else
              "Trung bình" if n >= cfg["medium_confidence"] else "Thấp")
     return level, checks
 
@@ -214,7 +234,10 @@ def build_card(a) -> Card:
                     flags.append(f"cho vay ký quỹ sát trần ({vn_num(v['margin_to_equity'], 2)} "
                                  "lần vốn chủ)")
         else:
-            f_score = sc.piotroski(fin)["f_score"].iloc[-1]
+            from vnsa.analysis import stock_ratios
+
+            f_score = sc.piotroski(fin, settings()["fa_score"].get("issue_materiality", 0.01),
+                                   stock_ratios(d))["f_score"].iloc[-1]
             cfo3, ni3 = fin["cfo"].tail(3).sum(), fin["net_income"].tail(3).sum()
             fundamentals.append(
                 f"D/E {vn_num(ratios['debt_to_equity'].iloc[-1], 2)} · CFO/LNST "
@@ -233,8 +256,10 @@ def build_card(a) -> Card:
         stock = recent["stock_ratio"].dropna()
         if cash > 0:
             extra.append(f"Cổ tức tiền 12 tháng {vn_num(cash)}đ/cp ({vn_pct(cash / x.price)}"
-                         + (", cao bất thường — nên kiểm tra lại" if cash / x.price > 0.10
-                            else "") + ")")
+                         + (f", cao bất thường — lợi nhuận kỳ vọng chỉ tính "
+                            f"{vn_pct(x.dividend_yield)} (bình quân 3 năm, tối đa "
+                            f"{vn_pct(settings()['recommend'].get('max_dividend_yield', 0.1), 0)})"
+                            if x.dividend_yield < cash / x.price - 1e-9 else "") + ")")
         if len(stock):
             extra.append(f"cổ tức/thưởng cổ phiếu {vn_pct(stock.sum(), 0)}")
     pr = d.profile or {}
@@ -308,6 +333,19 @@ def build_card(a) -> Card:
     if p is not None:
         notes += [n for n in p.notes if "giới hạn bởi" in n]
     notes += [n for n in (fair.notes if fair else []) if n.startswith("bỏ ")]
+    target, rating, gap = consensus(a)
+    cons_line = ""
+    if not pd.isna(target):
+        cons_line = (f"Giá mục tiêu CTCK (VCI tổng hợp): {vn_num(target)}đ"
+                     + (f" · {rating}" if rating else "")
+                     + (f" · giá trị hợp lý của tool lệch {vn_pct(gap, 0, sign=True)}"
+                        if not pd.isna(gap) else ""))
+        if not pd.isna(gap) and abs(gap) > settings()["report"].get("max_consensus_gap", 0.3):
+            notes.append(f"giá trị hợp lý lệch {vn_pct(gap, 0, sign=True)} so với giá mục tiêu "
+                         "CTCK: kiểm tra lại giả định (độ tin cậy không xếp Cao)")
+    if fair is not None and not fair.independent:
+        notes.append("chỉ có định giá theo bội số quá khứ của chính mã (thiếu DCF/ngành): tham "
+                     "khảo thêm P/E ngành")
     if p is not None and p.zone is not None:
         notes += [n for n in p.zone.notes if "đuổi giá" in n or "xu hướng yếu" in n]
     if financial:
@@ -325,7 +363,7 @@ def build_card(a) -> Card:
         timing=rec.timing, expected_return=rec.expected_return,
         dividend_yield=x.dividend_yield, regime=x.regime,
         fundamentals=fundamentals, red_flags=flags, technical=technical, forecast=forecast,
-        plan=plan_lines, notes=notes)
+        plan=plan_lines, notes=notes, consensus=cons_line)
 
 
 def format_card(c: Card) -> str:
@@ -341,10 +379,11 @@ def format_card(c: Card) -> str:
          + (f" + cổ tức {vn_pct(c.dividend_yield)}" if c.dividend_yield > 0 else "")
          + f" = lợi nhuận kỳ vọng {vn_pct(c.expected_return, _digits(c.expected_return), sign=True)}"),
         f"  Phương pháp: {c.methods}",
+        *([f"  {c.consensus}"] if c.consensus else []),
         "",
         "ĐIỂM SỐ (0-100)",
         (f"  FA (chất lượng) {vn_num(c.fa)} · TA (xu hướng) {vn_num(c.ta)} · "
-         f"Quant {vn_num(c.quant)} (tham khảo) · Thị trường: VNINDEX {c.regime}"),
+         f"Thị trường: VNINDEX {c.regime}"),
         "",
         "CƠ BẢN",
         *[f"  {s}" for s in c.fundamentals],

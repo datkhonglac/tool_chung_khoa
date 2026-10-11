@@ -92,6 +92,12 @@ T+2). Thay vào đó (`src/vnsa/ta/entry.py`, tham số `[entry]`):
   Bội số **mục tiêu 12 tháng** không giả định quay hẳn về trung vị lịch sử (thị trường có thể đã
   định giá lại mã): mục tiêu = hiện tại + 50% × (trung vị − hiện tại), chỉnh ở
   `[valuation] multiple_reversion` (1 = quay hẳn về trung vị).
+- **P/E, P/B ngành**: khi kho có ≥ 3 mã cùng ngành (đã phân tích), thêm trung vị bội số ngành làm
+  phương pháp độc lập (`pe_peer`, `pb_peer`). Thẻ báo cáo in thêm **giá mục tiêu CTCK** (VCI tổng
+  hợp) và độ lệch; lệch > 30% hoặc chỉ có bội số quá khứ của chính mã thì không xếp độ tin cậy "Cao".
+- Cổ tức 12 tháng > 10% giá (thường do hai đợt dồn vào 12 tháng) chỉ tính bình quân 3 năm, tối đa 10%.
+- F-Score "không phát hành cổ phiếu" so vốn góp công ty mẹ sau khi trừ cổ phiếu thưởng/cổ tức cổ
+  phiếu (dòng tiền "nhận vốn góp" gồm cả cổ đông thiểu số góp vào công ty con).
 - **Ngân hàng / chứng khoán / bảo hiểm**: ½ × trung bình của **thu nhập thặng dư** (ROE giảm dần về
   chi phí vốn chủ) và **P/B hợp lý = (ROE − g) / (k_e − g)**, cộng ½ × **P/B lịch sử**; ROE xuất phát
   là bình quân 3 năm có trọng số (năm gần nhất nặng nhất); điểm FA riêng (ROE, tăng trưởng, vốn chủ /

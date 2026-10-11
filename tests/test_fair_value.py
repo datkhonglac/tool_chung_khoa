@@ -223,3 +223,17 @@ def test_partial_reversion_to_historical_multiples():
     pe_now = price / eps
     assert half.pe_target == pytest.approx(pe_now + 0.5 * (full.pe_median - pe_now))
     assert price < half.value < full.value                           # upside nhỏ hơn, vẫn dương
+
+
+def test_peer_multiples_add_independent_method():
+    fin, px = _fundamentals("X"), _prices(price=40_000)
+    hist_only = fv.combine(40_000, fin, px)
+    assert not hist_only.independent                              # chỉ bội số quá khứ
+    peer = fv.combine(40_000, fin, px, peers=(12.0, 1.5, 4))
+    assert {"pe_peer", "pb_peer"} <= set(peer.weights) and peer.independent
+    eps = hist_only.methods["pe_hist"] / hist_only.pe_target
+    assert peer.methods["pe_peer"] == pytest.approx(12.0 * eps)   # reversion mặc định 1
+    half = fv.combine(40_000, fin, px, peers=(12.0, 1.5, 4), reversion=0.5)
+    pe_now = 40_000 / eps
+    assert half.methods["pe_peer"] == pytest.approx((pe_now + 0.5 * (12.0 - pe_now)) * eps)
+    assert any("4 mã cùng ngành" in n for n in peer.notes)

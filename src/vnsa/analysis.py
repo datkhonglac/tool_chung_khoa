@@ -141,7 +141,7 @@ def financial(d: Data):
     price = float(d.prices["close"].iloc[-1])
     rev = cfg.get("multiple_reversion", 1.0)
     fair = fv.combine(price, d.fin, d.prices, par, ri=ri, weights=_weights("financial"),
-                      current=d.current, reversion=rev)
+                      current=d.current, reversion=rev, peers=peer_multiples(d))
     scenarios = []
     for k in (ke - 0.01, ke, ke + 0.01):
         for keep in (0.25, 0.75):
@@ -160,6 +160,41 @@ def financial(d: Data):
     return score, fair
 
 
+def peer_multiples(d: Data) -> tuple[float, float, int] | None:
+    """(P/E, P/B trung vị hiện tại, số mã) của các mã CÙNG NGÀNH và cùng loại doanh nghiệp đã có
+    trong kho; None nếu ít hơn `[valuation] min_peers` mã. Kho chỉ có những mã đã phân tích, nên
+    càng phân tích nhiều mã cùng ngành (hoặc workflow hằng ngày) thì so sánh càng đầy đủ."""
+    import numpy as np
+
+    from vnsa import market
+    from vnsa.data.store import Store
+
+    cfg = settings()["valuation"]
+    prof = market.profile(d.symbol)
+    if not prof.get("industry"):
+        return None
+    with Store(path("warehouse")) as store:
+        peers = [s for s in store.peers(prof["industry"]) if s != d.symbol]
+    pes, pbs = [], []
+    for s in peers:
+        if market.profile(s)["model"] != prof["model"]:
+            continue
+        try:
+            p = load(s)
+        except DataMissing:
+            continue
+        pe, pb = multiples(p)
+        if 0 < pe <= cfg.get("max_peer_pe", 60):
+            pes.append(pe)
+        if pb > 0:
+            pbs.append(pb)
+    n = len(pbs)
+    if n < cfg.get("min_peers", 3):
+        return None
+    pe_med = float(np.median(pes)) if len(pes) >= cfg.get("min_peers", 3) else float("nan")
+    return pe_med, float(np.median(pbs)), n
+
+
 def general_fair_value(d: Data, v=None):
     """Doanh nghiệp thường: FairValue (DCF, P/E, P/B lịch sử) kèm dải P10/P90 từ ma trận độ nhạy
     DCF và P/E, P/B của từng năm lịch sử. v = Valuation đã tính (nếu có)."""
@@ -171,7 +206,8 @@ def general_fair_value(d: Data, v=None):
     rev = settings()["valuation"].get("multiple_reversion", 1.0)
     price = float(d.prices["close"].iloc[-1])
     fair = fv.combine(price, d.fin, d.prices, par, dcf=v.value_per_share if v else nan,
-                      weights=_weights("general"), current=d.current, reversion=rev)
+                      weights=_weights("general"), current=d.current, reversion=rev,
+                      peers=peer_multiples(d))
     hist = fv.historical_multiples(d.fin, d.prices, par)
     c = d.current
     eps, bvps = (c.eps, c.bvps) if c is not None else (hist["eps"].iloc[-1], hist["bvps"].iloc[-1])
@@ -235,15 +271,26 @@ def fa(d: Data):
 
     par = settings()["valuation"]["par_value"]
     caps = sc.year_end_market_caps(d.fin, d.prices, par)
-    f = sc.piotroski(d.fin, cfg.get("issue_materiality", 0.01))
+    f = sc.piotroski(d.fin, cfg.get("issue_materiality", 0.01), stock_ratios(d))
     z = sc.altman(d.fin, caps)
     nan = float("nan")
     pe_hist, pb_hist = history_targets(d.fin, d.prices, par) if not d.prices.empty else (nan, nan)
     score = sc.fa_score(d.fin, cfg, pe=v.pe if v else nan, pb=v.pb if v else nan,
                         dcf_upside=v.upside if v else nan,
                         roe=d.current.roe if d.current is not None else None,
-                        pe_hist=pe_hist, pb_hist=pb_hist)
+                        pe_hist=pe_hist, pb_hist=pb_hist, stock_ratio=stock_ratios(d))
     return f, z, score, v
+
+
+def stock_ratios(d: Data) -> dict[int, float] | None:
+    """{năm: tổng tỷ lệ thưởng/cổ tức bằng cổ phiếu theo ngày GDKHQ} hoặc None nếu chưa có lịch sử
+    sự kiện quyền (khi đó F-Score dùng dòng tiền phát hành)."""
+    div = d.dividends
+    if div is None or div.empty:
+        return None
+    s = div.dropna(subset=["stock_ratio"])
+    return {int(y): float(v) for y, v in
+            s.groupby(pd.to_datetime(s["exright_date"]).dt.year)["stock_ratio"].sum().items()}
 
 
 def indicators(prices: pd.DataFrame) -> pd.DataFrame:
@@ -314,15 +361,25 @@ def market_regime(index: pd.DataFrame | None = None):
     return regime(index, settings().get("regime", {}))
 
 
-def dividend_yield(d: Data) -> float:
-    """Cổ tức tiền 12 tháng (GDKHQ trong 365 ngày trước phiên giá cuối) / giá."""
+def dividend_yield(d: Data, raw: bool = False) -> float:
+    """Tỷ suất cổ tức tiền dùng cho lợi nhuận kỳ vọng.
+
+    Cổ tức 12 tháng (GDKHQ trong 365 ngày trước phiên giá cuối) / giá. Nếu vượt
+    `[recommend] max_dividend_yield` (10%) — thường do hai đợt của hai năm tài chính rơi vào cùng
+    12 tháng hoặc cổ tức đặc biệt một lần — thì dùng bình quân năm của 3 năm gần nhất, và không quá
+    ngưỡng đó (thận trọng). raw=True: trả số 12 tháng chưa điều chỉnh (để hiển thị)."""
     if d.dividends is None or d.dividends.empty or d.prices.empty:
         return 0.0
-    last = d.prices["date"].iloc[-1]
+    last, price = d.prices["date"].iloc[-1], float(d.prices["close"].iloc[-1])
     div = d.dividends
-    recent = div[(div["exright_date"] > last - pd.Timedelta(days=365))
-                 & (div["exright_date"] <= last)]
-    return float(recent["cash_per_share"].sum() / d.prices["close"].iloc[-1])
+    paid = div[div["exright_date"] <= last]
+    ttm = paid[paid["exright_date"] > last - pd.Timedelta(days=365)]["cash_per_share"].sum() / price
+    cap = settings()["recommend"].get("max_dividend_yield", 0.10)
+    if raw or ttm <= cap:
+        return float(ttm)
+    avg3 = (paid[paid["exright_date"] > last - pd.Timedelta(days=3 * 365)]["cash_per_share"].sum()
+            / 3 / price)
+    return float(min(ttm, avg3, cap))
 
 
 def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | None = None,

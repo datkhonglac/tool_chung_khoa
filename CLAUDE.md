@@ -52,7 +52,10 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   toàn), "CHỜ GIÁ" nếu quá cao; `[entry]`); `analysis.plan` dùng giữa vùng làm giá vào, KHÔNG dùng
   giá đóng cửa. Giá trị hợp lý `fa/fair_value.py` = bình quân DCF + P/E, P/B lịch sử (EPS/BVPS theo
   số cp hiện tại; bội số mục tiêu = hiện tại + `multiple_reversion` × (trung vị − hiện tại),
-  `fv.revert`; `pe_median`/`pb_median` là trung vị thật, dùng cho điểm FA tương đối); định chế tài chính: thu nhập thặng dư + P/B theo ROE (`analysis.financial`,
+  `fv.revert`; `pe_median`/`pb_median` là trung vị thật, dùng cho điểm FA tương đối; P/E, P/B ngành
+  `analysis.peer_multiples` khi kho có ≥ `min_peers` mã cùng ngành + loại DN; độ tin cậy "Cao" cần
+  phương pháp độc lập (`FairValue.independent`) và lệch ≤ 30% giá mục tiêu CTCK `analyst_target`;
+  cổ tức > `max_dividend_yield` dùng bình quân 3 năm; F-Score phát hành theo vốn góp mẹ trừ thưởng); định chế tài chính: thu nhập thặng dư + P/B theo ROE (`analysis.financial`,
   `scores.financial_score`, `[valuation.financials]`). Khuyến nghị tự lưu vào bảng `signals` +
   `data/signals.csv` (`analysis.record_signals`); `review-signals` chấm sau 5/20/60 phiên
   (`recommend/review.py`); test cô lập CSV bằng `VNSA_SIGNALS_CSV`.

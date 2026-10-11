@@ -60,11 +60,15 @@ beta_years = 3
 adjust_beta = true             # beta Blume = 0,67 × beta thô + 0,33
 par_value = 10000              # mệnh giá cổ phiếu (đồng)
 multiple_reversion = 0.5       # P/E, P/B mục tiêu 12 tháng thu hẹp 50% khoảng cách hiện tại → trung vị lịch sử (1 = quay hẳn về)
+min_peers = 3                  # số mã cùng ngành (đã có trong kho) tối thiểu để dùng P/E, P/B ngành
+max_peer_pe = 60               # bỏ mã cùng ngành có P/E ≤ 0 hoặc > 60 (lợi nhuận bất thường)
 
 [valuation.weights]
 # Trọng số các phương pháp tính giá trị hợp lý (fa/fair_value.py); thiếu phương pháp nào thì chia lại
-general = { dcf = 0.4, pe_hist = 0.3, pb_hist = 0.3 }
-financial = { ri = 0.25, pb_roe = 0.25, pb_hist = 0.5 }
+# pe_peer, pb_peer: bội số trung vị NGÀNH (chỉ khi kho có ≥ min_peers mã cùng ngành; không có thì
+# chia lại cho các phương pháp còn lại như trước)
+general = { dcf = 0.4, pe_hist = 0.3, pb_hist = 0.3, pe_peer = 0.15, pb_peer = 0.15 }
+financial = { ri = 0.25, pb_roe = 0.25, pb_hist = 0.5, pb_peer = 0.25 }
 
 [valuation.financials]
 # Ngân hàng / chứng khoán / bảo hiểm: thu nhập thặng dư + P/B hợp lý theo ROE (fa/fair_value.py)
@@ -181,6 +185,7 @@ seed = 42
 # Khuyến nghị hai trục (recommend/engine.py)
 # Trục 1 — xếp hạng theo lợi nhuận kỳ vọng 12 tháng = upside so với giá trị hợp lý + tỷ suất cổ tức:
 rating_thresholds = [0.15, 0.05, -0.05, -0.15]   # ≥ MUA · ≥ KHẢ QUAN · ≥ NẮM GIỮ · ≥ KÉM KHẢ QUAN · dưới: BÁN
+max_dividend_yield = 0.10   # cổ tức 12 tháng > 10% giá: dùng bình quân 3 năm, tối đa 10% (thường là 2 đợt dồn vào 12 tháng)
 bear_market_extra = 0.05    # VNINDEX xu hướng giảm: mọi ngưỡng cao thêm 5%
 min_fa_quality = 50         # điểm FA dưới mức này: hạ một bậc xếp hạng
 # Trục 2 — thời điểm (điểm TA):
@@ -212,6 +217,7 @@ medium_confidence = 3
 max_abs_upside = 0.6        # giá trị hợp lý lệch quá ±60% so với giá -> nghi mô hình không hợp với mã
 max_value_spread = 1.6      # dải P90 / P10 giá trị nội tại hẹp hơn mức này thì tính là "định giá đồng thuận"
 min_sessions = 500          # có ít nhất ~2 năm giá
+max_consensus_gap = 0.3     # giá trị hợp lý lệch > 30% so với giá mục tiêu CTCK (VCI tổng hợp): không xếp "Cao", cảnh báo
 
 [backtest]
 entry_score = 65            # mua khi điểm TA ≥ 65

@@ -15,6 +15,10 @@ Doanh nghiệp thường (mặc định DCF 40% · P/E lịch sử 30% · P/B l�
      nên làm P/E quá khứ thấp đi; chỉ dùng cách cũ (giá điều chỉnh / EPS theo số cp hiện tại) khi
      nguồn không có giá chưa điều chỉnh (giá lấy từ vnstock).
   3. P/B lịch sử: tương tự với vốn chủ công ty mẹ cuối năm; × BVPS hiện tại (quý gần nhất).
+  4. P/E, P/B NGÀNH (khi kho có ≥ `min_peers` mã cùng ngành ICB và cùng loại doanh nghiệp):
+     trung vị P/E, P/B hiện tại (TTM) của các mã đó × EPS, BVPS hiện tại. Độc lập với quá khứ của
+     chính mã (lịch sử 4 năm có thể gồm giai đoạn định giá cao như đầu 2022). Định chế tài chính
+     dùng P/B ngành. Thiếu mã cùng ngành thì bỏ, trọng số chia lại như cũ.
   Bội số MỤC TIÊU 12 tháng không giả định quay hẳn về trung vị lịch sử (thị trường có thể đã định
   giá lại mã): mục tiêu = bội số hiện tại + `multiple_reversion` × (trung vị − hiện tại), mặc định
   0,5 ([valuation]); 1 = quay hẳn về trung vị như cách cũ. Áp dụng cả cho kịch bản P10/P90.
@@ -45,7 +49,9 @@ import pandas as pd
 from vnsa.fa.ratios import compute_ratios
 
 METHOD_NAMES = {"dcf": "DCF-FCFF", "pe_hist": "P/E lịch sử", "pb_hist": "P/B lịch sử",
-                "ri": "Thu nhập thặng dư", "pb_roe": "P/B hợp lý theo ROE"}
+                "ri": "Thu nhập thặng dư", "pb_roe": "P/B hợp lý theo ROE",
+                "pe_peer": "P/E ngành", "pb_peer": "P/B ngành"}
+HISTORY_METHODS = {"pe_hist", "pb_hist"}    # cùng gốc bội số quá khứ của mã — không độc lập
 
 
 def shares_outstanding(fin: pd.DataFrame, par_value: float = 10_000) -> float:
@@ -152,8 +158,9 @@ def residual_income(fin: pd.DataFrame, ke: float, g: float, cfg: dict,
                           value_per_share=b0 + pv + pv_tv, justified_pb=pb_star, notes=notes)
 
 
-DEFAULT_WEIGHTS = {"general": {"dcf": 0.4, "pe_hist": 0.3, "pb_hist": 0.3},
-                   "financial": {"ri": 0.25, "pb_roe": 0.25, "pb_hist": 0.5}}
+DEFAULT_WEIGHTS = {"general": {"dcf": 0.4, "pe_hist": 0.3, "pb_hist": 0.3, "pe_peer": 0.15,
+                               "pb_peer": 0.15},
+                   "financial": {"ri": 0.25, "pb_roe": 0.25, "pb_hist": 0.5, "pb_peer": 0.25}}
 OUTLIER_RATIO = 2.5     # phương pháp lệch quá 2,5 lần trung vị các phương pháp bị loại
 
 
@@ -167,6 +174,12 @@ class FairValue:
     ri: ResidualIncome | None = None
     pe_median: float = float("nan")    # trung vị P/E, P/B lịch sử của mã
     pb_median: float = float("nan")
+    peers: tuple[float, float, int] | None = None   # (P/E, P/B trung vị ngành, số mã)
+
+    @property
+    def independent(self) -> bool:
+        """Có ít nhất một phương pháp không dựa vào bội số quá khứ của chính mã."""
+        return any(k not in HISTORY_METHODS for k in self.weights)
     weights: dict[str, float] = field(default_factory=dict)   # trọng số thực dùng (tổng = 1)
     p10: float = float("nan")    # dải giá trị nội tại theo kịch bản (scenario_range)
     p90: float = float("nan")
@@ -219,11 +232,12 @@ def scenario_range(values: list[float], center: float) -> tuple[float, float]:
 def combine(price: float, fin: pd.DataFrame, prices: pd.DataFrame, par_value: float = 10_000,
             dcf: float = float("nan"), ri: ResidualIncome | None = None,
             weights: dict[str, float] | None = None, current=None,
-            reversion: float = 1.0) -> FairValue:
+            reversion: float = 1.0, peers: tuple[float, float, int] | None = None) -> FairValue:
     """Giá trị hợp lý = bình quân có trọng số (mục [valuation.weights]) các phương pháp:
     doanh nghiệp thường DCF, P/E lịch sử, P/B lịch sử; định chế tài chính (truyền `ri`) thu nhập
     thặng dư, P/B theo ROE, P/B lịch sử. reversion: phần chênh lệch bội số hiện tại so với trung vị
-    lịch sử được giả định thu hẹp trong 12 tháng (revert)."""
+    lịch sử được giả định thu hẹp trong 12 tháng (revert). peers: (P/E, P/B trung vị ngành, số mã)
+    — cũng chỉ thu hẹp `reversion` khoảng cách."""
     hist = historical_multiples(fin, prices, par_value)
     last = hist.iloc[-1].copy()
     if current is not None:                     # EPS TTM, BVPS quý gần nhất, số cp hiện tại
@@ -245,8 +259,20 @@ def combine(price: float, fin: pd.DataFrame, prices: pd.DataFrame, par_value: fl
                    "pb_hist": pb_t * ri.book0}
         notes += ri.notes
         weights = weights or DEFAULT_WEIGHTS["financial"]
+    nan = float("nan")
+    if peers is not None:
+        pe_p, pb_p, n = peers
+        pe_now = price / last["eps"] if last["eps"] > 0 else nan
+        pb_now = price / bvps if bvps > 0 else nan
+        if ri is None and pe_p > 0 and last["eps"] > 0:
+            methods["pe_peer"] = revert(pe_now, pe_p, reversion) * last["eps"]
+        if pb_p > 0 and bvps > 0:
+            methods["pb_peer"] = revert(pb_now, pb_p, reversion) * bvps
+        pe_s = f"P/E trung vị {pe_p:.1f}, " if pe_p > 0 else ""
+        notes.append(f"so với {n} mã cùng ngành trong kho: {pe_s}P/B trung vị {pb_p:.2f}")
     if hist["pe"].notna().sum() + hist["pb"].notna().sum() < 4:
         notes.append("ít năm có đủ giá để tính bội số lịch sử: P/E, P/B lịch sử kém tin cậy")
     value, used, more = weighted_value(methods, weights)
     return FairValue(price=price, methods=methods, value=value, pe_target=pe_t, pb_target=pb_t,
-                     ri=ri, weights=used, notes=notes + more, pe_median=pe_med, pb_median=pb_med)
+                     ri=ri, weights=used, notes=notes + more, pe_median=pe_med, pb_median=pb_med,
+                     peers=peers)

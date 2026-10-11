@@ -49,3 +49,20 @@ def test_report_card_from_warehouse(warehouse):
         assert title in text, title
     no_fin = format_card(analysis.report_card("DEMO_C"))               # chưa có BCTC
     assert "Chưa có BCTC" in no_fin and "DỰ BÁO 20 PHIÊN" in no_fin
+
+
+def test_confidence_needs_independent_method_and_consensus(warehouse):
+    from vnsa import analysis
+    from vnsa.config import settings
+    from vnsa.data.store import Store
+    from vnsa.report.card import _confidence, build_card, format_card
+
+    with Store(warehouse) as store:
+        store.write_profile("DEMO_A", {"analyst_target": 10_000.0, "analyst_rating": "BUY"})
+    a = analysis.assess("DEMO_A")
+    level, _ = _confidence(a, settings()["report"])
+    gap = a.fair.value / 10_000 - 1
+    assert gap > 0.3 and level != "Cao"                           # lệch xa giá mục tiêu CTCK
+    text = format_card(build_card(a))
+    assert "Giá mục tiêu CTCK (VCI tổng hợp): 10.000đ · BUY" in text
+    assert "so với giá mục tiêu CTCK" in text
