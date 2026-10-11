@@ -11,9 +11,7 @@ cài Python, thư viện và extension **Claude Code** (cấu hình trong `.devc
 
 ```bash
 pytest                                   # kiểm tra
-pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
-python scripts/fetch_vnstock.py FPT HPG MWG VNM DGC --years 5
-python -m vnsa.cli load
+python -m vnsa.cli fetch                 # tải 5 năm giá từ CafeF và nạp vào kho
 python -m vnsa.cli check FPT
 ```
 
@@ -52,7 +50,22 @@ Sau đó mở `notebooks/01_kiem_tra_du_lieu.ipynb`, chọn kernel `.venv` và c
 
 ## 3. Lấy dữ liệu giá thật (việc chính của ngày 1)
 
-### Cách A — Excel từ CafeF (khuyến nghị)
+### Cách A — Tự động tải từ CafeF (khuyến nghị)
+
+Một lệnh tải 5 năm giá cho cả danh sách theo dõi trong `config/settings.toml`, không cần bấm
+"Xuất Excel" từng năm:
+
+```powershell
+python -m vnsa.cli fetch                  # FPT, HPG, MWG, VNM, DGC, 5 năm
+python -m vnsa.cli fetch FPT --years 3    # một mã, số năm tuỳ chọn
+python -m vnsa.cli check FPT
+```
+
+Lệnh tự chia từng đoạn 1 năm (CafeF chỉ trả tối đa 1 năm mỗi lần), ghép, bỏ ngày trùng, lấy
+giá điều chỉnh và khối lượng khớp lệnh, ghi `data/raw/prices/<MÃ>.csv` rồi nạp vào kho.
+Đây là nguồn không chính thức: nếu CafeF đổi cấu trúc, lệnh báo lỗi và bạn dùng Cách B.
+
+### Cách B — Excel từ CafeF (thủ công)
 
 1. Mở trang lịch sử giao dịch của mã, ví dụ `cafef.vn/du-lieu/lich-su-giao-dich-fpt-1.chn`.
 2. Mỗi lần xuất được khoảng 1 năm: chọn từng khoảng 1 năm (5 lần cho 5 năm), bấm **Xuất Excel**.
@@ -70,7 +83,7 @@ nghìn đồng sang đồng, và dùng cột **Giá điều chỉnh** để đi�
 (mở cửa, cao nhất, thấp nhất, đóng cửa). Kết quả ghi ra `data/raw/prices/FPT.csv` rồi nạp vào kho.
 Nhiều mã một lúc: `python -m vnsa.cli import-excel FPT HPG MWG VNM DGC`.
 
-### Cách B — file CSV có sẵn
+### Cách C — file CSV có sẵn
 
 Chép file vào `data/raw/prices/` với tên theo mã (`FPT.csv`) rồi chạy `python -m vnsa.cli load`.
 Tool tự nhận tiêu đề tiếng Anh lẫn tiếng Việt, ngày `dd/mm/yyyy` hoặc `yyyy-mm-dd`,
@@ -78,7 +91,7 @@ số có dấu phẩy, giá tính bằng nghìn đồng. Nếu báo "thiếu c�
 vào `COLUMN_ALIASES` trong `src/vnsa/data/providers/csv_provider.py`.
 
 **Lưu ý giá điều chỉnh:** nếu `check` báo `vuot_bien_do` đúng ngày giao dịch không hưởng quyền,
-file của bạn đang là giá chưa điều chỉnh — dùng Cách A hoặc tải lại bản đã điều chỉnh.
+file của bạn đang là giá chưa điều chỉnh — dùng Cách A/B hoặc tải lại bản đã điều chỉnh.
 
 ## Ý nghĩa các kết quả kiểm tra
 
@@ -101,6 +114,7 @@ src/vnsa/
   config.py                   đọc cấu hình
   data/providers/base.py      DataProvider: giao diện chung cho mọi nguồn dữ liệu
   data/providers/csv_provider.py   nguồn CSV thủ công
+  data/providers/cafef_provider.py tải giá tự động từ CafeF
   data/excel_import.py        ghép file Excel tải từ web
   data/cleaning.py            kiểm tra chất lượng
   data/store.py               kho DuckDB

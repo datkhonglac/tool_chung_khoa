@@ -115,3 +115,40 @@ def test_import_excel_merges_files_like_cafef(tmp_path):
     assert df["volume"].tolist() == [800, 900, 700]   # khối lượng KHỚP LỆNH, không phải thỏa thuận
     assert df["close"].tolist() == [50_000, 51_000, 52_000]
     assert validate_prices(df) == []
+
+
+def test_cafef_fetch_splits_years_pages_and_adjusts():
+    from datetime import date
+    from urllib.parse import parse_qs, urlparse
+
+    from vnsa.data.providers.cafef_provider import CafeFProvider
+
+    def row(d, close, adj, vol):
+        return {"Symbol": "FPT", "Ngay": d, "GiaDieuChinh": adj, "GiaDongCua": close,
+                "ThayDoi": "0 (0,00%)", "KhoiLuongKhopLenh": vol, "GiaTriKhopLenh": 1.0,
+                "KLThoaThuan": 99999, "GtThoaThuan": 1.0, "GiaMoCua": close,
+                "GiaCaoNhat": close + 1, "GiaThapNhat": close - 1}
+
+    # Giả lập CafeF: đoạn gần nhất có 3 phiên chia 2 trang, đoạn năm trước có 1 phiên.
+    recent = [row("06/01/2025", 52, 52, 700), row("03/01/2025", 51, 51, 900),
+              row("02/01/2025", 50, 50, 800)]
+    older = [row("02/01/2024", 100, 40, 500)]   # giá chưa điều chỉnh 100, điều chỉnh 40
+    calls = []
+
+    def fake_get(url):
+        q = {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
+        calls.append(q)
+        assert q["Symbol"] == "FPT"
+        rows = recent if q["EndDate"] == "01/10/2025" else older
+        page = int(q["PageIndex"])
+        batch = rows[(page - 1) * 2: page * 2]
+        return {"Success": True, "Message": None, "Data": {"TotalCount": len(rows), "Data": batch}}
+
+    df = CafeFProvider(pause=0, get_json=fake_get).ohlcv("fpt", date(2024, 1, 1), date(2025, 1, 10))
+    assert [c["EndDate"] for c in calls] == ["01/10/2025", "01/10/2025", "01/11/2024"]
+    assert calls[-1]["StartDate"] == "01/01/2024"
+    assert df["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2024-01-02", "2025-01-02", "2025-01-03", "2025-01-06"]
+    assert df["volume"].tolist() == [500, 800, 900, 700]       # khớp lệnh, không phải thỏa thuận
+    assert df["close"].tolist() == [40_000, 50_000, 51_000, 52_000]   # nghìn đồng -> đồng, điều chỉnh
+    assert df.loc[0, "high"] == 40_400                          # cả nến được điều chỉnh (101 * 0.4)

@@ -1,5 +1,6 @@
 """Dòng lệnh của tool.
 
+  python -m vnsa.cli fetch            # tải 5 năm giá của danh sách theo dõi từ CafeF rồi nạp
   python -m vnsa.cli import-excel FPT  # ghép data/raw/excel/FPT/*.xlsx -> data/raw/prices/FPT.csv rồi nạp
   python -m vnsa.cli load            # nạp mọi CSV trong data/raw/prices vào DuckDB
   python -m vnsa.cli load --sample   # nạp dữ liệu MẪU (giả lập) để chạy thử
@@ -82,6 +83,39 @@ def cmd_import_excel(args) -> int:
     return cmd_load(args)
 
 
+def cmd_fetch(args) -> int:
+    from datetime import date, timedelta
+
+    from vnsa.data.providers.cafef_provider import CafeFProvider
+
+    symbols = [s.upper() for s in args.symbols] or settings()["watchlist"]["symbols"]
+    end = date.today()
+    start = end - timedelta(days=round(365.25 * args.years))
+    out_dir = path("raw_prices_dir")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prov = CafeFProvider(pause=args.pause)
+    done, code = [], 0
+    for sym in symbols:
+        print(f"  … {sym}: đang tải {start} → {end} từ CafeF")
+        try:
+            df = prov.ohlcv(sym, start, end)
+        except Exception as e:  # noqa: BLE001
+            print(f"  ✗ {sym}: {e}")
+            code = 1
+            continue
+        out = out_dir / f"{sym}.csv"
+        df.assign(date=df["date"].dt.strftime("%Y-%m-%d")).drop(columns="symbol").to_csv(
+            out, index=False
+        )
+        first, last = df["date"].min().date(), df["date"].max().date()
+        print(f"  ✓ {sym}: {len(df)} phiên ({first} → {last}) → {out.relative_to(PROJECT_ROOT)}")
+        done.append(sym)
+    if args.no_load or not done:
+        return code
+    args.symbols, args.sample, args.force = done, False, False
+    return cmd_load(args) or code
+
+
 def cmd_check(args) -> int:
     from vnsa.data.store import Store
 
@@ -130,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     # Windows: tránh lỗi in tiếng Việt khi chuyển hướng output
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    p =argparse.ArgumentParser(prog="vnsa", description="VN Stock Analyzer")
+    p = argparse.ArgumentParser(prog="vnsa", description="VN Stock Analyzer")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("load", help="Nạp CSV vào kho DuckDB")
@@ -143,6 +177,13 @@ def main(argv: list[str] | None = None) -> int:
     pi.add_argument("symbols", nargs="+")
     pi.add_argument("--no-load", action="store_true", help="Chỉ tạo CSV, không nạp vào kho")
     pi.set_defaults(func=cmd_import_excel)
+
+    pf = sub.add_parser("fetch", help="Tải giá từ CafeF (tự chia từng năm) rồi nạp")
+    pf.add_argument("symbols", nargs="*", help="Bỏ trống = danh sách theo dõi trong settings.toml")
+    pf.add_argument("--years", type=int, default=5)
+    pf.add_argument("--pause", type=float, default=1.0, help="Giây nghỉ giữa các lần gọi")
+    pf.add_argument("--no-load", action="store_true", help="Chỉ tạo CSV, không nạp vào kho")
+    pf.set_defaults(func=cmd_fetch)
 
     pc = sub.add_parser("check", help="Kiểm tra chất lượng dữ liệu")
     pc.add_argument("symbol")

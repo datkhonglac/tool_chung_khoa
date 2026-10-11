@@ -10,7 +10,7 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   dấu cách và chữ có dấu — luôn đặt trong ngoặc kép).
 - Cài/cập nhật: `pip install -e ".[dev]"`. Test: `pytest`.
 - `data/raw/` và `*.duckdb` không đưa lên Git (xem `.gitignore`): dữ liệu thật phải tải lại trong
-  từng môi trường (vnstock: `python scripts/fetch_vnstock.py FPT HPG MWG VNM DGC --years 5`).
+  từng môi trường (`python -m vnsa.cli fetch`, hoặc vnstock: `python scripts/fetch_vnstock.py FPT HPG MWG VNM DGC --years 5`).
 - vnstock cài từ kho gói của nhà phát triển (PyPI đang cách ly gói này):
   `pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai`.
 
@@ -22,6 +22,8 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 - Mọi con số do Python tính; LLM chỉ diễn giải. Không bịa dữ liệu thị trường.
 
 ## Lệnh
+- `python -m vnsa.cli fetch [MÃ...] [--years 5]` — tải giá từ CafeF (API JSON không chính thức,
+  ≤1 năm mỗi lần gọi, ngày dạng tháng/ngày/năm) → `data/raw/prices/` → kho. Cách chính để lấy giá.
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
 - `python -m vnsa.cli load [--sample]` · `check FPT` · `list` · `chart FPT`
 
