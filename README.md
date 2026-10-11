@@ -93,6 +93,17 @@ vào `COLUMN_ALIASES` trong `src/vnsa/data/providers/csv_provider.py`.
 **Lưu ý giá điều chỉnh:** nếu `check` báo `vuot_bien_do` đúng ngày giao dịch không hưởng quyền,
 file của bạn đang là giá chưa điều chỉnh — dùng Cách A/B hoặc tải lại bản đã điều chỉnh.
 
+## 4. Báo cáo tài chính và chỉ số (ngày 2)
+
+```bash
+python -m vnsa.cli fetch-bctc          # BCTC năm hợp nhất của 5 mã (vnstock, nguồn VCI)
+python -m vnsa.cli ratios FPT          # ROE, ROA, biên gộp/ròng, vay/VCSH, CFO/LNST, tăng trưởng
+```
+
+Cần vnstock (Codespace đã cài sẵn; máy khác: `pip install -U --extra-index-url
+https://vnstocks.com/api/simple vnstock vnai`). Bản miễn phí của vnstock chỉ trả 4 năm gần nhất.
+Cách tính từng chỉ số ghi ở đầu file `src/vnsa/fa/ratios.py` (ROE dùng vốn chủ công ty mẹ bình quân).
+
 ## Ý nghĩa các kết quả kiểm tra
 
 | Mã | Mức | Ý nghĩa |
@@ -118,6 +129,8 @@ src/vnsa/
   data/excel_import.py        ghép file Excel tải từ web
   data/cleaning.py            kiểm tra chất lượng
   data/store.py               kho DuckDB
+  data/providers/vnstock_provider.py  BCTC năm qua vnstock (VCI)
+  fa/ratios.py                bộ chỉ số tài chính
   report/charts.py            biểu đồ nến
   cli.py                      dòng lệnh
 scripts/make_sample_data.py   sinh dữ liệu mẫu
@@ -128,7 +141,6 @@ tests/                        pytest
 Thêm nguồn mới (vnstock, DNSE, SSI…) = viết một lớp con của `DataProvider`
 trong `data/providers/`, không phải sửa phần còn lại.
 
-## Việc tiếp theo (ngày 2)
+## Việc tiếp theo (ngày 3)
 
-Đọc BCTC năm của 5 mã, tính ROE, ROA, biên lợi nhuận, D/E, CFO/LNST, tăng trưởng EPS
-và đối chiếu với số liệu công bố.
+WACC, định giá DCF-FCFF, P/E, P/B và ma trận độ nhạy.

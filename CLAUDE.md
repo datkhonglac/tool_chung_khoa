@@ -24,12 +24,15 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 ## Lệnh
 - `python -m vnsa.cli fetch [MÃ...] [--years 5]` — tải giá từ CafeF (API JSON không chính thức,
   ≤1 năm mỗi lần gọi, ngày dạng tháng/ngày/năm) → `data/raw/prices/` → kho. Cách chính để lấy giá.
+- `python -m vnsa.cli fetch-bctc [MÃ...]` — BCTC năm hợp nhất qua vnstock nguồn VCI → `data/raw/bctc/`
+  và bảng `fundamentals` trong kho. Bản miễn phí chỉ 4 năm gần nhất. KHÔNG dùng nguồn KBS (nhãn năm
+  bị đảo ngược). `python -m vnsa.cli ratios FPT` — bộ chỉ số (`src/vnsa/fa/ratios.py`, quy ước ở đầu file).
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
 - `python -m vnsa.cli load [--sample]` · `check FPT` · `list` · `chart FPT`
 
-## Lộ trình sprint 10 ngày (đang ở ngày 1–2)
-1. Dữ liệu giá ✔ (khung) → nạp đủ 5 năm cho FPT, HPG, MWG, VNM, DGC
-2. BCTC + bộ chỉ số tài chính, đối chiếu số công bố
+## Lộ trình sprint 10 ngày (đang ở ngày 3)
+1. Dữ liệu giá ✔ — 5 năm cho FPT, HPG, MWG, VNM, DGC (lệnh `fetch`)
+2. BCTC + bộ chỉ số tài chính ✔ (4 năm 2022–2025; còn đối chiếu thêm với BCTC gốc)
 3. WACC, DCF-FCFF, P/E, P/B, ma trận độ nhạy
 4. F-Score, Altman Z, điểm FA; chỉ báo TA
 5. Hỗ trợ/kháng cự, điểm TA, kế hoạch giao dịch (cắt lỗ theo ATR)
@@ -40,3 +43,5 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 10. Dự phòng, sửa lỗi
 
 Mỗi bước: viết test cho công thức tài chính, chạy `pytest` trước khi báo xong.
+Chạy thật trên máy chủ GitHub: workflow `.github/workflows/data.yml` (Actions → Run workflow; tuỳ chọn
+bỏ qua bước tải giá). Kết quả in trong log, file CSV/kho ở mục Artifacts.
