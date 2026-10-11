@@ -85,6 +85,8 @@ class Store:
         self.con.execute(SCHEMA)
         for f in FIELDS:  # kho tạo từ bản cũ: thêm cột khoản mục mới nếu còn thiếu
             self.con.execute(f"ALTER TABLE fundamentals ADD COLUMN IF NOT EXISTS {f} DOUBLE")
+        # giá đóng cửa chưa điều chỉnh (NULL nếu nguồn không có)
+        self.con.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS close_raw DOUBLE")
 
     def close(self) -> None:
         self.con.close()
@@ -99,7 +101,7 @@ class Store:
         """Ghi đè toàn bộ giá của các mã có trong df (nạp lại sạch, không trùng)."""
         if df.empty:
             return 0
-        frame = df[PRICE_COLUMNS].copy()
+        frame = df.reindex(columns=[*PRICE_COLUMNS, "close_raw"]).copy()
         frame["date"] = pd.to_datetime(frame["date"]).dt.date
         frame["source"] = source
         symbols = frame["symbol"].unique().tolist()
@@ -110,8 +112,8 @@ class Store:
                 "DELETE FROM prices WHERE symbol IN (SELECT DISTINCT symbol FROM incoming)"
             )
             self.con.execute(
-                "INSERT INTO prices (symbol, date, open, high, low, close, volume, source) "
-                "SELECT symbol, date, open, high, low, close, volume, source FROM incoming"
+                "INSERT INTO prices (symbol, date, open, high, low, close, volume, close_raw, source) "
+                "SELECT symbol, date, open, high, low, close, volume, close_raw, source FROM incoming"
             )
             self.con.execute("COMMIT")
         except Exception:
@@ -125,7 +127,7 @@ class Store:
         """Chỉ thay các phiên trong khoảng ngày của df (tải tăng dần), giữ nguyên phiên cũ hơn."""
         if df.empty:
             return 0
-        frame = df[PRICE_COLUMNS].copy()
+        frame = df.reindex(columns=[*PRICE_COLUMNS, "close_raw"]).copy()
         frame["date"] = pd.to_datetime(frame["date"]).dt.date
         frame["source"] = source
         self.con.register("incoming", frame)
@@ -137,8 +139,8 @@ class Store:
                 "WHERE p.symbol = r.symbol AND p.date BETWEEN r.d0 AND r.d1"
             )
             self.con.execute(
-                "INSERT INTO prices (symbol, date, open, high, low, close, volume, source) "
-                "SELECT symbol, date, open, high, low, close, volume, source FROM incoming"
+                "INSERT INTO prices (symbol, date, open, high, low, close, volume, close_raw, source) "
+                "SELECT symbol, date, open, high, low, close, volume, close_raw, source FROM incoming"
             )
             self.con.execute("COMMIT")
         except Exception:
@@ -160,7 +162,8 @@ class Store:
         return None if d is None else pd.Timestamp(d)
 
     def prices(self, symbol: str, start: str | None = None, end: str | None = None) -> pd.DataFrame:
-        sql = "SELECT symbol, date, open, high, low, close, volume FROM prices WHERE symbol = ?"
+        sql = ("SELECT symbol, date, open, high, low, close, volume, close_raw FROM prices "
+               "WHERE symbol = ?")
         params: list = [symbol.upper()]
         if start:
             sql += " AND date >= ?"
