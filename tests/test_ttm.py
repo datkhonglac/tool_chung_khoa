@@ -139,3 +139,13 @@ def test_analysis_uses_ttm_and_profile(warehouse):
     assert pb == pytest.approx(price / (1160 * B / 33e6))
     card = analysis.report_card("DEMO_A")
     assert card.basis == "TTM Q2/2026"
+
+
+def test_cli_value_and_fa_score_use_ttm_like_card(warehouse, capsys):
+    from vnsa import cli
+    from vnsa.data.store import Store
+
+    with Store(warehouse) as store:
+        store.write_quarterly(_quarters().assign(symbol="DEMO_A"), "test")
+    assert cli.main(["value", "DEMO_A"]) == 0
+    assert "(TTM Q2/2026)" in capsys.readouterr().out          # trước đây CLI bỏ mất BCTC quý

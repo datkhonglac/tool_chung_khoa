@@ -200,22 +200,22 @@ def _num(x: float, digits: int = 0) -> str:
     return "—" if _nan(x) else f"{x:,.{digits}f}"
 
 
-def _load(sym: str, need_fin: bool = True, need_prices: bool = True):
-    """(BCTC, giá, giá chỉ số) từ kho; in lệnh cần chạy và trả về None nếu thiếu."""
+def _load_data(sym: str, need_fin: bool = True, need_prices: bool = True):
+    """analysis.Data đầy đủ (BCTC năm + quý/TTM, hồ sơ, cổ tức, khối ngoại); in lệnh cần chạy và
+    trả về None nếu thiếu."""
     from vnsa import analysis
 
     try:
-        d = analysis.load(sym, need_fin, need_prices)
+        return analysis.load(sym, need_fin, need_prices)
     except analysis.DataMissing as e:
         print(e)
         return None
-    return d.fin, d.prices, d.index
 
 
-def _valuation(sym, fin, prices, index, growth=None, wacc=None):
-    from vnsa import analysis
-
-    return analysis.valuation(analysis.Data(sym, fin, prices, index), growth, wacc)
+def _load(sym: str, need_fin: bool = True, need_prices: bool = True):
+    """(BCTC, giá, giá chỉ số) từ kho; in lệnh cần chạy và trả về None nếu thiếu."""
+    d = _load_data(sym, need_fin, need_prices)
+    return None if d is None else (d.fin, d.prices, d.index)
 
 
 def cmd_value(args) -> int:
@@ -224,27 +224,27 @@ def cmd_value(args) -> int:
     from vnsa.fa import valuation as val
 
     sym = args.symbol.upper()
-    loaded = _load(sym)
-    if loaded is None:
+    d = _load_data(sym)
+    if d is None:
         return 1
-    fin, prices, index = loaded
     from vnsa import analysis
     from vnsa.market import financial_note
 
     if financial_note(sym):
-        return _fin_value(analysis.Data(sym, fin, prices, index))
+        return _fin_value(d)
     try:
-        a, v, b = _valuation(sym, fin, prices, index, args.growth, args.wacc)
+        a, v, b = analysis.valuation(d, args.growth, args.wacc)
     except ValueError as e:
         print(f"  ✗ {e}")
         return 1
     price = v.price
     bn, pct = _bn, _pct
 
-    day = prices["date"].iloc[-1].date()
+    day = d.prices["date"].iloc[-1].date()
     print(f"{sym} — giá {price:,.0f} đ ({day}), {v.shares / 1e6:,.1f} triệu cp, "
           f"vốn hoá {bn(price * v.shares)}")
-    print(f"  P/E {v.pe:.1f} lần · P/B {v.pb:.2f} lần (BCTC năm {int(fin['year'].iloc[-1])})")
+    basis = d.current.basis if d.current is not None else f"năm {int(d.fin['year'].iloc[-1])}"
+    print(f"  P/E {v.pe:.1f} lần · P/B {v.pb:.2f} lần ({basis})")
     beta_src = "mặc định"
     if not v.beta_is_default:
         beta_src = f"{v.beta_weeks} tuần so với VN-Index" + (
@@ -258,9 +258,9 @@ def cmd_value(args) -> int:
     path_ = " → ".join(pct(x) for x in val.growth_path(v.g1, v.g, a.forecast_years, a.fade_growth))
     print(f"  gốc (TB 3 năm) {bn(v.fcff_base)}; tăng {path_} trong {a.forecast_years} năm, "
           f"sau đó {pct(v.g)}/năm")
-    d, br = v.dcf, v.net_debt_bridge
-    print(f"\nDCF: PV dòng tiền {bn(d['pv_flows'])} + PV giá trị cuối {bn(d['pv_terminal'])} "
-          f"= EV {bn(d['ev'])}")
+    dcf, br = v.dcf, v.net_debt_bridge
+    print(f"\nDCF: PV dòng tiền {bn(dcf['pv_flows'])} + PV giá trị cuối {bn(dcf['pv_terminal'])} "
+          f"= EV {bn(dcf['ev'])}")
     print(f"  − vay {bn(br['debt'])} + tiền & ĐTNH {bn(br['cash'])} − CĐ thiểu số {bn(br['minority'])}"
           f" = vốn chủ {bn(v.equity_value)}")
     if not pd.isna(v.value_per_share):
@@ -274,7 +274,7 @@ def cmd_value(args) -> int:
         t.index = [pct(w) for w in t.index]
         t.columns = [pct(g) for g in t.columns]
         print(t.to_string())
-    _print_fair(analysis.Data(sym, fin, prices, index), v)
+    _print_fair(d, v)
     return 0
 
 
@@ -390,22 +390,22 @@ def cmd_fa_score(args) -> int:
     from vnsa.fa import scores as sc
 
     sym = args.symbol.upper()
-    loaded = _load(sym, need_prices=False)
-    if loaded is None:
+    d = _load_data(sym, need_prices=False)
+    if d is None:
         return 1
     from vnsa import analysis
 
-    fin = loaded[0]
+    fin = d.fin
     from vnsa.market import financial_note
 
     if financial_note(sym):
-        return _fin_score(analysis.Data(sym, *loaded))
+        return _fin_score(d)
     try:
-        f, z, score, v = analysis.fa(analysis.Data(sym, *loaded))
+        f, z, score, v = analysis.fa(d)
     except ValueError as e:
         print(f"  ✗ {e}")
         return 1
-    if v is None and not loaded[1].empty:
+    if v is None and not d.prices.empty:
         print("  ! không định giá được; bỏ nhóm định giá")
 
     print(f"{sym} — chất lượng tài chính (BCTC năm {int(fin['year'].iloc[0])}–"
