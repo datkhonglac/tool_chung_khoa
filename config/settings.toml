@@ -41,6 +41,8 @@ profile_max_age_days = 7    # hồ sơ (số cp lưu hành, sở hữu NN) và c
 pause = 0.3                 # giây nghỉ giữa các lần gọi CafeF
 flow_sessions = 60          # số phiên giao dịch khối ngoại / tự doanh tải từ CafeF
 macro = true                # cập nhật số vĩ mô (một lần mỗi lượt, khi đã cũ hơn [macro] max_age_hours)
+news = true                 # tải tiêu đề tin theo mã (vnstock/VCI) — chỉ tham khảo, không vào điểm
+news_max_age_hours = 12
 
 [flows]
 # Dòng tiền khối ngoại / tự doanh: chỉ để THAM KHẢO trên thẻ báo cáo, không vào điểm số
@@ -61,6 +63,8 @@ guard_coverage = 0.6
 rf_series = "vn_gov_10y"    # WACC/k_e dùng lợi suất TPCP 10 năm nhập tay nếu kỳ đó không cũ quá
 rf_max_age_days = 45        # số ngày này (tính từ cuối tháng); ngược lại dùng [valuation] risk_free
 sensitivity_min_months = 36 # độ nhạy (hồi quy tháng giá mã theo yếu tố) cần ≥ 36 tháng số liệu chung
+news_items = 5              # số tiêu đề tin (vnstock/VCI) trong 30 ngày gần nhất hiện trên thẻ/MCP
+news_days = 30
 
 [watchlist]
 symbols = ["FPT", "HPG", "MWG", "VNM", "DGC"]

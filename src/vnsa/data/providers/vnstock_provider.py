@@ -205,6 +205,29 @@ def standardize_dividends(events: pd.DataFrame, symbol: str) -> pd.DataFrame:
     return out.sort_values("exright_date").reset_index(drop=True)
 
 
+def standardize_news(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Company.news (VCI: news_title, public_date, news_source_link...) -> symbol, date, title, url,
+    source. Chỉ lấy tiêu đề (đã dò thật 12/10/2026); nội dung tin không đưa vào tính toán."""
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=["symbol", "date", "title", "url", "source"])
+    title = _col(raw, "news_title", "title")
+    date = _col(raw, "public_date", "publish_date", "date")
+    if title is None or date is None:
+        raise ValueError(f"Company.news đổi cấu trúc: {list(raw.columns)}")
+    url = _col(raw, "news_source_link", "url", "link")
+    out = pd.DataFrame({
+        "symbol": symbol.upper(),
+        "date": pd.to_datetime(date, errors="coerce"),
+        "title": title.astype(str).str.strip(),
+        "url": url.where(url.notna(), None) if url is not None else None,
+        "source": (_col(raw, "news_source") if _col(raw, "news_source") is not None
+                   else pd.Series(None, index=raw.index)).fillna("VCI"),
+    })
+    out = out.dropna(subset=["date"])
+    out = out[out["title"].str.len() > 0].drop_duplicates(["date", "title"])
+    return out.sort_values("date", ascending=False).reset_index(drop=True)
+
+
 def _vnstock_company(symbol: str, method: str) -> pd.DataFrame:
     os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
     from vnstock import Company
@@ -383,3 +406,6 @@ class VnstockProvider(DataProvider):
 
     def dividends(self, symbol: str) -> pd.DataFrame:
         return standardize_dividends(self.get_company(symbol, "events"), symbol)
+
+    def news(self, symbol: str) -> pd.DataFrame:
+        return standardize_news(self.get_company(symbol, "news"), symbol)

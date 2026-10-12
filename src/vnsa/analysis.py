@@ -609,6 +609,7 @@ class MacroView:
     risk_free: float
     rf_source: str
     sensitivity: list = field(default_factory=list)   # macro.sensitivity.Sensitivity theo yếu tố
+    news: pd.DataFrame = field(default_factory=pd.DataFrame)   # tiêu đề tin gần đây (tham khảo)
 
 
 def macro_mapping() -> dict:
@@ -633,6 +634,8 @@ def macro_view(symbol: str) -> MacroView | None:
     with Store(path("warehouse")) as store:
         data = store.macro()
         company = store.company(symbol)
+        news = store.news(symbol, limit=settings().get("macro", {}).get("news_items", 5),
+                          days=settings().get("macro", {}).get("news_days", 30))
     if data.empty:
         return None
     mc = settings().get("macro", {})
@@ -642,7 +645,7 @@ def macro_view(symbol: str) -> MacroView | None:
     market, groups = market_context(rs, mapping, cfg)
     ind = industry_score(symbol, company, rs, mapping, cfg)
     rf, src = risk_free()
-    return MacroView(market, groups, ind, rs, rf, src)
+    return MacroView(market, groups, ind, rs, rf, src, news=news)
 
 
 def macro_sensitivity(d: Data) -> list:

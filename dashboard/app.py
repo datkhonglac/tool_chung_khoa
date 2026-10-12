@@ -53,6 +53,23 @@ def report_text(symbol: str, _stamp: float) -> str:
 
 
 @st.cache_data(show_spinner=False)
+def macro(symbol: str, _stamp: float):
+    """(MacroView | None, độ nhạy, bảng mọi chuỗi vĩ mô trong kho)."""
+    from vnsa.data.store import Store
+
+    mv = analysis.macro_view(symbol)
+    sens = []
+    if mv is not None:
+        try:
+            sens = analysis.macro_sensitivity(analysis.load(symbol, need_fin=False))
+        except analysis.DataMissing:
+            pass
+    with Store(path("warehouse")) as store:
+        data = store.macro()
+    return mv, sens, data
+
+
+@st.cache_data(show_spinner=False)
 def load(symbol: str, _stamp: float):
     return analysis.load(symbol, need_fin=False)
 
@@ -104,8 +121,8 @@ with st.sidebar:
     st.caption("Kết quả là sàng lọc theo quy tắc trong config/settings.toml, "
                "không phải lời khuyên đầu tư.")
 
-tab_all, tab_ta, tab_fa, tab_val, tab_risk, tab_bt, tab_hist = st.tabs(
-    ["Tổng quan", "Kỹ thuật & kế hoạch", "Tài chính", "Định giá", "Rủi ro", "Backtest",
+tab_all, tab_ta, tab_fa, tab_val, tab_macro, tab_risk, tab_bt, tab_hist = st.tabs(
+    ["Tổng quan", "Kỹ thuật & kế hoạch", "Tài chính", "Định giá", "Vĩ mô", "Rủi ro", "Backtest",
      "Lịch sử khuyến nghị"])
 
 with tab_all:
@@ -306,6 +323,66 @@ with tab_val:
                 st.subheader("Độ nhạy giá trị/cp (nghìn đồng)")
                 st.plotly_chart(charts.sensitivity_heatmap(table, v.price), width="stretch")
             st.caption("Giả định ở mục [valuation] trong config/settings.toml.")
+
+with tab_macro:
+    from vnsa.macro.catalog import catalog
+    from vnsa.macro.signals import fmt_change, fmt_period, fmt_value
+
+    mv, sens, mdata = macro(symbol, stamp)
+    if mv is None:
+        st.info("Kho chưa có số vĩ mô. Chạy `python -m vnsa.cli fetch-macro` (số Việt Nam nhập tay "
+                "ở config/macro_manual.toml) rồi tải lại trang.")
+    else:
+        st.caption("Chỉ THAM KHẢO, chưa vào điểm xếp hạng: chờ review-signals chứng minh vĩ mô giúp "
+                   "phân biệt mã vượt VNINDEX. Điểm −1..+1: ≥ +0,3 Thuận lợi, ≤ −0,3 Bất lợi.")
+        cols = st.columns(len(mv.groups) + 1)
+        for col, g in zip(cols, [mv.market, *mv.groups.values()], strict=True):
+            col.metric(g.scope.replace("Bối cảnh Việt Nam", "Bối cảnh VN"),
+                       g.label if g.label != "Chưa đủ số liệu" else "Thiếu số",
+                       None if pd.isna(g.score) else f"{g.score:+.2f}",
+                       delta_color="off" if pd.isna(g.score) else "normal")
+        ind_m = mv.industry
+        if ind_m is None:
+            st.info(f"{symbol}: ngành chưa có ánh xạ yếu tố vĩ mô (thêm ở config/macro_map.toml).")
+        else:
+            st.subheader(f"{symbol} — {ind_m.scope}")
+            st.write(f"**{ind_m.label}**"
+                     + ("" if pd.isna(ind_m.score) else f" ({ind_m.score:+.2f})")
+                     + f" · độ phủ {ind_m.coverage:.0%}")
+            by_sens = {x.series: x for x in sens}
+            rows = []
+            for d in ind_m.drivers:
+                r, x = d.reading, by_sens.get(d.series)
+                rows.append({
+                    "Yếu tố": r.name if r else d.series, "Dấu giả định": "+" if d.sign > 0 else "−",
+                    "Kỳ": fmt_period(r) if r else "—", "Giá trị": fmt_value(r) if r else "—",
+                    "Biến động": fmt_change(r) if r else "—",
+                    "z": r.z if r is not None else float("nan"),
+                    "Đóng góp": d.contribution,
+                    "Kiểm chứng": (f"{x.verdict} (t {x.t:+.1f}, {x.n} tháng)"
+                                   if x is not None and x.verdict != "thiếu lịch sử"
+                                   else "thiếu lịch sử"),
+                    "Lý do": d.why})
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
+                         column_config={"z": st.column_config.NumberColumn(format="%+.1f"),
+                                        "Đóng góp": st.column_config.NumberColumn(format="%+.2f")})
+        st.caption(f"Lãi suất phi rủi ro trong WACC: {mv.risk_free:.2%} ({mv.rf_source})")
+        if len(mv.news):
+            st.subheader("Tin gần đây (tiêu đề, chỉ tham khảo)")
+            for r in mv.news.itertuples():
+                st.markdown(f"- {r.date:%d/%m/%Y} · " + (f"[{r.title}]({r.url})" if r.url else r.title))
+        cat = catalog()
+        have = [sid for sid in cat if sid in set(mdata["series"])]
+        if have:
+            st.subheader("Chuỗi vĩ mô")
+            default = (next((d.series for d in ind_m.drivers if d.series in have), have[0])
+                       if ind_m is not None else have[0])
+            sid = st.selectbox("Chuỗi", have, index=have.index(default),
+                               format_func=lambda k: f"{cat[k].name} ({k})")
+            ser = mdata[mdata["series"] == sid].set_index("date")["value"]
+            st.line_chart(ser, height=260)
+            st.caption(f"Nguồn: {cat[sid].source} · đơn vị: {cat[sid].unit}"
+                       + (f" · {cat[sid].note}" if cat[sid].note else ""))
 
 with tab_risk:
     try:

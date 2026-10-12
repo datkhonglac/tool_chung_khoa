@@ -124,6 +124,18 @@ CREATE TABLE IF NOT EXISTS macro_series (
     PRIMARY KEY (series, date)
 );
 """
+# Tiêu đề tin theo mã (vnstock/VCI) — chỉ để tham khảo, không vào tính toán
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS news (
+    symbol    VARCHAR NOT NULL,
+    date      TIMESTAMP NOT NULL,
+    title     VARCHAR NOT NULL,
+    url       VARCHAR,
+    source    VARCHAR,
+    loaded_at TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (symbol, date, title)
+);
+"""
 FLOW_COLUMNS = ["foreign_buy", "foreign_sell", "foreign_net", "foreign_net_vol", "foreign_room",
                 "foreign_pct", "prop_buy", "prop_sell", "prop_net"]
 
@@ -521,6 +533,41 @@ class Store:
         rows = self.con.execute("SELECT series, MAX(loaded_at) FROM macro_series "
                                 "GROUP BY series").fetchall()
         return {r[0]: pd.Timestamp(r[1]) for r in rows}
+
+    def write_news(self, df: pd.DataFrame, symbol: str) -> int:
+        """Thay toàn bộ tiêu đề tin của một mã (nguồn trả danh sách mới nhất)."""
+        sym = symbol.upper()
+        frame = df.reindex(columns=["symbol", "date", "title", "url", "source"]).copy()
+        frame["symbol"] = sym
+        frame = frame.drop_duplicates(["date", "title"])
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute("BEGIN")
+            self.con.execute("DELETE FROM news WHERE symbol = ?", [sym])
+            self.con.execute("INSERT INTO news (symbol, date, title, url, source) "
+                             "SELECT symbol, date, title, url, source FROM incoming")
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming")
+        return len(frame)
+
+    def news(self, symbol: str, limit: int = 10, days: int | None = None) -> pd.DataFrame:
+        sql = "SELECT date, title, url, source FROM news WHERE symbol = ?"
+        params: list = [symbol.upper()]
+        if days is not None:
+            sql += " AND date >= ?"
+            params.append(pd.Timestamp.now().normalize() - pd.Timedelta(days=days))
+        df = self.con.execute(sql + " ORDER BY date DESC LIMIT ?", [*params, limit]).df()
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+
+    def news_loaded_at(self, symbol: str) -> pd.Timestamp | None:
+        t = self.con.execute("SELECT MAX(loaded_at) FROM news WHERE symbol = ?",
+                             [symbol.upper()]).fetchone()[0]
+        return None if t is None else pd.Timestamp(t)
 
     def inventory(self) -> pd.DataFrame:
         """Mỗi mã có bao nhiêu phiên, từ ngày nào đến ngày nào."""

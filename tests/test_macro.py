@@ -431,3 +431,40 @@ def test_signals_store_macro_scores_and_review_groups(warehouse):
                        "excess": [0.05, -0.02, -0.04], "ret": [0.06, -0.01, -0.03]})
     by = summarize_macro(ev).set_index("macro")
     assert by.loc["Thuận lợi", "n"] == 1 and by.loc["Bất lợi", "avg_excess"] == pytest.approx(-0.03)
+
+
+def test_news_parse_store_and_card(warehouse):
+    from vnsa import analysis
+    from vnsa.data.providers.vnstock_provider import standardize_news
+    from vnsa.report.card import format_card
+
+    today = pd.Timestamp.today().normalize()
+    raw = pd.DataFrame({
+        "news_title": ["DEMO_A: Nghị quyết HĐQT", "DEMO_A: Báo cáo quý 3", "Tin cũ", ""],
+        "public_date": [(today - pd.Timedelta(days=d)).isoformat() for d in (1, 3, 90, 2)],
+        "news_source_link": [None, "https://x.vn/a", None, None], "news_id": [1, 2, 3, 4]})
+    news = standardize_news(raw, "demo_a")
+    assert list(news["title"]) == ["DEMO_A: Nghị quyết HĐQT", "DEMO_A: Báo cáo quý 3", "Tin cũ"]
+    with pytest.raises(ValueError, match="đổi cấu trúc"):
+        standardize_news(pd.DataFrame({"x": [1]}), "A")
+    with Store(warehouse) as store:
+        assert store.write_news(news, "DEMO_A") == 3
+        assert len(store.news("DEMO_A", days=30)) == 2 and store.news_loaded_at("DEMO_A")
+        store.write_macro(_monthly("usd_vnd", list(np.linspace(23000, 26000, 72)), daily=True))
+    text = format_card(analysis.report_card("DEMO_A"))
+    assert "Tin gần đây" in text and "Nghị quyết HĐQT" in text and "Tin cũ" not in text
+
+
+def test_mcp_macro_context(warehouse):
+    pytest.importorskip("mcp")
+    from vnsa import mcp_server as srv
+
+    assert "fetch-macro" in srv.macro_context()["error"]
+    with Store(warehouse) as store:
+        store.write_macro(_monthly("usd_vnd", list(np.linspace(23000, 26000, 72)), daily=True))
+    out = srv.macro_context("DEMO_A")
+    json.dumps(out, allow_nan=False)
+    assert out["industry"] is None and "ty_gia" in out["groups"]       # DEMO_A chưa có ngành
+    assert out["risk_free"]["source"] == "settings.toml"
+    table = srv.macro_context()
+    assert any(r["series"] == "usd_vnd" and r["value"] for r in table["series"])

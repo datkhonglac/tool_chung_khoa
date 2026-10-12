@@ -272,6 +272,22 @@ class Updater:
             return Step("khối ngoại", "error", "CafeF không có dữ liệu mã này")
         return Step("khối ngoại", "ok", f"{n} phiên (khối ngoại, tự doanh — CafeF)")
 
+    def _news(self, store: Store, sym: str) -> Step | None:
+        """Tiêu đề tin theo mã (vnstock/VCI), tải lại khi cũ hơn `[auto] news_max_age_hours`.
+        Tắt bằng `[auto] news = false`; nguồn không có hàm news (test) thì bỏ qua."""
+        get = getattr(self.vn, "news", None)
+        if not self.cfg.get("news", False) or get is None:
+            return None
+        loaded = store.news_loaded_at(sym)
+        age = (pd.Timestamp.now() - loaded).total_seconds() / 3600 if loaded is not None else None
+        if age is not None and age < self.cfg.get("news_max_age_hours", 12):
+            return Step("tin tức", "skip", f"tải {age:.0f} giờ trước")
+        try:
+            n = store.write_news(get(sym), sym)
+        except Exception as e:  # noqa: BLE001 - không có tin vẫn phân tích được
+            return Step("tin tức", "error", f"{e}; bỏ qua tiêu đề tin")
+        return Step("tin tức", "ok", f"{n} tiêu đề (vnstock/VCI, chỉ tham khảo)")
+
     def _macro(self) -> Step | None:
         """Số vĩ mô (lớp vĩ mô): nạp số nhập tay, tải lại chuỗi tự động nếu đã cũ. Tắt bằng
         `[auto] macro = false`."""
@@ -335,6 +351,9 @@ class Updater:
                 flow = self._flows(store, sym)
                 if flow is not None:
                     rep.steps.append(flow)
+                news = self._news(store, sym)
+                if news is not None:
+                    rep.steps.append(news)
         macro = self._macro() if rep.has_prices and sym != self.index else None
         if macro is not None:
             rep.steps.append(macro)

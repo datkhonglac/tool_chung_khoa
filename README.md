@@ -134,6 +134,48 @@ python -m vnsa.cli review-signals
 Cần vài tháng và vài chục mẫu mới có ý nghĩa.
 Trên Claude Desktop: hỏi "phân tích mã SHS" — Claude gọi công cụ `analyze_symbol`, tự tải dữ liệu.
 
+## Vĩ mô và ngành (chỉ tham khảo)
+
+Lớp thứ ba bên cạnh FA và TA: số liệu vĩ mô, giá hàng hoá, tỷ giá và tin tức liên quan tới ngành
+của từng mã. Thẻ báo cáo có thêm mục **VĨ MÔ & NGÀNH**; dashboard có tab **Vĩ mô**; Claude Desktop có
+công cụ `macro_context`.
+
+```bash
+python -m vnsa.cli fetch-macro          # tải Yahoo, World Bank, FRED + nạp số nhập tay
+python -m vnsa.cli macro                # bảng mọi chuỗi: giá trị, biến động 3 tháng, z so 5 năm
+python -m vnsa.cli macro HPG FPT        # yếu tố vĩ mô của ngành từng mã + kiểm chứng độ nhạy
+```
+
+- **Nguồn tự động:**
+  - Yahoo: USD/VND, USD/JPY, lợi suất Mỹ 10 năm, dầu Brent, chỉ số USD, quặng sắt, thép HRC (Mỹ,
+    đại diện), bông, đường.
+  - World Bank Pink Sheet: urê, DAP, đá phốt phát, than, cao su.
+  - FRED: lãi suất Fed, bán lẻ quần áo Mỹ.
+  - Phân tích (`analyze`) tự tải lại khi số đã cũ hơn 20 giờ.
+- **Số Việt Nam nhập tay** ở `config/macro_manual.toml`: CPI, tín dụng, bán lẻ, xuất khẩu, sản xuất
+  công nghiệp, PMI, khách quốc tế, đầu tư công, lãi suất liên ngân hàng, lợi suất TPCP 10 năm, GDP.
+  - Khoảng 10 số mỗi tháng; cách lấy ghi ở đầu file.
+  - Không có nguồn miễn phí tự động; thiếu số thì tool ghi rõ là thiếu.
+- **Ánh xạ ngành → yếu tố** ở `config/macro_map.toml`.
+  - Khớp tên ngành ICB cấp 4, 3, rồi 2; FPT và ACV được khai báo riêng.
+  - Mỗi yếu tố có dấu (+ thuận, − nghịch), trọng số và lý do.
+- **Điểm ngành** = Σ dấu × trọng số × z ÷ (2 × Σ trọng số), trong khoảng −1..+1.
+  - z là biến động hiện tại so với 5 năm của chính chuỗi đó, chặn ±2.
+  - ≥ +0,3 là Thuận lợi; ≤ −0,3 là Bất lợi.
+  - Yếu tố có số chiếm dưới 50% trọng số thì ghi "chưa đủ số liệu".
+- **Kiểm chứng độ nhạy:** hồi quy lợi nhuận tháng của mã theo VNINDEX và biến động từng yếu tố, cần
+  ≥ 36 tháng.
+  - Báo yếu tố "NGƯỢC dấu cấu hình" để bạn xem lại.
+  - Ví dụ: quặng sắt là chi phí của HPG nhưng giá quặng hay tăng cùng giá thép.
+- **Tác động lên khuyến nghị:** vĩ mô chưa vào điểm xếp hạng.
+  - Ngành bất lợi rõ (≤ −0,5, độ phủ ≥ 60%) chỉ làm **độ tin cậy giảm một bậc**.
+  - Điểm vĩ mô lúc khuyến nghị được lưu vào `signals`. `review-signals` chia kết quả theo
+    Thuận lợi / Trung tính / Bất lợi. Chỉ khi nhóm Thuận lợi vượt VNINDEX rõ hơn nhóm Bất lợi (đủ
+    mẫu) mới nên cho vĩ mô vào điểm.
+- **WACC:** dùng lợi suất TPCP 10 năm nhập tay nếu kỳ đó không cũ quá 45 ngày, ngược lại dùng 3,5% ở
+  `[valuation] risk_free`.
+- **Tin tức:** tiêu đề tin theo mã (vnstock/VCI), chỉ để đọc; không chấm điểm cảm xúc tin.
+
 ## 0. Chạy trên GitHub Codespaces (khuyến nghị)
 
 Trên trang repo GitHub: **Code → Codespaces → Create codespace on main**. Lần đầu mất vài phút để
@@ -353,6 +395,9 @@ src/vnsa/
   data/store.py               kho DuckDB
   data/providers/vnstock_provider.py  BCTC năm, danh sách niêm yết (sàn, ngành) qua vnstock (VCI)
   data/autofetch.py           tự tải phần dữ liệu còn thiếu/cũ cho một mã bất kỳ
+  data/providers/macro_provider.py số liệu vĩ mô: Yahoo, World Bank Pink Sheet, FRED
+  macro/                      lớp vĩ mô: danh mục + nhập tay (catalog), biến động/z (signals),
+                              điểm ngành/bối cảnh (score), độ nhạy (sensitivity), cập nhật (update)
   market.py                   quy tắc theo sàn: biên độ, bước giá; nhận diện ngân hàng/CK/bảo hiểm
   fa/ratios.py                bộ chỉ số tài chính
   fa/valuation.py             WACC, DCF-FCFF, P/E, P/B, độ nhạy

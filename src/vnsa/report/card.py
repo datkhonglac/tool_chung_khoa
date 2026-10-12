@@ -229,6 +229,12 @@ def macro_lines(mv, top: int = 4) -> list[str]:
                      "đúng dấu rõ" + (f"; NGƯỢC dấu: {', '.join(bad)} — xem lại macro_map.toml"
                                       if bad else ""))
     lines.append(f"Lãi suất phi rủi ro trong WACC: {vn_pct(mv.risk_free)} ({mv.rf_source})")
+    news = getattr(mv, "news", None)
+    if news is not None and len(news):
+        lines.append("Tin gần đây (tiêu đề, chỉ tham khảo — hỏi Claude Desktop để tóm tắt):")
+        for r in news.head(3).itertuples():
+            title = r.title if len(r.title) <= 90 else r.title[:87] + "…"
+            lines.append(f"  {r.date:%d/%m} {title}")
     return lines
 
 
