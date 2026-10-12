@@ -682,11 +682,14 @@ class Store:
 
     def write_screen(self, df: pd.DataFrame, industry: pd.DataFrame | None = None) -> int:
         """Ghi một lượt sàng lọc (bảng screen, và screen_industry nếu có điểm nhóm ngành): thay
-        toàn bộ dòng của các ngày as_of có trong df."""
+        toàn bộ dòng của các ngày as_of có trong df (mỗi bảng thay theo ngày của chính nó)."""
         n = self._replace_run("screen", SCREEN_COLUMNS, df, ("as_of", "last_date"))
         if industry is not None and not industry.empty:
             self._replace_run("screen_industry", INDUSTRY_COLUMNS, industry, ("as_of",))
         return n
+
+    def write_screen_industry(self, industry: pd.DataFrame) -> int:
+        return self._replace_run("screen_industry", INDUSTRY_COLUMNS, industry, ("as_of",))
 
     def _latest_run(self, table: str, as_of):
         if as_of is None:
@@ -702,6 +705,24 @@ class Store:
                               "ORDER BY symbol", [day]).df()
         for c in ("as_of", "last_date"):
             df[c] = pd.to_datetime(df[c])
+        return df
+
+    def screen_dates(self) -> list[pd.Timestamp]:
+        return [pd.Timestamp(r[0]) for r in
+                self.con.execute("SELECT DISTINCT as_of FROM screen ORDER BY as_of").fetchall()]
+
+    def screen_history(self, min_stage: int = 1) -> pd.DataFrame:
+        """Mọi lượt sàng lọc đã lưu, chỉ các mã đạt từ tầng `min_stage` (để chấm lại, lưu lịch sử)."""
+        df = self.con.execute(f"SELECT {', '.join(SCREEN_COLUMNS)} FROM screen WHERE stage >= ? "
+                              "ORDER BY as_of, symbol", [min_stage]).df()
+        for c in ("as_of", "last_date"):
+            df[c] = pd.to_datetime(df[c])
+        return df
+
+    def screen_industry_history(self) -> pd.DataFrame:
+        df = self.con.execute(f"SELECT {', '.join(INDUSTRY_COLUMNS)} FROM screen_industry "
+                              "ORDER BY as_of, rank NULLS LAST").df()
+        df["as_of"] = pd.to_datetime(df["as_of"])
         return df
 
     def screen_industry(self, as_of=None) -> pd.DataFrame:

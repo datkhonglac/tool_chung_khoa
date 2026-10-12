@@ -243,6 +243,7 @@ min_fa = 50                 # điểm FA tối thiểu
 min_z = 1.1                 # Altman Z'' tối thiểu (doanh nghiệp thường)
 min_confidence = "Thấp"     # độ tin cậy tối thiểu: "Thấp" (không lọc) | "Trung bình" | "Cao"
 outside_max = 10            # số mã MUA ngoài nhóm dẫn đầu được liệt kê
+review_horizons = [20, 60]  # số phiên để chấm lại các lượt sàng lọc (lệnh review-screen)
 
 [screen.industry_weights]
 momentum = 0.30             # sức mạnh tương đối so VNINDEX (3 và 6 tháng)

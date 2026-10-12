@@ -41,7 +41,8 @@ def test_export_import_roundtrip_adds_only_missing(warehouse, tmp_path):
         store.con.execute("DELETE FROM signals")
         store.con.execute("UPDATE fundamentals SET net_income_parent = 99 WHERE symbol = 'HIST' AND year = 2025")
     added = history.import_history(tmp_path)
-    assert added == {"signals": 1, "fundamentals": 1, "fundamentals_q": 0}
+    assert added == {"signals": 1, "fundamentals": 1, "fundamentals_q": 0,
+                     "screen": 0, "screen_industry": 0}
     with Store(warehouse) as store:
         f = store.fundamentals("HIST")
         assert f.loc[f["year"] == 2025, "net_income_parent"].iloc[0] == 99   # không ghi đè số mới
@@ -52,4 +53,4 @@ def test_export_import_roundtrip_adds_only_missing(warehouse, tmp_path):
 
 def test_import_from_missing_git_ref_is_harmless(warehouse):
     assert history.import_history(git_ref="origin/khong-co-nhanh-nay") == {
-        "signals": 0, "fundamentals": 0, "fundamentals_q": 0}
+        "signals": 0, "fundamentals": 0, "fundamentals_q": 0, "screen": 0, "screen_industry": 0}

@@ -340,19 +340,24 @@ class Updater:
             self._macro_step = Step("vĩ mô", status, detail)
         return self._macro_step
 
-    def long_prices(self, symbols: list[str], years: int) -> list[Step]:
+    def long_prices(self, symbols: list[str], years: int, workers: int = 1) -> list[Step]:
         """Chỉ tải GIÁ (kèm VNINDEX và danh sách sàn để biết biên độ) đủ `years` năm cho kiểm định
-        nhiều mã (lệnh study-timing); mã đã có đủ thì chỉ tải phần mới."""
+        nhiều mã (lệnh study-timing, study-screen); mã đã có đủ thì chỉ tải phần mới. `workers` > 1:
+        tải CafeF song song trước."""
         steps = []
         cfg_years = self.cfg.get("years")
         self.cfg = {**self.cfg, "years": years}
         try:
             with Store(path("warehouse")) as store:
                 steps.append(self._listing(store, False))
-                for sym in [*symbols, self.index]:
+                todo = [*symbols, self.index]
+                if workers > 1:
+                    self._prefetch(store, todo, workers, full_if_short=True)
+                for sym in todo:
                     steps.append(self._prices(store, sym, sym, full=self._short(store, sym)))
         finally:
             self.cfg = {**self.cfg, "years": cfg_years}
+            self._prefetched.clear()
         return steps
 
     def listing(self, refresh: bool = False) -> Step:
@@ -360,7 +365,8 @@ class Updater:
         with Store(path("warehouse")) as store:
             return self._listing(store, refresh)
 
-    def _prefetch(self, store: Store, symbols: list[str], workers: int) -> None:
+    def _prefetch(self, store: Store, symbols: list[str], workers: int,
+                  full_if_short: bool = False) -> None:
         """Tải trước giá CafeF của nhiều mã bằng `workers` luồng (chỉ phần gọi mạng; ghi kho vẫn
         tuần tự trong _prices). Cùng khoảng ngày _prices sẽ hỏi: mã chưa có -> _full_start, mã đã
         có -> từ phiên cuối − overlap_days. Mã lần trước lấy từ vnstock thì để _prices tự gọi."""
@@ -372,9 +378,12 @@ class Updater:
         jobs = []
         for sym in symbols:
             last = store.last_price_date(sym)
-            if (last is not None and last >= end_ts) or store.price_source(sym) == self.vn.name:
+            short = full_if_short and self._short(store, sym)
+            if ((last is not None and last >= end_ts and not short)
+                    or store.price_source(sym) == self.vn.name):
                 continue
-            start = (self._full_start(store, sym, today) if last is None
+            full = last is None or (full_if_short and self._short(store, sym))
+            start = (self._full_start(store, sym, today) if full
                      else (last - timedelta(days=self.cfg["overlap_days"])).date())
             jobs.append((sym, start, today))
 

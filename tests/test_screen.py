@@ -348,3 +348,77 @@ def test_quick_prices_parallel_prefetch_matches_sequential(market_db):
     with Store(market_db) as store:
         assert store.first_price_date("DEMO_A") >= pd.Timestamp("2025-10-09")
         assert store.last_price_date("DEMO_C") == pd.Timestamp("2026-10-09")
+
+
+def test_review_screen_compares_picks_with_liquid_universe():
+    from vnsa.screen.review import evaluate, format_review, summarize
+
+    days = pd.bdate_range("2026-01-01", periods=80)
+    up = pd.Series(np.linspace(100, 130, 80), index=days)          # mã được chọn: +30%
+    flat = pd.Series(100.0, index=days)
+    closes = pd.DataFrame({"AAA": up, "BBB": flat, "CCC": flat * 0.9})
+    index = pd.Series(np.linspace(1000, 1050, 80), index=days)
+    runs = pd.DataFrame({"as_of": days[0], "symbol": ["AAA", "BBB", "CCC", "DDD"],
+                         "stage": [4, 3, 1, 0], "group_name": "G", "action": "MUA"})
+    ev = evaluate(runs, closes, index, [20, 200])
+    assert set(ev["horizon"]) == {20}                                # 200 phiên: chưa đủ để chấm
+    assert set(ev["symbol"]) == {"AAA", "BBB", "CCC"}                # tầng 0 không chấm
+    sm = summarize(ev).set_index("tier")
+    assert sm.loc["Được chọn", "ret"] == pytest.approx(up.iloc[20] / 100 - 1)
+    assert sm.loc["Được chọn", "beat_liquid"] == 1.0
+    assert sm.loc["Qua thanh khoản", "n"] == 3
+    text = format_review(summarize(ev), 1)
+    assert "CHẤM LẠI SÀNG LỌC" in text and "Dưới 10 lượt" in text
+    assert "chưa lượt nào đủ phiên" in format_review(pd.DataFrame(), 2)
+
+
+def test_history_roundtrip_keeps_screen_runs(market_db, tmp_path, monkeypatch):
+    from vnsa import history
+    from vnsa.screen import run as screen_run
+
+    cfg = {**screen_run.screen_cfg(), "min_members": 1}
+    monkeypatch.setattr(screen_run, "screen_cfg", lambda: cfg)
+    screen_run.run("pick", updater=_updater(), log=None)
+    counts = history.export_history(tmp_path / "hist")
+    assert counts["screen"] == 2 and counts["screen_industry"] == 2   # chỉ mã qua thanh khoản
+    monkeypatch.setenv("VNSA_WAREHOUSE", str(tmp_path / "new.duckdb"))
+    added = history.import_history(tmp_path / "hist")
+    assert added["screen"] == 2 and added["screen_industry"] == 2
+    assert history.import_history(tmp_path / "hist")["screen"] == 0   # nạp lại: không trùng
+    with Store(tmp_path / "new.duckdb") as store:
+        assert set(store.screen()["symbol"]) == {"DEMO_A", "DEMO_C"}
+
+
+def test_study_picks_strong_groups_without_lookahead():
+    from vnsa.screen.study import format_study, run_study
+
+    days = pd.bdate_range("2020-01-01", periods=600)
+    rng = np.random.default_rng(1)
+    cols, groups = {}, {}
+    for g, drift in (("Mạnh", 0.002), ("Vừa", 0.0), ("Yếu", -0.001)):
+        for i in range(4):
+            noise = rng.normal(0, 0.01, len(days))
+            cols[f"{g}{i}"] = 10_000 * np.exp(np.cumsum(drift + noise))
+            groups[f"{g}{i}"] = g
+    close = pd.DataFrame(cols, index=days)
+    value = pd.DataFrame(5e9, index=days, columns=close.columns)
+    value["Yếu3"] = 1e8                                            # không đủ thanh khoản
+    index = pd.Series(1000.0, index=days)
+    cfg = {"min_members": 3, "top_industries": 1, "per_industry": 2, "min_value_bn": 3.0,
+           "industry_weights": {"momentum": 0.3, "breadth": 0.1}}
+    res = run_study(close, value, index, pd.Series(groups), cfg,
+                    {"fee": 0.0015, "sell_tax": 0.001}, split="2021-06-01")
+    m = res.monthly
+    assert len(m) >= 15 and (m["n_picks"] == 2).all()
+    assert (m["n_universe"] == 11).all()                            # Yếu3 bị loại vì GTGD
+    assert res.picks["group"].value_counts().idxmax() == "Mạnh"     # chọn nhóm mạnh
+    # không nhìn trước: lợi nhuận tháng = giá cuối tháng sau / cuối tháng này của mã đã chọn
+    first = res.picks[res.picks["date"] == m["date"].iloc[0]]["symbol"].tolist()
+    d0 = m["date"].iloc[0]
+    d1 = m["date"].iloc[1]
+    gross = float((close.loc[d1, first] / close.loc[d0, first] - 1).mean())
+    assert m["strategy"].iloc[0] == pytest.approx(gross - 0.0015)   # tháng đầu: chỉ phí mua
+    p = res.periods.set_index(["period", "portfolio"])
+    assert ("Toàn bộ", "Bộ lọc (phần giá)") in p.index and ("từ 06/2021", "VNINDEX") in p.index
+    assert p.loc[("Toàn bộ", "Bộ lọc (phần giá)"), "cagr"] > p.loc[("Toàn bộ", "Rổ chia đều mọi mã"), "cagr"]
+    assert "KIỂM ĐỊNH SÀNG LỌC" in format_study(res)

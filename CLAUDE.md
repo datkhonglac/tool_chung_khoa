@@ -119,7 +119,11 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   dashboard tab "Sàng lọc thị trường", MCP `screen_market` (đọc lượt mới nhất). T1 tải song song
   (`Updater._prefetch`, `[screen] workers`, ghi kho tuần tự). vnstock: mọi lượt gọi qua
   `vnstock_provider._call` (`RateLimiter` theo `[vnstock]`, khoá `VNSTOCK_API_KEY`) vì vnai vượt hạn mức
-  (Khách 20/phút, 1.200/giờ) là SystemExit.
+  (Khách 20/phút, 1.200/giờ) là SystemExit. Kiểm chứng: `review-screen` (`screen/review.py`: lượt đã lưu, lãi/lỗ
+  20/60 phiên theo tầng 4 / ≥3 / ≥1, bình quân theo lượt) và `study-screen` (`screen/study.py`: walk-forward
+  tháng 10 năm phần giá — RS + độ rộng nhóm, RS 6T trong nhóm, phí/thuế [backtest]; thiên lệch sống sót).
+  Lịch sử: `history export/import` thêm `screen.csv` (tầng ≥ 1), `screen_industry.csv` (nạp theo lượt).
+  Workflow `screen.yml`: thứ Bảy 8:17 giờ VN, ghi nhánh `signals` (chỉ nhánh mặc định).
 - MCP server: `python -m vnsa.mcp_server` (extra `[mcp]`, chạy được mcp 1.x và 2.x); cấu hình mẫu cho
   Claude Desktop ở `docs/`. Dashboard: `streamlit run dashboard/app.py` (extra `[dashboard]`, cổng 8501).
 - `python scripts/smoke_test.py` gọi mọi công cụ MCP + dashboard trên kho thật. Test dùng fixture

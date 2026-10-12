@@ -204,3 +204,64 @@ def outside_picks(table: pd.DataFrame) -> pd.DataFrame:
     m = (table["stage"] == 2) & (table["action"] == "MUA") & (
         table["reason"] == "đạt nhưng ngoài nhóm ngành dẫn đầu")
     return order(table[m]).head(screen_cfg().get("outside_max", 10))
+
+
+def review(horizons: list[int] | None = None) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """(bảng chấm từng mã × kỳ, tổng hợp theo kỳ × tầng, số lượt đã lưu) — screen/review.py."""
+    from vnsa.screen.review import evaluate, summarize
+
+    horizons = horizons or screen_cfg().get("review_horizons", [20, 60])
+    index = settings()["valuation"]["index"]
+    with Store(path("warehouse")) as store:
+        runs = store.screen_history(min_stage=1)
+        if runs.empty:
+            return pd.DataFrame(), pd.DataFrame(), 0
+        px = store.recent_prices(runs["as_of"].min() - pd.Timedelta(days=10),
+                                 [*runs["symbol"].unique(), index])
+    closes = px.pivot_table(index="date", columns="symbol", values="close").sort_index()
+    idx = closes.pop(index) if index in closes else pd.Series(dtype=float)
+    ev = evaluate(runs, closes, idx.dropna(), horizons)
+    return ev, summarize(ev), runs["as_of"].nunique()
+
+
+def study(years: int | None = None, update: bool = True, log: Callable[[str], None] | None = print):
+    """Kiểm định quá khứ phần giá của bộ lọc (screen/study.py) trên các mã đủ thanh khoản ở lượt
+    sàng lọc gần nhất; tải đủ `years` năm giá (mặc định [study] years). Lưu CSV ở data/study/."""
+    from vnsa.screen.study import run_study
+
+    cfg, scfg = screen_cfg(), settings().get("study", {})
+    years = years or scfg.get("years", 10)
+    index = settings()["valuation"]["index"]
+    table, _ = latest()
+    if table.empty:
+        raise ValueError("chưa có lượt sàng lọc nào: chạy lệnh screen trước (lấy danh sách mã)")
+    liquid = table[table["stage"] >= 1]
+    groups = liquid.set_index("symbol")["group_name"]
+    if update:
+        from vnsa.data.autofetch import Updater
+
+        if log:
+            log(f"Tải {years} năm giá cho {len(liquid)} mã + {index} "
+                f"({cfg.get('workers', 4)} luồng) ...")
+        steps = Updater().long_prices(liquid["symbol"].tolist(), years,
+                                      workers=cfg.get("workers", 4))
+        bad = [s for s in steps if s.status == "error"]
+        if log and bad:
+            log(f"  ✗ {len(bad)} mã lỗi tải giá (bỏ qua)")
+    with Store(path("warehouse")) as store:
+        px = store.recent_prices(pd.Timestamp.today() - pd.Timedelta(days=round(365.25 * years)),
+                                 [*liquid["symbol"], index])
+    raw = px["close_raw"].where(px["close_raw"] > 0, px["close"])
+    px = px.assign(value=raw * px["volume"].fillna(0))
+    close = px.pivot_table(index="date", columns="symbol", values="close").sort_index()
+    value = px.pivot_table(index="date", columns="symbol", values="value").sort_index()
+    idx = close.pop(index) if index in close else pd.Series(dtype=float)
+    value = value.drop(columns=[index], errors="ignore")
+    res = run_study(close, value, idx, groups, cfg, settings().get("backtest", {}),
+                    scfg.get("split"))
+    out = path("warehouse").parent / "study"
+    out.mkdir(parents=True, exist_ok=True)
+    res.monthly.to_csv(out / "screen_study_monthly.csv", index=False)
+    res.periods.to_csv(out / "screen_study.csv", index=False)
+    res.picks.to_csv(out / "screen_study_picks.csv", index=False)
+    return res

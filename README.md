@@ -226,7 +226,16 @@ python -m vnsa.cli screen --groups              # bảng ngành ICB → nhóm ng
 - Mã chỉ có 1 năm giá trong kho: `analyze` tự tải bổ sung đủ 5 năm khi cần.
 - Kết quả: bảng `screen`, `screen_industry` trong kho và `data/screen/screen_YYYY-MM-DD.csv`,
   `industry_YYYY-MM-DD.csv`.
-- Chạy trên GitHub: Actions → **Sàng lọc thị trường** → Run workflow. Kho được giữ giữa các lần chạy.
+- **Kiểm chứng:**
+  - `python -m vnsa.cli review-screen`: chấm lại các lượt đã lưu sau 20 và 60 phiên — mã được chọn,
+    mọi mã trong nhóm dẫn đầu, so với rổ mọi mã đủ thanh khoản và VNINDEX. Cần khoảng 10 lượt
+    (10 tuần) mới bắt đầu có ý nghĩa.
+  - `python -m vnsa.cli study-screen`: kiểm định quá khứ 10 năm phần dựa trên giá (động lượng nhóm
+    ngành, độ rộng, sức mạnh giá), mỗi tháng chọn lại, trừ phí và thuế, so với rổ chia đều và
+    VNINDEX. Phần BCTC và vĩ mô không có lịch sử miễn phí để kiểm định ngược.
+- Chạy trên GitHub: Actions → **Sàng lọc thị trường** → Run workflow (tick `study` để kiểm định 10
+  năm). Sau khi gộp vào nhánh chính, workflow tự chạy mỗi sáng thứ Bảy và lưu lịch sử vào nhánh
+  `signals`. Trên Codespaces nạp lịch sử về: `python -m vnsa.cli history import --git origin/signals`.
 
 ## 0. Chạy trên GitHub Codespaces (khuyến nghị)
 
