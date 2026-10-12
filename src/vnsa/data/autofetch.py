@@ -96,6 +96,7 @@ class Updater:
         self._index_step: Step | None = None
         self._macro_step: Step | None = None       # số vĩ mô dùng chung mọi mã: kiểm tra một lần
         self.macro_provider = macro_provider
+        self._prefetched: dict = {}                # (mã, từ, đến) -> (giá, ngày sửa) | lỗi
 
     # ---- các bước ----------------------------------------------------------------------------
     def _listing(self, store: Store, refresh: bool) -> Step:
@@ -204,7 +205,14 @@ class Updater:
         closed = last_session(self.now(), self.cfg["market_close_hour"])
         for prov in self._order:
             try:
-                df = prov.ohlcv(sym, start, end)
+                pre = (self._prefetched.pop((sym, str(start), str(end)), None)
+                       if prov is self.cafef else None)
+                if pre is not None:                     # đã tải song song ở quick_prices
+                    if isinstance(pre, Exception):
+                        raise pre
+                    df, self.cafef.repaired = pre
+                else:
+                    df = prov.ohlcv(sym, start, end)
                 if not df.empty:
                     df = df[pd.to_datetime(df["date"]) <= closed].reset_index(drop=True)
                 if df.empty:
@@ -352,12 +360,43 @@ class Updater:
         with Store(path("warehouse")) as store:
             return self._listing(store, refresh)
 
+    def _prefetch(self, store: Store, symbols: list[str], workers: int) -> None:
+        """Tải trước giá CafeF của nhiều mã bằng `workers` luồng (chỉ phần gọi mạng; ghi kho vẫn
+        tuần tự trong _prices). Cùng khoảng ngày _prices sẽ hỏi: mã chưa có -> _full_start, mã đã
+        có -> từ phiên cuối − overlap_days. Mã lần trước lấy từ vnstock thì để _prices tự gọi."""
+        import copy
+        from concurrent.futures import ThreadPoolExecutor
+
+        end_ts = last_session(self.now(), self.cfg["market_close_hour"])
+        today = self.now().date()
+        jobs = []
+        for sym in symbols:
+            last = store.last_price_date(sym)
+            if (last is not None and last >= end_ts) or store.price_source(sym) == self.vn.name:
+                continue
+            start = (self._full_start(store, sym, today) if last is None
+                     else (last - timedelta(days=self.cfg["overlap_days"])).date())
+            jobs.append((sym, start, today))
+
+        def fetch(job):
+            sym, start, end = job
+            prov = copy.copy(self.cafef)                # mỗi luồng một bản: `repaired` riêng
+            try:
+                return job, (prov.ohlcv(sym, start, end), list(getattr(prov, "repaired", [])))
+            except Exception as e:  # noqa: BLE001 - lỗi để _prices xử lý (thử nguồn khác)
+                return job, e
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for (sym, start, end), res in pool.map(fetch, jobs):
+                self._prefetched[(sym, str(start), str(end))] = res
+
     def quick_prices(self, symbols: list[str], years: int = 1,
-                     progress: Callable[[int, int, str, Step], None] | None = None
-                     ) -> dict[str, Step]:
+                     progress: Callable[[int, int, str, Step], None] | None = None,
+                     workers: int = 1) -> dict[str, Step]:
         """Chỉ tải GIÁ cho nhiều mã (sàng lọc toàn thị trường, screen/): mã chưa có giá tải `years`
         năm (1 lần gọi CafeF), mã đã có chỉ tải phần mới. Không tải BCTC/hồ sơ — phần đó để
-        ensure() làm cho các mã qua lọc (ensure tự bổ sung đủ `[auto] years` năm giá)."""
+        ensure() làm cho các mã qua lọc (ensure tự bổ sung đủ `[auto] years` năm giá).
+        `workers` > 1: tải CafeF song song trước (nhanh hơn nhiều với ~1.500 mã)."""
         out: dict[str, Step] = {}
         cfg_years = self.cfg.get("years")
         self.cfg = {**self.cfg, "years": years}
@@ -366,12 +405,15 @@ class Updater:
         try:
             with Store(path("warehouse")) as store:
                 self._listing(store, False)
+                if workers > 1:
+                    self._prefetch(store, todo, workers)
                 for i, sym in enumerate(todo, 1):
                     out[sym] = self._prices(store, sym, sym, full=False)
                     if progress:
                         progress(i, len(todo), sym, out[sym])
         finally:
             self.cfg = {**self.cfg, "years": cfg_years}
+            self._prefetched.clear()
         return out
 
     # ---- điểm vào ----------------------------------------------------------------------------

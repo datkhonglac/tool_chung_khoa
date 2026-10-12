@@ -183,6 +183,7 @@ SCREEN_TYPES = {
     "pb": "DOUBLE", "z_em": "DOUBLE", "macro_industry": "DOUBLE", "zone_status": "VARCHAR",
     "buy_low": "DOUBLE", "buy_high": "DOUBLE", "stop": "DOUBLE", "red_flags": "VARCHAR",
     "fin_basis": "VARCHAR", "group_rank": "DOUBLE", "group_score": "DOUBLE",
+    "pick_rank": "DOUBLE",                     # tầng 4: thứ tự trong nhóm của mã được chọn
 }
 SCREEN_COLUMNS = ["as_of", "symbol", *SCREEN_TYPES]
 # Điểm nhóm ngành mỗi lượt sàng lọc (screen/industry.py): số thô + điểm thành phần (pt_*) 0–100

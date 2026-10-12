@@ -186,21 +186,22 @@ python -m vnsa.cli macro HPG FPT        # yếu tố vĩ mô của ngành từng
   `[valuation] risk_free`.
 - **Tin tức:** tiêu đề tin theo mã (vnstock/VCI), chỉ để đọc; không chấm điểm cảm xúc tin.
 
-## Sàng lọc toàn thị trường (đang làm)
+## Sàng lọc toàn thị trường
 
 Lọc mọi mã HOSE, HNX, UPCoM qua 5 tầng để ra nhóm ngành tiềm năng và mã tiềm năng trong từng
 nhóm: tầng 0 vũ trụ → tầng 1 thanh khoản → tầng 2 phân tích từng mã → tầng 3 chấm nhóm ngành →
-tầng 4 chọn mã. Hiện đã có tầng 0–3.
+tầng 4 chọn mã.
 
 ```bash
-python -m vnsa.cli screen                       # tầng 1–3: thanh khoản, phân tích từng mã, nhóm ngành
+python -m vnsa.cli screen                       # đủ 4 tầng: nhóm ngành tiềm năng + mã tiềm năng
+python -m vnsa.cli screen --stage industry      # dừng ở tầng 3 (bảng nhóm ngành)
 python -m vnsa.cli screen --stage liquidity     # chỉ tầng 1 (nhanh)
 python -m vnsa.cli screen --exchanges HOSE HNX  # chỉ hai sàn
 python -m vnsa.cli screen --no-update           # dùng dữ liệu đã có trong kho, không tải
 python -m vnsa.cli screen --groups              # bảng ngành ICB → nhóm ngành
 ```
 
-- **Tầng 1** chỉ cần giá 1 năm mỗi mã (1 lần gọi CafeF). Giữ mã có GTGD bình quân 20 phiên ≥ 3 tỷ,
+- **Tầng 1** chỉ cần giá 1 năm mỗi mã (1 lần gọi CafeF, 4 luồng song song). Giữ mã có GTGD bình quân 20 phiên ≥ 3 tỷ,
   giá ≥ 5.000đ, ≥ 200 phiên có giao dịch trong 1 năm, còn giao dịch trong 10 ngày gần nhất.
 - **Tầng 2** tải đủ 5 năm giá + BCTC năm/quý + hồ sơ cho các mã qua tầng 1 (thanh khoản cao trước),
   rồi chạy đúng bộ phân tích của `analyze` cho từng mã: xếp hạng, giá trị hợp lý, FA, TA, độ tin cậy,
@@ -210,6 +211,12 @@ python -m vnsa.cli screen --groups              # bảng ngành ICB → nhóm ng
   10% (điểm FA), vĩ mô 10%. Mỗi phần là thứ hạng giữa các nhóm; phần thiếu số thì chia lại trọng số.
   Nhóm ngành lấy theo `config/macro_map.toml` (Ngân hàng, Chứng khoán, Bảo hiểm, Điện, Dầu khí, Thép,
   Bất động sản...); mã không thuộc nhóm nào xếp theo ngành ICB cấp 2.
+- **Tầng 4** lấy 5 nhóm điểm cao nhất, mỗi nhóm tối đa 5 mã xếp MUA hoặc KHẢ QUAN, FA ≥ 50,
+  Altman Z'' ≥ 1,1, không cờ đỏ BCTC; xếp MUA trước, rồi điểm FA 60% + TA 40%, rồi sức mạnh giá.
+  Mỗi mã in giá, giá trị hợp lý, lợi nhuận kỳ vọng, vùng mua, cắt lỗ, độ tin cậy và lý do chọn.
+  Thêm mục mã MUA ngoài 5 nhóm dẫn đầu. Ngưỡng ở `[screen]`.
+- Xem kết quả: tab **Sàng lọc thị trường** trên dashboard; Claude Desktop có công cụ
+  `screen_market` (đọc lượt gần nhất, không chạy lại).
 - **Hạn mức vnstock:** bản miễn phí chỉ 20 lượt gọi/phút, 1.200/giờ (khoảng 140 mã/giờ khi tải BCTC).
   Vượt hạn mức thì thư viện tự thoát chương trình, nên tool tự chờ cho đủ dưới hạn mức. Mỗi lượt chỉ
   tải BCTC tối đa 150 phút (`[screen] deep_minutes`); mã chưa kịp tải sẽ được tải ở lượt sau.

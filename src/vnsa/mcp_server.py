@@ -34,7 +34,8 @@ INSTRUCTIONS = (
     "đã điều chỉnh cổ tức/chia tách; tỷ lệ là số thập phân (0.25 = 25%). Khi người dùng hỏi về một "
     "mã, gọi analyze_symbol trước: tool tự tải giá (CafeF), BCTC và sàn/ngành (vnstock) nếu kho "
     "chưa có hoặc đã cũ. Ngân hàng, chứng khoán, bảo hiểm không có DCF/điểm FA (mô hình không áp "
-    "dụng). Kết quả là sàng lọc theo quy tắc, không phải lời khuyên đầu tư."
+    "dụng). Hỏi nhóm ngành hay mã tiềm năng trên toàn thị trường: gọi screen_market (đọc lượt sàng "
+    "lọc gần nhất đã lưu). Kết quả là sàng lọc theo quy tắc, không phải lời khuyên đầu tư."
 )
 mcp = _Server("vn-stock-analyzer", instructions=INSTRUCTIONS)
 
@@ -380,6 +381,43 @@ def macro_context(symbol: str | None = None) -> dict:
                             "với 5 năm của chính chuỗi; sensitivity.verdict: dấu giả định có khớp "
                             "lịch sử giá không. Vĩ mô chưa vào điểm xếp hạng (chờ review_signals "
                             "chứng minh).")}
+
+
+@mcp.tool()
+@_guard
+def screen_market(top_industries: int | None = None, group: str | None = None) -> dict:
+    """Kết quả SÀNG LỌC TOÀN THỊ TRƯỜNG gần nhất trong kho (lệnh `python -m vnsa.cli screen`, chạy
+    1–3 giờ nên công cụ này chỉ ĐỌC kết quả đã lưu, không chạy lại): các nhóm ngành xếp hạng theo
+    điểm 0–100 (động lượng giá, độ rộng, tăng trưởng lợi nhuận, định giá, chất lượng, vĩ mô — mỗi phần
+    là thứ hạng giữa các nhóm) và các mã được chọn trong những nhóm dẫn đầu (MUA/KHẢ QUAN, FA đạt,
+    không cờ đỏ) kèm giá trị hợp lý, lợi nhuận kỳ vọng, vùng mua, cắt lỗ; thêm mã MUA ngoài nhóm dẫn
+    đầu. `group`: chỉ trả các mã của một nhóm (tên nhóm như trong bảng). Chỉ diễn giải các số có ở
+    đây, nêu ngày phiên (`as_of`); đây là sàng lọc theo quy tắc, chưa kiểm định quá khứ."""
+    from vnsa.screen.run import latest, outside_picks, screen_cfg
+
+    table, ind = latest()
+    if table.empty:
+        return {"error": "Chưa có lượt sàng lọc nào: chạy python -m vnsa.cli screen "
+                         "(hoặc workflow 'Sàng lọc thị trường' trên GitHub)"}
+    cols = ["symbol", "group_name", "action", "price", "fair_value", "expected_return",
+            "dividend_yield", "fa_score", "ta_score", "score", "confidence", "rs_6m", "eps_growth",
+            "growth_basis", "zone_status", "buy_low", "buy_high", "stop", "pick_rank", "reason"]
+    n = top_industries or screen_cfg().get("top_industries", 5)
+    out = {"as_of": table["as_of"].iloc[0],
+           "funnel": {"universe": len(table), "liquid": int((table["stage"] >= 1).sum()),
+                      "analysed": int((table["stage"] >= 2).sum()),
+                      "picked": int((table["stage"] >= 4).sum())},
+           "industries": ind.drop(columns=["as_of"]),
+           "how_to_read": ("industries.score 0–100, pt_*: điểm thành phần (thứ hạng giữa nhóm); rs, "
+                           "growth, expected: trung vị các mã. picks: mã được chọn trong "
+                           f"{n} nhóm dẫn đầu, pick_rank = thứ tự trong nhóm.")}
+    if group:
+        g = table[table["group_name"].str.lower() == group.strip().lower()]
+        out["group"] = g[cols].sort_values(["pick_rank", "score"], na_position="last")
+        return out
+    out["picks"] = table[table["stage"] >= 4][cols].sort_values(["group_name", "pick_rank"])
+    out["outside_top_industries"] = outside_picks(table)[cols]
+    return out
 
 
 def main() -> None:

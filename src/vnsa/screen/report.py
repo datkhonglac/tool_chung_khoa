@@ -159,3 +159,94 @@ def format_taxonomy(tax: pd.DataFrame) -> str:
         for r in g.itertuples(index=False):
             lines.append(f"    {r.industry} › {r.industry3} › {r.industry4}: {r.n}")
     return "\n".join(lines)
+
+
+def _industry_rows(ind: pd.DataFrame, n: int) -> list[str]:
+    lines = [(f"  {'#':>2}  {'Nhóm ngành':<28}{'Mã':>4}{'Điểm':>6}  "
+              + "".join(f"{lab:>4}" for _, lab in PT)
+              + f"{'RS':>7}{'LN tăng':>9}{'LN kỳ vọng':>12}")]
+    for r in ind[ind["score"].notna()].head(n).itertuples(index=False):
+        lines.append(
+            f"  {int(r.rank):>2}  {r.group_name[:27]:<28}{int(r.members):>4}{_pt(r.score):>6}  "
+            + "".join(f"{_pt(getattr(r, k)):>4}" for k, _ in PT)
+            + f"{vn_pct(r.rs, 0, sign=True):>7}{vn_pct(r.growth, 0, sign=True):>9}"
+            + f"{vn_pct(r.expected, 0, sign=True):>12}")
+    return lines
+
+
+def _pick_rows(df: pd.DataFrame, group: bool = False) -> list[str]:
+    from vnsa.screen.pick import why_picked
+
+    head = (f"     {'Mã':<7}{'Xếp hạng':<10}{'Giá':>8}{'GT hợp lý':>11}{'LN kỳ vọng':>12}  "
+            f"{'Vùng mua':<16}{'Cắt lỗ':>8}{'FA':>4}{'TA':>4}  Tin cậy")
+    lines = [head]
+    for r in df.itertuples(index=False):
+        zone = (f"{vn_num(r.buy_low)}–{vn_num(r.buy_high)}" if not pd.isna(r.buy_low)
+                else (r.zone_status or "—"))
+        lines.append(f"     {r.symbol:<7}{r.action:<10}{vn_num(r.price):>8}{vn_num(r.fair_value):>11}"
+                     f"{vn_pct(r.expected_return, 0, sign=True):>12}  {zone[:15]:<16}"
+                     f"{vn_num(r.stop):>8}{_pt(r.fa_score):>4}{_pt(r.ta_score):>4}  "
+                     f"{r.confidence or '—'}")
+        extra = f"{r.group_name} · " if group else ""
+        if isinstance(r.zone_status, str) and r.zone_status and r.zone_status != "MUA TRONG VÙNG":
+            extra += f"{r.zone_status.lower()} · "
+        lines.append(f"     {'':<7}{extra}{why_picked(r)}")
+    return lines
+
+
+def format_picks(res: ScreenResult) -> str:
+    """Báo cáo cuối: nhóm ngành tiềm năng và mã tiềm năng trong từng nhóm (tầng 1–4)."""
+    cfg = screen_cfg()
+    t, ind = res.table, res.industry
+    n_top = cfg.get("top_industries", 5)
+    analysed = t[t["stage"] >= 2]
+    picks = t[t["stage"] >= 4]
+    rated = ind[ind["score"].notna()] if ind is not None and not ind.empty else pd.DataFrame()
+    lines = [f"SÀNG LỌC TOÀN THỊ TRƯỜNG · phiên {res.as_of:%d/%m/%Y}"
+             + (f" · {res.regime}" if res.regime else ""),
+             (f"Vũ trụ {vn_num(len(t))} mã → thanh khoản {vn_num(len(res.passed(1)))} → phân tích "
+              f"{vn_num(len(analysed))} → {vn_num(len(rated))} nhóm ngành → {min(n_top, len(rated))}"
+              f" nhóm dẫn đầu → {vn_num(len(picks))} mã")]
+    if len(res.passed(1)) < len(t):
+        lines.append(f"Loại ở tầng 1 (thanh khoản): {_counter(res.rejected(1))}")
+    pending = t["reason"].fillna("").str.startswith("chưa tải")
+    if pending.any():
+        lines.append(f"Chưa đủ dữ liệu: {int(pending.sum())} mã chưa tải BCTC lượt này (hạn mức "
+                     "vnstock) — lượt sau tải tiếp; các mã này đang là KHÔNG XẾP HẠNG")
+    bad = t["reason"].fillna("").str.startswith("phân tích lỗi")
+    if bad.any():
+        lines.append(f"Lỗi phân tích: {int(bad.sum())} mã (xem cột reason trong CSV)")
+    if rated.empty:
+        lines += ["", "Chưa nhóm ngành nào đủ số liệu để chấm."]
+        return "\n".join(lines)
+    lines += ["", "NHÓM NGÀNH TIỀM NĂNG — điểm 0–100 (thành phần là thứ hạng giữa các nhóm)",
+              f"Trọng số: {_weights_line(cfg)}", *_industry_rows(ind, max(10, n_top)),
+              f"  {LEGEND}", "  RS, LN tăng, LN kỳ vọng: trung vị các mã trong nhóm"]
+    lines += ["", (f"MÃ TIỀM NĂNG TRONG {min(n_top, len(rated))} NHÓM DẪN ĐẦU "
+                   f"(MUA/KHẢ QUAN, FA ≥ {cfg.get('min_fa', 50)}, không cờ đỏ)")]
+    for r in rated.head(n_top).itertuples(index=False):
+        macro = "" if pd.isna(r.macro) else f" · vĩ mô {r.macro:+.2f}".replace(".", ",").replace(
+            "-", "−")
+        lines.append(f"{int(r.rank)}. {r.group_name} — điểm {_pt(r.score)} · {int(r.members)} mã · "
+                     f"RS {vn_pct(r.rs, 0, sign=True)} · LN tăng {vn_pct(r.growth, 0, sign=True)}"
+                     f" · LN kỳ vọng {vn_pct(r.expected, 0, sign=True)}{macro}")
+        g = picks[picks["group_name"] == r.group_name].sort_values("pick_rank")
+        if len(g):
+            lines += _pick_rows(g)
+        else:
+            members = t[(t["group_name"] == r.group_name) & (t["stage"] == 3)]
+            why = Counter(str(x).split(":")[0] for x in members["reason"].dropna() if x)
+            lines.append("     Không mã nào đạt" + (f" — {_counter(why)}" if why else ""))
+    if res.outside is not None and len(res.outside):
+        lines += ["", "MÃ MUA NGOÀI CÁC NHÓM DẪN ĐẦU (đạt mọi điều kiện, ngành chưa mạnh)"]
+        lines += _pick_rows(res.outside, group=True)
+    in_top = t[t["stage"] == 3]
+    if len(in_top):
+        why = Counter(str(x).split(":")[0] for x in in_top["reason"].dropna() if x)
+        lines += ["", f"Không chọn trong nhóm dẫn đầu: {_counter(why)}"]
+    if res.csv:
+        lines += ["", f"Đã lưu bảng screen, screen_industry trong kho và {res.csv}"]
+    lines += [("Thứ hạng nhóm ngành và mã là sàng lọc theo quy tắc trong config/settings.toml, chưa "
+               "được kiểm định trên dữ liệu quá khứ; không phải lời khuyên đầu tư."),
+              "Xem thẻ đầy đủ từng mã: python -m vnsa.cli analyze MÃ"]
+    return "\n".join(lines)

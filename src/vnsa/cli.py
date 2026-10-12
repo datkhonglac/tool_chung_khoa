@@ -945,7 +945,7 @@ def cmd_study_timing(args) -> int:
 
 def cmd_screen(args) -> int:
     """Sàng lọc toàn thị trường (src/vnsa/screen/): lọc theo tầng, in và lưu kết quả."""
-    from vnsa.screen.report import format_industry, format_liquidity, format_taxonomy
+    from vnsa.screen.report import format_industry, format_liquidity, format_picks, format_taxonomy
     from vnsa.screen.run import run
 
     exchanges = [e.upper() for e in args.exchanges] if args.exchanges else None
@@ -967,7 +967,12 @@ def cmd_screen(args) -> int:
     except ValueError as e:
         print(f"  ✗ {e}")
         return 1
-    print(format_liquidity(res, top=args.top) if res.stage == "liquidity" else format_industry(res))
+    if res.stage == "liquidity":
+        print(format_liquidity(res, top=args.top))
+    elif res.stage == "industry":
+        print(format_industry(res))
+    else:
+        print(format_picks(res))
     return 0
 
 
@@ -1146,9 +1151,10 @@ def main(argv: list[str] | None = None) -> int:
     pst.set_defaults(func=cmd_study_timing)
 
     psc = sub.add_parser("screen", help="Sàng lọc toàn thị trường: nhóm ngành và mã tiềm năng")
-    psc.add_argument("--stage", choices=["liquidity", "industry"], default="industry",
+    psc.add_argument("--stage", choices=["liquidity", "industry", "pick"], default="pick",
                      help="Chạy đến tầng nào: liquidity = tầng 1 (lọc thanh khoản); industry = "
-                          "tầng 2–3 (phân tích từng mã, chấm nhóm ngành; mặc định)")
+                          "tầng 2–3 (phân tích từng mã, chấm nhóm ngành); pick = tầng 4 (chọn mã "
+                          "trong nhóm dẫn đầu; mặc định)")
     psc.add_argument("--groups", action="store_true",
                      help="Chỉ in bảng ngành ICB → nhóm ngành (kiểm tra macro_map.toml)")
     psc.add_argument("--exchanges", nargs="+", metavar="SÀN",

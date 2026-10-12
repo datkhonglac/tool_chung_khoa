@@ -113,8 +113,13 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   → cột bảng `screen`; tăng trưởng LNST: 8 quý cùng kỳ > TTM so năm > năm so năm); T3 (`screen/industry.py`)
   nhóm theo `macro.score.match_industry` (`screen/groups.py`, rơi về ICB cấp 2), 6 thành phần đổi ra thứ hạng
   0–100 giữa nhóm, thiếu thì chia lại trọng số, < `min_members` mã không xếp; bảng `screen_industry`.
-  vnstock: mọi lượt gọi qua `vnstock_provider._call` (`RateLimiter` theo `[vnstock]`, khoá
-  `VNSTOCK_API_KEY`) vì vnai vượt hạn mức (Khách 20/phút, 1.200/giờ) là SystemExit. T4 (chọn mã) đang làm.
+  T4 (`screen/pick.py`): trong `top_industries` nhóm, loại ≠ MUA/KHẢ QUAN, FA < `min_fa`, Z'' < `min_z`, cờ
+  đỏ, tin cậy < `min_confidence`; xếp MUA > KHẢ QUAN > điểm > RS 6T; `per_industry` mã (stage 4,
+  `pick_rank`); MUA đạt ngoài nhóm dẫn đầu = `outside_picks`. Báo cáo `screen/report.py format_picks`;
+  dashboard tab "Sàng lọc thị trường", MCP `screen_market` (đọc lượt mới nhất). T1 tải song song
+  (`Updater._prefetch`, `[screen] workers`, ghi kho tuần tự). vnstock: mọi lượt gọi qua
+  `vnstock_provider._call` (`RateLimiter` theo `[vnstock]`, khoá `VNSTOCK_API_KEY`) vì vnai vượt hạn mức
+  (Khách 20/phút, 1.200/giờ) là SystemExit.
 - MCP server: `python -m vnsa.mcp_server` (extra `[mcp]`, chạy được mcp 1.x và 2.x); cấu hình mẫu cho
   Claude Desktop ở `docs/`. Dashboard: `streamlit run dashboard/app.py` (extra `[dashboard]`, cổng 8501).
 - `python scripts/smoke_test.py` gọi mọi công cụ MCP + dashboard trên kho thật. Test dùng fixture

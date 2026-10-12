@@ -280,3 +280,71 @@ def test_deep_fetch_stops_at_time_budget(market_db):
     errors = fetch_all(["DEMO_A", "DEMO_C"], _updater(), log=None, minutes=-1)
     assert set(errors) == {"DEMO_A", "DEMO_C"}
     assert all(e.startswith("chưa tải BCTC lượt này") for e in errors.values())
+
+
+def test_pick_excludes_weak_and_orders_within_top_groups():
+    from vnsa.screen.pick import exclusion, pick
+
+    cfg = {"per_industry": 2, "min_fa": 50, "min_z": 1.1, "min_confidence": "Thấp"}
+    base = {"stage": 3, "group_name": "Ngân hàng", "model": "general", "fa_score": 70.0,
+            "z_em": 3.0, "red_flags": "", "confidence": "Trung bình", "rs_6m": 0.1,
+            "action": "MUA", "score": 60.0, "reason": ""}
+    rows = [
+        {**base, "symbol": "AAA", "action": "KHẢ QUAN", "score": 90.0},
+        {**base, "symbol": "BBB", "score": 55.0},
+        {**base, "symbol": "CCC", "score": 70.0},
+        {**base, "symbol": "DDD", "action": "NẮM GIỮ"},
+        {**base, "symbol": "EEE", "fa_score": 40.0},
+        {**base, "symbol": "FFF", "z_em": 0.8},
+        {**base, "symbol": "GGG", "red_flags": "CFO âm 3 năm"},
+        {**base, "symbol": "OUT", "stage": 2, "group_name": "Thép"},
+        {**base, "symbol": "OUT2", "stage": 2, "group_name": "Thép", "action": "KHẢ QUAN"},
+        {**base, "symbol": "LOW", "stage": 1, "action": None},
+    ]
+    t, outside = pick(pd.DataFrame(rows).set_index("symbol"), cfg)
+    assert t.loc["CCC", "pick_rank"] == 1 and t.loc["BBB", "pick_rank"] == 2   # MUA trước KHẢ QUAN
+    assert t.loc["AAA", "stage"] == 3 and t.loc["AAA", "reason"] == "ngoài 2 mã đầu nhóm"
+    assert t.loc["DDD", "reason"] == "xếp hạng NẮM GIỮ"
+    assert t.loc["EEE", "reason"] == "FA 40 < 50"
+    assert t.loc["FFF", "reason"].startswith("Altman Z''")
+    assert t.loc["GGG", "reason"] == "cờ đỏ BCTC: CFO âm 3 năm"
+    assert list(outside.index) == ["OUT"]                                       # chỉ MUA ngoài nhóm
+    assert t.loc["OUT2", "reason"] == "đạt nhưng ngoài nhóm ngành dẫn đầu"
+    assert t.loc["LOW", "stage"] == 1
+    bank = {**base, "model": "bank", "z_em": float("nan")}
+    assert exclusion(bank, cfg) == ""                                           # ngân hàng: không xét Z''
+    strict = {**cfg, "min_confidence": "Cao"}
+    assert exclusion(base, strict) == "độ tin cậy Trung bình < Cao"
+
+
+def test_full_run_with_picks_report(market_db, monkeypatch):
+    from vnsa.screen import run as screen_run
+    from vnsa.screen.report import format_picks
+
+    cfg = {**screen_run.screen_cfg(), "min_members": 1, "top_industries": 2, "min_fa": 0}
+    monkeypatch.setattr(screen_run, "screen_cfg", lambda: cfg)
+    monkeypatch.setattr("vnsa.screen.report.screen_cfg", lambda: cfg)
+    res = screen_run.run("pick", updater=_updater(), log=None)
+    t = res.table.set_index("symbol")
+    good = t[t["action"].isin(["MUA", "KHẢ QUAN"])]
+    assert (t.loc[good.index, "stage"] == 4).all()                  # 2 nhóm đều dẫn đầu
+    assert t.loc[t["stage"] == 3, "reason"].str.len().gt(0).all()   # không chọn thì có lý do
+    text = format_picks(res)
+    assert "NHÓM NGÀNH TIỀM NĂNG" in text and "MÃ TIỀM NĂNG TRONG 2 NHÓM DẪN ĐẦU" in text
+    assert "không phải lời khuyên đầu tư" in text
+    with Store(market_db) as store:
+        saved = store.screen().set_index("symbol")
+    assert saved["pick_rank"].notna().sum() == len(good)
+
+
+def test_quick_prices_parallel_prefetch_matches_sequential(market_db):
+    cafef = MarketCafeF()
+    steps = _updater(cafef).quick_prices([*LISTING["symbol"]], years=1, workers=3)
+    assert {s: st.status for s, st in steps.items()} == {
+        "VNINDEX": "ok", "DEMO_A": "ok", "DEMO_B": "ok", "DEMO_C": "ok", "LOWVOL": "ok",
+        "NEWBIE": "ok", "OLD": "ok", "GONE": "error"}
+    downloaded = [c[0] for c in cafef.calls]
+    assert sorted(downloaded) == sorted(set(downloaded))          # mỗi mã đúng một lần gọi CafeF
+    with Store(market_db) as store:
+        assert store.first_price_date("DEMO_A") >= pd.Timestamp("2025-10-09")
+        assert store.last_price_date("DEMO_C") == pd.Timestamp("2026-10-09")

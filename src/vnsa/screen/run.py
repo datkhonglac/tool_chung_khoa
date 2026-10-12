@@ -14,7 +14,7 @@ from vnsa.data.store import INDUSTRY_COLUMNS, SCREEN_COLUMNS, Store
 from vnsa.screen.groups import assign_groups
 from vnsa.screen.liquidity import liquidity_check, price_stats, reason_group
 
-STAGES = ("liquidity", "industry")      # chạy đến tầng 1 hoặc tầng 3
+STAGES = ("liquidity", "industry", "pick")     # chạy đến tầng 1, 3 hoặc 4
 
 
 def screen_cfg() -> dict:
@@ -30,6 +30,8 @@ class ScreenResult:
     listing: str = ""                                    # trạng thái danh sách niêm yết
     csv: str = ""
     industry: pd.DataFrame | None = None                 # điểm nhóm ngành (tầng 3)
+    outside: pd.DataFrame | None = None                  # mã MUA ngoài nhóm dẫn đầu (tầng 4)
+    regime: str = ""                                     # xu hướng VNINDEX lúc sàng lọc
     deep_fetch_errors: dict[str, str] = field(default_factory=dict)
     stage: str = "liquidity"
 
@@ -82,8 +84,10 @@ def liquidity(update: bool = True, exchanges: list[str] | None = None, limit: in
     uni = uni.assign(group_name=assign_groups(uni, macro_mapping()))
     res_fetch, errors = Counter(), []
     if update:
+        if log:
+            log(f"Tầng 1: tải giá {len(uni)} mã ({cfg.get('workers', 4)} luồng)")
         steps = updater.quick_prices(uni["symbol"].tolist(), cfg.get("liquidity_years", 1),
-                                     progress=_progress(log))
+                                     progress=_progress(log), workers=cfg.get("workers", 4))
         res_fetch = Counter(s.status for s in steps.values())
         errors = [f"{sym}: {s.detail}" for sym, s in steps.items() if s.status == "error"]
     with Store(path("warehouse")) as store:
@@ -112,11 +116,11 @@ def liquidity(update: bool = True, exchanges: list[str] | None = None, limit: in
     return res
 
 
-def run(stage: str = "industry", update: bool = True, exchanges: list[str] | None = None,
+def run(stage: str = "pick", update: bool = True, exchanges: list[str] | None = None,
         limit: int | None = None, updater=None, log: Callable[[str], None] | None = print,
         deep_minutes: float | None = None) -> ScreenResult:
     """Chạy sàng lọc đến tầng `stage`: "liquidity" (tầng 1) | "industry" (tầng 2–3: phân tích từng
-    mã qua lọc rồi chấm nhóm ngành)."""
+    mã qua lọc rồi chấm nhóm ngành) | "pick" (tầng 4: chọn mã trong các nhóm dẫn đầu)."""
     from vnsa import analysis
     from vnsa.screen import deep
     from vnsa.screen.groups import group_macro
@@ -139,6 +143,10 @@ def run(stage: str = "industry", update: bool = True, exchanges: list[str] | Non
                 + (f", tối đa {minutes:.0f} phút)" if minutes else ")"))
         res.deep_fetch_errors = deep.fetch_all(passed, updater, log, minutes)
     rows, errors = deep.assess_all(passed, log)
+    try:
+        res.regime = str(analysis.market_regime())
+    except Exception:  # noqa: BLE001 - thiếu chỉ số chỉ mất dòng bối cảnh
+        res.regime = ""
     if rows:
         upd = pd.DataFrame.from_dict(rows, orient="index")
         for c in upd.columns:
@@ -160,6 +168,10 @@ def run(stage: str = "industry", update: bool = True, exchanges: list[str] | Non
         t["group_score"] = t["group_name"].map(ranks["score"])
         top = cfg.get("top_industries", 5)
         t.loc[(t["stage"] >= 2) & (t["group_rank"] <= top), "stage"] = 3
+    if stage == "pick":
+        from vnsa.screen.pick import pick
+
+        t, res.outside = pick(t, cfg)
     res.table = t.reset_index().reindex(columns=SCREEN_COLUMNS)
     res.industry = ind.reindex(columns=INDUSTRY_COLUMNS) if not ind.empty else ind
     res.csv = save(res)
@@ -177,3 +189,18 @@ def save(res: ScreenResult) -> str:
     if res.industry is not None and not res.industry.empty:
         res.industry.to_csv(out / f"industry_{res.as_of:%Y-%m-%d}.csv", index=False)
     return str(f)
+
+
+def latest(as_of=None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(bảng screen, điểm nhóm ngành) của lượt sàng lọc mới nhất trong kho (rỗng nếu chưa chạy)."""
+    with Store(path("warehouse")) as store:
+        return store.screen(as_of), store.screen_industry(as_of)
+
+
+def outside_picks(table: pd.DataFrame) -> pd.DataFrame:
+    """Mã MUA đạt mọi điều kiện tầng 4 nhưng nằm ngoài các nhóm dẫn đầu (đọc lại từ bảng screen)."""
+    from vnsa.screen.pick import order
+
+    m = (table["stage"] == 2) & (table["action"] == "MUA") & (
+        table["reason"] == "đạt nhưng ngoài nhóm ngành dẫn đầu")
+    return order(table[m]).head(screen_cfg().get("outside_max", 10))

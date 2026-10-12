@@ -102,7 +102,7 @@ def limits(n: int = 45) -> int:
 
     root = pathlib.Path(vnai.__file__).parent
     pat = re.compile(r"(per_?minute|per_?hour|rate.?limit|quota|requests?_per|max_requests|"
-                     r"sys\.exit|SystemExit|time\.sleep|tier|guest|community)", re.I)
+                     r"sys\.exit|SystemExit|time\.sleep|tier|guest|community)", re.IGNORECASE)
     print(f"vnai {getattr(vnai, '__version__', '?')} tại {root}")
     shown = 0
     for f in sorted(root.rglob("*.py")):

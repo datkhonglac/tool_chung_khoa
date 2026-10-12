@@ -11,7 +11,7 @@ APP = str(Path(__file__).resolve().parents[1] / "dashboard" / "app.py")
 def test_dashboard_renders_all_tabs_without_errors(warehouse):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception, at.exception
-    assert len(at.tabs) == 8
+    assert len(at.tabs) == 9
     assert at.selectbox[0].options == ["DEMO_A", "DEMO_B", "DEMO_C"]
     labels = " | ".join(m.label for m in at.metric)
     for label in ("Điểm TA", "Điểm FA", "Giá trị DCF/cp", "Lợi nhuận/năm", "VaR 95% 1 ngày"):
@@ -88,3 +88,39 @@ def test_dashboard_macro_tab_with_data(warehouse):
     text = " ".join(str(m.value) for m in at.markdown) + " ".join(str(s.value) for s in at.subheader)
     assert "Thép (ICB cấp 4" in text
     assert any("Thép" in str(x.label) or "Chuỗi" in str(x.label) for x in at.selectbox)
+
+
+def test_dashboard_screen_tab(warehouse):
+    import pandas as pd
+
+    from vnsa.data.store import Store
+
+    day = pd.Timestamp("2026-10-09")
+    base = {"as_of": day, "exchange": "HOSE", "group_name": "Ngân hàng", "industry": "Ngân hàng",
+            "price": 25_000.0, "value_20d": 9e9, "rs_6m": 0.05, "fa_score": 70.0,
+            "ta_score": 55.0, "score": 64.0, "confidence": "Trung bình", "fair_value": 30_000.0,
+            "expected_return": 0.22, "buy_low": 24_500.0, "buy_high": 25_000.0, "stop": 23_000.0,
+            "eps_growth": 0.12, "group_rank": 1.0, "group_score": 80.0}
+    table = pd.DataFrame([
+        {**base, "symbol": "AAA", "stage": 4, "action": "MUA", "pick_rank": 1.0, "reason": ""},
+        {**base, "symbol": "BBB", "stage": 3, "action": "NẮM GIỮ", "reason": "xếp hạng NẮM GIỮ"},
+        {**base, "symbol": "CCC", "stage": 2, "action": "MUA", "group_name": "Thép",
+         "reason": "đạt nhưng ngoài nhóm ngành dẫn đầu"},
+        {**base, "symbol": "DDD", "stage": 0, "action": None, "reason": "thanh khoản thấp: …"},
+    ])
+    ind = pd.DataFrame([{"as_of": day, "group_name": "Ngân hàng", "rank": 1.0, "score": 80.0,
+                         "members": 2, "rs": 0.05, "growth": 0.1, "expected": 0.2,
+                         "pt_momentum": 100.0, "note": ""},
+                        {"as_of": day, "group_name": "Thép", "rank": 2.0, "score": 20.0,
+                         "members": 1, "rs": -0.02, "growth": -0.1, "expected": 0.3,
+                         "pt_momentum": 0.0, "note": ""}])
+    with Store(warehouse) as store:
+        store.write_screen(table, ind)
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception, at.exception
+    heads = [h.value for h in at.subheader]
+    assert "Nhóm ngành tiềm năng (điểm 0–100)" in heads
+    assert "Mã tiềm năng trong các nhóm dẫn đầu" in heads
+    assert "Mã MUA ngoài các nhóm dẫn đầu" in heads
+    labels = {m.label: m.value for m in at.metric}
+    assert labels["Được chọn"] == "1" and labels["Vũ trụ"] == "4"

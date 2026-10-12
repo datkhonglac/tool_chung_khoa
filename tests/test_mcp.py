@@ -9,7 +9,8 @@ from vnsa import mcp_server as srv
 
 EXPECTED = {"list_symbols", "get_prices", "get_ratios", "get_valuation", "get_fa_score",
             "get_technical", "get_trade_plan", "get_risk", "get_recommendations", "run_backtest",
-            "update_symbol", "analyze_symbol", "review_signals", "macro_context"}
+            "update_symbol", "analyze_symbol", "review_signals", "macro_context",
+            "screen_market"}
 
 
 def test_all_tools_registered_with_schemas():
@@ -74,3 +75,33 @@ def test_analyze_symbol_updates_first_and_keeps_stdout_clean(warehouse, monkeypa
     monkeypatch.setattr(analysis, "update", lambda sym, refresh=False, **kw: UpdateReport(
         sym.upper(), [Step("giá", "error", "Mã có đúng không?")]))
     assert "Mã có đúng không" in srv.analyze_symbol("XYZ")["error"]
+
+
+def test_screen_market_reads_latest_run(warehouse):
+    import json
+
+    import pandas as pd
+
+    from vnsa.data.store import Store
+
+    out = srv.screen_market()
+    assert "error" in out and "screen" in out["error"]
+    day = pd.Timestamp("2026-10-09")
+    table = pd.DataFrame([
+        {"as_of": day, "symbol": "AAA", "group_name": "Ngân hàng", "stage": 4, "action": "MUA",
+         "pick_rank": 1.0, "score": 60.0, "reason": ""},
+        {"as_of": day, "symbol": "CCC", "group_name": "Thép", "stage": 2, "action": "MUA",
+         "score": 50.0, "reason": "đạt nhưng ngoài nhóm ngành dẫn đầu"},
+        {"as_of": day, "symbol": "DDD", "group_name": "Thép", "stage": 0, "reason": "giá thấp: …"}])
+    ind = pd.DataFrame([{"as_of": day, "group_name": "Ngân hàng", "rank": 1.0, "score": 80.0,
+                         "members": 1}])
+    with Store(warehouse) as store:
+        store.write_screen(table, ind)
+    out = srv.screen_market()
+    json.dumps(out, allow_nan=False)
+    assert out["as_of"] == "2026-10-09" and out["funnel"]["picked"] == 1
+    assert [p["symbol"] for p in out["picks"]] == ["AAA"]
+    assert [p["symbol"] for p in out["outside_top_industries"]] == ["CCC"]
+    assert out["industries"][0]["group_name"] == "Ngân hàng"
+    grp = srv.screen_market(group="thép")
+    assert {p["symbol"] for p in grp["group"]} == {"CCC", "DDD"}

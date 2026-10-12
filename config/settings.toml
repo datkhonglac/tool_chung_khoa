@@ -226,6 +226,7 @@ key_per_hour = 3000
 # Sàng lọc toàn thị trường (lệnh screen, src/vnsa/screen/). Tầng 1 chỉ cần giá 1 năm mỗi mã.
 exchanges = ["HOSE", "HNX", "UPCOM"]
 liquidity_years = 1         # số năm giá tải cho mã chưa có trong kho (CafeF: 1 lần gọi mỗi mã)
+workers = 4                 # số luồng tải giá CafeF song song ở tầng 1
 min_value_bn = 3.0          # GTGD bình quân 20 phiên tối thiểu (tỷ đồng, giá khớp thật × KL khớp lệnh)
 min_price = 5000            # giá tối thiểu (đồng)
 min_sessions = 200          # số phiên có giao dịch trong 365 ngày gần nhất
@@ -236,6 +237,12 @@ min_members = 3             # nhóm ngành cần ≥ 3 mã qua tầng 1 mới x�
 min_weight = 0.5            # và các thành phần có số chiếm ≥ 50% tổng trọng số
 macro_coverage = 0.6        # điểm vĩ mô nhóm chỉ dùng khi độ phủ yếu tố có số ≥ 60%
 top_industries = 5          # số nhóm dẫn đầu (tầng 3 → 4)
+# Tầng 4 (chọn mã trong nhóm dẫn đầu, screen/pick.py): chỉ MUA/KHẢ QUAN
+per_industry = 5            # số mã tối đa mỗi nhóm
+min_fa = 50                 # điểm FA tối thiểu
+min_z = 1.1                 # Altman Z'' tối thiểu (doanh nghiệp thường)
+min_confidence = "Thấp"     # độ tin cậy tối thiểu: "Thấp" (không lọc) | "Trung bình" | "Cao"
+outside_max = 10            # số mã MUA ngoài nhóm dẫn đầu được liệt kê
 
 [screen.industry_weights]
 momentum = 0.30             # sức mạnh tương đối so VNINDEX (3 và 6 tháng)
