@@ -194,6 +194,24 @@ def test_reading_level_diff_fallback_and_missing():
     assert np.isnan(r.z) and r.basis == "thiếu lịch sử"
 
 
+def test_reading_sparse_manual_uses_calendar_months():
+    """Số nhập tay thưa: "sau 3 tháng"/"cùng kỳ" tính theo tháng lịch, không theo số dòng đã nhập
+    (trước đây tín dụng 09/2025 + 09/2026 không so được; 01 + 07–09 bị coi là 3 tháng)."""
+    credit = Series("vn_credit", "Tín dụng", "manual", freq="M", kind="ytd", unit="%", scale=2.0)
+    df = pd.DataFrame({"date": [pd.Timestamp(2025, 9, 1), pd.Timestamp(2026, 9, 1)],
+                       "value": [13.37, 11.59]})
+    r = reading(df, credit, today=pd.Timestamp("2026-10-12"))
+    assert r.change == pytest.approx(-1.78) and r.z == pytest.approx(-0.89)
+    ib = Series("vn_ib", "Liên NH", "manual", freq="M", kind="diff", unit="%", scale=1.0)
+    gaps = pd.DataFrame({"date": pd.to_datetime(["2026-01-01", "2026-07-01", "2026-08-01",
+                                                 "2026-09-01"]), "value": [9.0, 4.0, 4.2, 4.5]})
+    assert np.isnan(reading(gaps, ib, today=pd.Timestamp("2026-10-12")).change)  # thiếu 06/2026
+    gdp = Series("vn_gdp", "GDP", "manual", freq="Q", kind="level", unit="%", neutral=6.0,
+                 scale=1.0)
+    q = pd.DataFrame({"date": pd.to_datetime(["2026-01-01", "2026-07-01"]), "value": [8.15, 9.95]})
+    assert reading(q, gdp, today=pd.Timestamp("2026-10-12")).value == pytest.approx(9.95)
+
+
 def _r(sid: str, z: float, stale: bool = False, missing: bool = False):
     from vnsa.macro.signals import Reading
 

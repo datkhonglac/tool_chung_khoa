@@ -48,10 +48,15 @@ class Reading:
 
 
 def _periodic(df: pd.DataFrame, freq: str) -> pd.Series:
-    """Chuỗi trong kho -> giá trị theo kỳ (PeriodIndex tháng, hoặc quý với chuỗi quý)."""
+    """Chuỗi trong kho -> giá trị theo kỳ (PeriodIndex tháng, hoặc quý với chuỗi quý), đủ mọi kỳ từ
+    đầu đến cuối (kỳ thiếu = NaN) để "sau N tháng" là N tháng lịch, không phải N số đã nhập: số
+    nhập tay thường thưa (vd. tín dụng chỉ có 09/2025 và 09/2026 vẫn so được cùng kỳ)."""
     s = pd.Series(df["value"].to_numpy(float), index=pd.to_datetime(df["date"])).sort_index()
     p = "Q" if freq == "Q" else "M"
-    return s.groupby(s.index.to_period(p)).last()
+    out = s.groupby(s.index.to_period(p)).last()
+    if out.empty:
+        return out
+    return out.reindex(pd.period_range(out.index.min(), out.index.max(), freq=p))
 
 
 def _changes(s: pd.Series, spec: Series) -> pd.Series:
