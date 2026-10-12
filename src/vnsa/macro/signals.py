@@ -40,6 +40,7 @@ class Reading:
     basis: str                      # "z 5 năm" | "ngưỡng cấu hình" | "thiếu lịch sử" | "chưa có số"
     age_days: int | None
     stale: bool
+    freq: str = "M"
 
     @property
     def ok(self) -> bool:
@@ -74,7 +75,7 @@ def reading(df: pd.DataFrame, spec: Series, today: pd.Timestamp | None = None,
     nan = float("nan")
     if df is None or df.empty:
         return Reading(spec.id, spec.name, spec.unit, spec.kind, None, None, nan, nan, nan,
-                       "chưa có số", None, True)
+                       "chưa có số", None, True, spec.freq)
     last_date = pd.Timestamp(df["date"].max())
     s = _periodic(df, spec.freq)
     period_end = (last_date if spec.freq == "D"
@@ -98,7 +99,18 @@ def reading(df: pd.DataFrame, spec: Series, today: pd.Timestamp | None = None,
     if not np.isnan(z):
         z = float(np.clip(z, -z_cap, z_cap))
     return Reading(spec.id, spec.name, spec.unit, spec.kind, last_date, period_end, value, change,
-                   z, basis, age, age > stale_days.get(spec.freq, 75))
+                   z, basis, age, age > stale_days.get(spec.freq, 75), spec.freq)
+
+
+def fmt_period(r: Reading) -> str:
+    """Kỳ của số mới nhất: 09/10/2026 (ngày) · T9/2026 (tháng) · Q3/2026 (quý)."""
+    if r.date is None:
+        return "—"
+    if r.freq == "D":
+        return f"{r.date:%d/%m/%Y}"
+    if r.freq == "Q":
+        return f"Q{r.date.quarter}/{r.date.year}"
+    return f"T{r.date.month}/{r.date.year}"
 
 
 def readings(data: pd.DataFrame, cat: dict[str, Series], today: pd.Timestamp | None = None,

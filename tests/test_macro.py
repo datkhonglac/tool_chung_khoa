@@ -305,3 +305,83 @@ def test_refresh_fetches_when_stale_and_loads_manual(warehouse, tmp_path, monkey
                                         "value": [400.0], "source": "x"}))
     status, detail = refresh(20, provider=fake)
     assert status == "skip" and fake.calls == 10 and "1 số nhập tay" in detail
+
+
+def _monthly(sid: str, values, daily: bool = False) -> pd.DataFrame:
+    """Một số mỗi tháng, kỳ cuối = tháng trước. daily=True: kỳ cuối là hôm nay (chuỗi ngày mới)."""
+    today = pd.Timestamp.today().normalize()
+    end = today.replace(day=1) - pd.DateOffset(months=0 if daily else 1)
+    d = list(pd.date_range(end=end, periods=len(values), freq="MS"))
+    if daily:
+        d[-1] = today
+    return pd.DataFrame({"series": sid, "date": d, "value": values, "source": "test"})
+
+
+def test_risk_free_from_gov_bond_when_fresh(warehouse):
+    from vnsa import analysis
+
+    analysis._RF_CACHE.clear()
+    assert analysis.risk_free() == (0.035, "settings.toml")          # chưa có số: settings
+    with Store(warehouse) as store:
+        store.write_macro(_monthly("vn_gov_10y", [3.1, 3.2]))
+    analysis._RF_CACHE.clear()
+    rf, src = analysis.risk_free()
+    assert rf == pytest.approx(0.032) and "TPCP 10 năm" in src
+    assert analysis.valuation_settings()["risk_free"] == pytest.approx(0.032)
+    with Store(warehouse) as store:                                   # gõ nhầm 32 thay vì 3.2
+        store.write_macro(_monthly("vn_gov_10y", [3.1, 32.0]))
+    analysis._RF_CACHE.clear()
+    assert analysis.risk_free()[0] == 0.035
+    with Store(warehouse) as store:                                   # số đã cũ 5 tháng
+        store.replace_macro(_monthly("vn_gov_10y", [3.0]).assign(
+            date=pd.Timestamp.today().normalize() - pd.DateOffset(months=5)), ["vn_gov_10y"], "x")
+    analysis._RF_CACHE.clear()
+    rf, src = analysis.risk_free()
+    assert rf == 0.035 and "đã cũ" in src
+    analysis._RF_CACHE.clear()
+
+
+def test_macro_view_and_card_section(warehouse):
+    from vnsa import analysis
+    from vnsa.report.card import format_card
+
+    rng = np.random.default_rng(1)
+    walk = lambda n: 100 * np.exp(np.cumsum(rng.normal(0, 0.03, n)))
+    with Store(warehouse) as store:
+        store.write_companies(pd.DataFrame({
+            "symbol": ["DEMO_A"], "name": ["Thép Demo"], "exchange": ["HOSE"],
+            "industry": ["Tài nguyên Cơ bản"], "model": ["general"], "industry3": ["Kim loại"],
+            "industry4": ["Thép và sản phẩm thép"]}), "test")
+        ore = walk(72)
+        ore[-1] = ore[-4] * 1.4                                       # quặng sắt +40%/3 tháng
+        store.write_macro(_monthly("iron_ore", ore, daily=True))
+        store.write_macro(_monthly("steel_hrc", walk(72), daily=True))
+        store.write_macro(_monthly("usd_vnd", 23000 * np.exp(np.cumsum(rng.normal(0.002, 0.005, 72))),
+                                   daily=True))
+    analysis._RF_CACHE.clear()
+    mv = analysis.macro_view("DEMO_A")
+    ind = mv.industry
+    assert ind.scope.startswith("Thép (ICB cấp 4: Thép và sản phẩm thép)")
+    ore_driver = next(d for d in ind.drivers if d.series == "iron_ore")
+    assert ore_driver.reading.z == 2.0 and ore_driver.contribution < 0  # quặng tăng mạnh: bất lợi
+    assert {d.series for d in ind.missing} == {"coal", "vn_credit_ytd", "vn_public_invest_yoy"}
+    assert mv.groups["ty_gia"].label != "Chưa đủ số liệu" and mv.risk_free == 0.035
+    text = format_card(analysis.report_card("DEMO_A"))
+    assert "VĨ MÔ & NGÀNH (tham khảo, chưa vào điểm)" in text
+    assert "Quặng sắt 62% (CFR Trung Quốc)" in text and "Thiếu:" in text
+    assert "Lãi suất phi rủi ro trong WACC: 3,5% (settings.toml)" in text
+
+
+def test_macro_guard_lowers_confidence_only_when_clearly_adverse():
+    from types import SimpleNamespace
+
+    from vnsa.macro.score import MacroScore
+    from vnsa.report.card import macro_guard
+
+    cfg = {"guard": -0.5, "guard_coverage": 0.6}
+    mv = lambda score, cov: SimpleNamespace(
+        industry=MacroScore("Thép", score, "Bất lợi", cov))
+    assert "giảm một bậc" in macro_guard(mv(-0.6, 0.8), cfg)
+    assert macro_guard(mv(-0.4, 0.8), cfg) is None                    # chưa đủ bất lợi
+    assert macro_guard(mv(-0.9, 0.5), cfg) is None                    # độ phủ thấp
+    assert macro_guard(None, cfg) is None

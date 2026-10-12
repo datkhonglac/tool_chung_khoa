@@ -112,7 +112,7 @@ def analyze_symbol(symbol: str) -> dict:
             "confidence": card.confidence, "confidence_checks": card.confidence_checks,
             "intrinsic_value": {"p10": card.p10, "p50": card.p50, "p90": card.p90},
             "scores": {"fa": card.fa, "ta": card.ta, "quant": card.quant, "total": card.total},
-            "red_flags": card.red_flags, "profile": market.profile(rec.symbol),
+            "red_flags": card.red_flags, "macro": card.macro, "profile": market.profile(rec.symbol),
             "band": market.band(rec.symbol), "action": rec.action, "score": rec.score,
             "reasons": rec.reasons, "inputs": rec.inputs, "plan": plan,
             "data_update": [str(s).strip() for s in rep.steps],

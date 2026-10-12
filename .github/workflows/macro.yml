@@ -17,11 +17,15 @@ on:
         description: "Dò lại các nguồn (scripts/probe_macro.py)"
         type: boolean
         default: false
+      symbols:
+        description: "Mã để phân tích thử (bỏ trống = FPT HPG DGC TNG SSI)"
+        required: false
+        default: ""
 
 jobs:
   macro:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       PYTHONUNBUFFERED: "1"
       VNSTOCK_TELEMETRY: "off"
@@ -40,6 +44,10 @@ jobs:
         run: python -m vnsa.cli fetch-macro
       - name: Bảng số liệu vĩ mô
         run: python -m vnsa.cli macro
+      - name: Phân tích thử (thẻ báo cáo có mục vĩ mô)
+        run: python -m vnsa.cli analyze ${{ inputs.symbols || 'FPT HPG DGC TNG SSI' }}
+      - name: Yếu tố vĩ mô theo mã
+        run: python -m vnsa.cli macro ${{ inputs.symbols || 'FPT HPG DGC TNG SSI' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -103,11 +103,52 @@ def cost_of_equity(d: Data) -> tuple[float, float, float, int]:
     """(k_e, beta dùng trong CAPM, beta thô, số tuần) — beta tuần so với VNINDEX, Blume nếu bật."""
     from vnsa.fa import valuation as val
 
-    a = val.Assumptions.from_settings(settings()["valuation"])
+    a = val.Assumptions.from_settings(valuation_settings())
     raw, weeks = (val.beta(d.prices, d.index, a.beta_years) if not d.index.empty
                   else (float("nan"), 0))
     b = a.default_beta if pd.isna(raw) else (0.67 * raw + 0.33 if a.adjust_beta else raw)
     return a.risk_free + b * a.equity_risk_premium, b, raw, weeks
+
+
+_RF_CACHE: dict = {}
+
+
+def risk_free() -> tuple[float, str]:
+    """(lãi suất phi rủi ro cho k_e/WACC, nguồn). Lợi suất TPCP Việt Nam 10 năm mới nhất trong kho
+    (chuỗi `[macro] rf_series`, nhập tay) nếu kỳ đó không cũ quá `rf_max_age_days` ngày và nằm trong
+    0,5–15% (chặn gõ nhầm); ngược lại `[valuation] risk_free`. Nhớ 60 giây (một lượt phân tích)."""
+    import time
+
+    from vnsa.data.store import Store
+
+    key = str(path("warehouse"))
+    hit = _RF_CACHE.get(key)
+    if hit and time.monotonic() - hit[0] < 60:
+        return hit[1]
+    base = float(settings()["valuation"]["risk_free"])
+    mc = settings().get("macro", {})
+    out = (base, "settings.toml")
+    try:
+        with Store(path("warehouse")) as store:
+            df = store.macro(mc.get("rf_series", "vn_gov_10y"))
+    except Exception:  # noqa: BLE001 - kho đang bận/thiếu: dùng giả định trong settings
+        df = pd.DataFrame()
+    if not df.empty:
+        last = df.iloc[-1]
+        end = last["date"] + pd.offsets.MonthEnd(0)
+        age = (pd.Timestamp.today().normalize() - end).days
+        value = float(last["value"]) / 100
+        if age <= mc.get("rf_max_age_days", 45) and 0.005 <= value <= 0.15:
+            out = (value, f"lợi suất TPCP 10 năm {last['date']:%m/%Y}")
+        else:
+            out = (base, f"settings.toml (lợi suất TPCP nhập tay kỳ {last['date']:%m/%Y} đã cũ)")
+    _RF_CACHE[key] = (time.monotonic(), out)
+    return out
+
+
+def valuation_settings() -> dict:
+    """Mục [valuation] với risk_free lấy theo risk_free() (TPCP 10 năm nếu có số mới)."""
+    return {**settings()["valuation"], "risk_free": risk_free()[0]}
 
 
 def _weights(kind: str) -> dict:
@@ -250,7 +291,7 @@ def general_fair_value(d: Data, v=None):
     scenarios = ([fv.revert(pe_now, x, rev) * eps for x in hist["pe"]]
                  + [fv.revert(pb_now, x, rev) * bvps for x in hist["pb"]])
     if v is not None and v.fcff_base > 0:
-        a = val.Assumptions.from_settings(settings()["valuation"])
+        a = val.Assumptions.from_settings(valuation_settings())
         scenarios += [x for x in val.sensitivity(v, a).to_numpy().ravel()]
     fair.p10, fair.p90 = fv.scenario_range(scenarios, fair.value)
     return fair
@@ -280,7 +321,7 @@ def valuation(d: Data, growth: float | None = None, wacc: float | None = None):
     from vnsa.fa import valuation as val
 
     _not_financial(d.symbol)
-    a = val.Assumptions.from_settings(settings()["valuation"])
+    a = val.Assumptions.from_settings(valuation_settings())
     b, weeks = (val.beta(d.prices, d.index, a.beta_years) if not d.index.empty
                 else (float("nan"), 0))
     price = float(d.prices["close"].iloc[-1])
@@ -559,6 +600,51 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
 
 
 @dataclass
+class MacroView:
+    """Lớp vĩ mô của một mã (chỉ tham khảo + rào chắn độ tin cậy; chưa vào điểm)."""
+    market: object               # macro.score.MacroScore — bối cảnh Việt Nam
+    groups: dict                 # nhóm -> MacroScore (tiền tệ, tỷ giá, lạm phát, tăng trưởng, thế giới)
+    industry: object | None      # MacroScore của ngành/mã; None nếu ngành chưa có ánh xạ
+    readings: dict               # chuỗi -> macro.signals.Reading
+    risk_free: float
+    rf_source: str
+
+
+def macro_mapping() -> dict:
+    """config/macro_map.toml (danh mục chuỗi, nhóm bối cảnh, ánh xạ ngành)."""
+    import tomllib
+
+    f = path("macro_map")
+    if not f.exists():
+        return {}
+    with f.open("rb") as fh:
+        return tomllib.load(fh)
+
+
+def macro_view(symbol: str) -> MacroView | None:
+    """Bối cảnh vĩ mô Việt Nam và mức thuận lợi của ngành cho `symbol` từ bảng macro_series.
+    None nếu kho chưa có số vĩ mô (chạy fetch-macro)."""
+    from vnsa.data.store import Store
+    from vnsa.macro.catalog import catalog
+    from vnsa.macro.score import industry_score, market_context
+    from vnsa.macro.signals import readings
+
+    with Store(path("warehouse")) as store:
+        data = store.macro()
+        company = store.company(symbol)
+    if data.empty:
+        return None
+    mc = settings().get("macro", {})
+    rs = readings(data, catalog(), z_years=mc.get("z_years", 5), z_cap=mc.get("z_cap", 2.0))
+    cfg = {k: mc[k] for k in ("favorable", "unfavorable", "min_coverage", "z_cap") if k in mc}
+    mapping = macro_mapping()
+    market, groups = market_context(rs, mapping, cfg)
+    ind = industry_score(symbol, company, rs, mapping, cfg)
+    rf, src = risk_free()
+    return MacroView(market, groups, ind, rs, rf, src)
+
+
+@dataclass
 class Assessment:
     """Mọi kết quả phân tích của một mã, tính một lần (khuyến nghị, báo cáo, dashboard dùng chung)."""
     data: Data
@@ -574,6 +660,7 @@ class Assessment:
     risk: RiskReport | None
     quant: float
     rec: object              # Recommendation
+    macro: MacroView | None = None
 
 
 def assess(symbol: str) -> Assessment:
@@ -628,7 +715,12 @@ def assess(symbol: str) -> Assessment:
     )
     inputs.rule_state = timing_state(d, ind)
     rec = recommend(inputs, settings()["recommend"], notes)
-    return Assessment(d, fa_score, fair, pe, pb, z_em, upside, ind, t, p, r, q, rec)
+    try:
+        mv = macro_view(d.symbol)
+    except Exception as e:  # noqa: BLE001 - lớp vĩ mô chỉ tham khảo, lỗi không chặn phân tích
+        mv = None
+        rec.reasons.append(f"không đọc được số vĩ mô ({e})")
+    return Assessment(d, fa_score, fair, pe, pb, z_em, upside, ind, t, p, r, q, rec, mv)
 
 
 def timing_state(d: Data, ind: pd.DataFrame) -> dict | None:

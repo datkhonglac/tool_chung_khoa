@@ -53,6 +53,13 @@ years = 10                  # số năm tải lần đầu
 z_years = 5                 # so biến động hiện tại với 5 năm gần nhất của chính chuỗi đó
 z_cap = 2.0                 # chặn z trong ±2 (một chuỗi bất thường không lấn át cả ngành)
 max_age_hours = 20          # phân tích tự tải lại số vĩ mô cũ hơn số giờ này
+favorable = 0.3             # điểm ngành/bối cảnh ≥ 0,3 -> Thuận lợi; ≤ unfavorable -> Bất lợi
+unfavorable = -0.3
+min_coverage = 0.5          # yếu tố có số < 50% trọng số -> "Chưa đủ số liệu", không xếp loại
+guard = -0.5                # rào chắn: ngành ≤ −0,5 (độ phủ ≥ guard_coverage) -> độ tin cậy giảm 1 bậc
+guard_coverage = 0.6
+rf_series = "vn_gov_10y"    # WACC/k_e dùng lợi suất TPCP 10 năm nhập tay nếu kỳ đó không cũ quá
+rf_max_age_days = 45        # số ngày này (tính từ cuối tháng); ngược lại dùng [valuation] risk_free
 
 [watchlist]
 symbols = ["FPT", "HPG", "MWG", "VNM", "DGC"]

@@ -92,6 +92,7 @@ class Card:
     notes: list[str] = field(default_factory=list)
     basis: str = ""          # kỳ số liệu tài chính: "TTM Q2/2026" | "năm 2025"
     consensus: str = ""      # dòng đối chiếu giá mục tiêu CTCK (VCI tổng hợp)
+    macro: list[str] = field(default_factory=list)   # mục VĨ MÔ & NGÀNH (tham khảo)
 
 
 def red_flags(fin: pd.DataFrame, financial: bool, z_em: float, f_score: float) -> list[str]:
@@ -184,6 +185,58 @@ def _confidence(a, cfg: dict) -> tuple[str, dict[str, bool]]:
     return level, checks
 
 
+def _signed(x: float, digits: int = 2) -> str:
+    """+0,42 / −0,42 (dấu trừ kiểu chữ in)."""
+    return f"{x:+.{digits}f}".replace(".", ",").replace("-", "−")
+
+
+def _score_txt(m) -> str:
+    """'Bất lợi (−0,42)' hoặc 'chưa đủ số liệu'."""
+    if m.label == "Chưa đủ số liệu" or pd.isna(m.score):
+        return "chưa đủ số liệu"
+    return f"{m.label} ({_signed(m.score)})"
+
+
+def macro_lines(mv, top: int = 4) -> list[str]:
+    """Mục VĨ MÔ & NGÀNH của thẻ (mv = analysis.MacroView). Chỉ trình bày, số do macro/ tính."""
+    from vnsa.macro.signals import fmt_change, fmt_period
+
+    if mv is None:
+        return ["Chưa có số vĩ mô trong kho (python -m vnsa.cli fetch-macro)"]
+    groups = " · ".join(f"{g.scope} {_score_txt(g)}" for g in mv.groups.values())
+    lines = [f"Bối cảnh Việt Nam: {_score_txt(mv.market)} — {groups}"]
+    ind = mv.industry
+    if ind is None:
+        lines.append("Ngành: chưa có ánh xạ yếu tố vĩ mô (thêm ở config/macro_map.toml)")
+    else:
+        lines.append(f"Ngành {ind.scope}: {_score_txt(ind)}"
+                     + (f", độ phủ {vn_pct(ind.coverage, 0)}" if ind.coverage < 1 else ""))
+        used = sorted((d for d in ind.drivers if d.used), key=lambda d: -abs(d.contribution))
+        for d in used[:top]:
+            r = d.reading
+            mark = "+" if d.contribution > 0 else "−" if d.contribution < 0 else "·"
+            lines.append(f"  {mark} {r.name}: {fmt_change(r)} ({fmt_period(r)}, z "
+                         f"{_signed(r.z, 1)}) · {d.why}")
+        gaps = ([f"{d.reading.name if d.reading else d.series} (chưa có số)" for d in ind.missing]
+                + [f"{d.reading.name} (số cũ {fmt_period(d.reading)})" for d in ind.stale])
+        if gaps:
+            lines.append("  ? Thiếu: " + ", ".join(gaps))
+    lines.append(f"Lãi suất phi rủi ro trong WACC: {vn_pct(mv.risk_free)} ({mv.rf_source})")
+    return lines
+
+
+def macro_guard(mv, cfg: dict | None = None) -> str | None:
+    """Rào chắn vĩ mô: ngành Bất lợi rõ (điểm ≤ guard, độ phủ ≥ guard_coverage) -> lý do giảm độ
+    tin cậy một bậc; None nếu không áp dụng. Không đổi xếp hạng (vĩ mô chưa được kiểm chứng)."""
+    cfg = settings().get("macro", {}) if cfg is None else cfg
+    ind = mv.industry if mv is not None else None
+    if (ind is None or pd.isna(ind.score) or ind.score > cfg.get("guard", -0.5)
+            or ind.coverage < cfg.get("guard_coverage", 0.6)):
+        return None
+    return (f"vĩ mô bất lợi rõ cho ngành ({_signed(ind.score)}): độ tin cậy giảm một bậc "
+            "(không đổi xếp hạng)")
+
+
 def build_card(a) -> Card:
     """a = analysis.Assessment."""
     from vnsa import market
@@ -195,6 +248,9 @@ def build_card(a) -> Card:
     prof = market.profile(d.symbol)
     financial = market.financial_note(d.symbol) is not None
     conf, checks = _confidence(a, settings()["report"])
+    guard = macro_guard(getattr(a, "macro", None))
+    if guard:
+        conf = {"Cao": "Trung bình", "Trung bình": "Thấp"}.get(conf, conf)
     nan = float("nan")
 
     # Cơ bản
@@ -354,6 +410,8 @@ def build_card(a) -> Card:
         notes += [n for n in p.zone.notes if "đuổi giá" in n or "xu hướng yếu" in n]
     if financial:
         notes.append("định chế tài chính: định giá bằng thu nhập thặng dư, P/B theo ROE")
+    if guard:
+        notes.append(guard)
     return Card(
         symbol=d.symbol, action=rec.action, label=LABELS.get(rec.action, ""),
         confidence=conf, confidence_checks=checks,
@@ -367,7 +425,8 @@ def build_card(a) -> Card:
         timing=rec.timing, expected_return=rec.expected_return,
         dividend_yield=x.dividend_yield, regime=x.regime,
         fundamentals=fundamentals, red_flags=flags, technical=technical, forecast=forecast,
-        plan=plan_lines, notes=notes, consensus=cons_line)
+        plan=plan_lines, notes=notes, consensus=cons_line,
+        macro=macro_lines(getattr(a, "macro", None)))
 
 
 def format_card(c: Card) -> str:
@@ -396,6 +455,8 @@ def format_card(c: Card) -> str:
         "KỸ THUẬT",
         *[f"  {s}" for s in c.technical],
     ]
+    if c.macro:
+        lines += ["", "VĨ MÔ & NGÀNH (tham khảo, chưa vào điểm)", *[f"  {s}" for s in c.macro]]
     if c.forecast:
         lines += ["", "DỰ BÁO 20 PHIÊN", *[f"  {s}" for s in c.forecast]]
     if c.plan:

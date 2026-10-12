@@ -175,11 +175,14 @@ def cmd_fetch_macro(args) -> int:
 
 
 def cmd_macro(args) -> int:
-    """Bảng số liệu vĩ mô mới nhất trong kho: giá trị, biến động, mức bất thường (z)."""
+    """Không có mã: bảng số liệu vĩ mô mới nhất (giá trị, biến động, z). Có mã: bối cảnh Việt Nam
+    và mọi yếu tố vĩ mô của ngành từng mã."""
     from vnsa.data.store import Store
     from vnsa.macro.catalog import catalog
-    from vnsa.macro.signals import fmt_change, fmt_value, readings
+    from vnsa.macro.signals import fmt_change, fmt_period, fmt_value, readings
 
+    if args.symbols:
+        return _macro_symbols([s.upper() for s in args.symbols])
     cat = catalog()
     with Store(path("warehouse")) as store:
         data = store.macro()
@@ -188,24 +191,66 @@ def cmd_macro(args) -> int:
         return 1
     cfg = settings().get("macro", {})
     rs = readings(data, cat, z_years=cfg.get("z_years", 5), z_cap=cfg.get("z_cap", 2.0))
-    print(f"{'Chuỗi':<17}{'Tên':<34}{'Kỳ cuối':>11}{'Giá trị':>13}{'Biến động':>16}{'z':>6}  Ghi chú")
+    print(f"{'Chuỗi':<21}{'Tên':<33}{'Kỳ cuối':>11}{'Giá trị':>12}{'Biến động':>15}{'z':>6}  Ghi chú")
     for sid, r in rs.items():
         if r.date is None:
             continue
-        when = f"{r.date:%d/%m/%Y}" if cat[sid].freq == "D" else (
-            f"Q{r.date.quarter}/{r.date.year}" if cat[sid].freq == "Q" else f"{r.date:%m/%Y}")
-        z = "" if not r.ok else f"{r.z:+.1f}".replace(".", ",")
+        z = "" if not r.ok else f"{r.z:+.1f}".replace(".", ",").replace("-", "−")
         note = "CŨ" if r.stale else ""
         note += ("" if r.basis.startswith("z") else (" " if note else "") + r.basis)
-        print(f"{sid:<17}{r.name[:33]:<34}{when:>11}{fmt_value(r):>13}{fmt_change(r):>16}{z:>6}  "
-              f"{note}")
+        print(f"{sid:<21}{r.name[:32]:<33}{fmt_period(r):>11}{fmt_value(r):>12}"
+              f"{fmt_change(r).replace('-', '−'):>15}{z:>6}  {note}")
     empty = [sid for sid, r in rs.items() if r.date is None]
     if empty:
         print(f"\nChưa có số ({len(empty)}): {', '.join(empty)}")
         print("  Số Việt Nam nhập tay ở config/macro_manual.toml rồi chạy lại fetch-macro.")
     print("\nBiến động: % sau 3 tháng (giá, tỷ giá) · điểm % (lãi suất) · so mốc (tăng trưởng, PMI). "
-          "z: so với 5 năm của chính chuỗi đó, chặn ±2.")
+          "z: so với 5 năm của chính chuỗi đó, chặn ±2. Xem theo mã: macro HPG FPT")
     return 0
+
+
+def _macro_symbols(symbols: list[str]) -> int:
+    from vnsa import analysis
+    from vnsa.macro.signals import fmt_change, fmt_period
+    from vnsa.report.card import _score_txt, _signed, macro_guard, vn_pct
+
+    code = 0
+    for i, sym in enumerate(symbols):
+        mv = analysis.macro_view(sym)
+        if mv is None:
+            print("Kho chưa có số liệu vĩ mô. Chạy: python -m vnsa.cli fetch-macro")
+            return 1
+        if i == 0:
+            print(f"Bối cảnh Việt Nam: {_score_txt(mv.market)}")
+            for g in mv.groups.values():
+                print(f"  {g.scope:<12} {_score_txt(g)}"
+                      + (f" · thiếu {', '.join(d.series for d in g.missing)}" if g.missing else ""))
+            print(f"Lãi suất phi rủi ro trong WACC: {vn_pct(mv.risk_free)} ({mv.rf_source})\n")
+        ind = mv.industry
+        if ind is None:
+            print(f"{sym}: chưa có ánh xạ ngành (chạy analyze {sym} để tải ngành, hoặc thêm vào "
+                  "config/macro_map.toml)\n")
+            code = 1
+            continue
+        print(f"{sym} — {ind.scope}: {_score_txt(ind)}, độ phủ {ind.coverage:.0%}")
+        for d in sorted(ind.drivers, key=lambda d: -abs(d.contribution) if d.used else 1):
+            r = d.reading
+            if r is None or r.date is None:
+                print(f"  ? {d.series:<20} chưa có số · {d.why}")
+                continue
+            mark = ("+" if d.contribution > 0 else "−" if d.contribution < 0 else "·") if d.used \
+                else "·"
+            state = (f"đóng góp {_signed(d.contribution)}" if d.used
+                     else "số cũ, không tính" if r.stale else r.basis)
+            z = "" if not r.ok else f", z {_signed(r.z, 1)}"
+            print(f"  {mark} {r.name[:30]:<30} {fmt_change(r).replace('-', '−'):>13} "
+                  f"({fmt_period(r)}{z}) {state} · {d.why}")
+        guard = macro_guard(mv)
+        if guard:
+            print(f"  ! {guard}")
+        print()
+    print("Dấu + / −: yếu tố đang thuận / nghịch cho ngành. Chỉ THAM KHẢO, chưa vào điểm xếp hạng.")
+    return code
 
 
 def cmd_fetch_bctc(args) -> int:
@@ -436,7 +481,7 @@ def _fin_value(d) -> int:
     except ValueError as e:
         print(f"  ✗ {e}")
         return 1
-    ri, a = fair.ri, settings()["valuation"]
+    ri, a = fair.ri, analysis.valuation_settings()
     ke, b, raw, weeks = analysis.cost_of_equity(d)
     print(f"{d.symbol} — định giá định chế tài chính, giá {fair.price:,.0f} đ "
           f"({d.prices['date'].iloc[-1]:%d/%m/%Y})")
@@ -975,7 +1020,8 @@ def main(argv: list[str] | None = None) -> int:
     pfm.add_argument("--pause", type=float, default=0.3, help="Giây nghỉ giữa các lần gọi")
     pfm.set_defaults(func=cmd_fetch_macro)
 
-    pmc = sub.add_parser("macro", help="Số liệu vĩ mô mới nhất trong kho và biến động")
+    pmc = sub.add_parser("macro", help="Số liệu vĩ mô mới nhất; có mã: yếu tố vĩ mô của ngành")
+    pmc.add_argument("symbols", nargs="*", help="Mã cổ phiếu (bỏ trống = bảng mọi chuỗi)")
     pmc.set_defaults(func=cmd_macro)
 
     pr = sub.add_parser("ratios", help="Bộ chỉ số tài chính năm từ BCTC trong kho")
