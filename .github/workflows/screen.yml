@@ -10,7 +10,7 @@ name: Sàng lọc thị trường
 on:
   schedule:
     - cron: "17 1 * * 6"        # 8:17 sáng thứ Bảy giờ Việt Nam
-  push:                         # chạy thử khi phần sàng lọc thay đổi (tải BCTC tối đa 45 phút)
+  push:                         # chạy thử khi phần sàng lọc thay đổi (tải BCTC tối đa 120 phút)
     paths:
       - ".github/workflows/screen.yml"
       - "src/vnsa/screen/**"
@@ -67,7 +67,7 @@ jobs:
       - name: Sàng lọc
         run: >-
           python -m vnsa.cli screen --stage ${{ inputs.stage || 'pick' }} --top 40
-          ${{ github.event_name == 'push' && '--deep-minutes 45' || '' }}
+          ${{ github.event_name == 'push' && '--deep-minutes 120' || '' }}
           ${{ inputs.exchanges && format('--exchanges {0}', inputs.exchanges) || '' }}
           ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
       - name: Chấm lại các lượt sàng lọc cũ
