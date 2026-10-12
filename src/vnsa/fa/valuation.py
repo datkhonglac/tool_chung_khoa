@@ -15,6 +15,8 @@ Công thức (để đối chiếu):
 - DCF: năm 1 FCFF tăng g1, tốc độ giảm dần tuyến tính về g ở năm `forecast_years` (`fade_growth`;
   tắt thì tăng đều g1), sau đó tăng đều g (Gordon): TV = FCFF_N × (1 + g) / (WACC − g).
   EV = Σ PV(FCFF) + PV(TV). g1 mặc định = CAGR LNST công ty mẹ, chặn trong [0, max_stage1_growth].
+  FCFF gốc = bình quân 3 năm; nếu LNST công ty mẹ giảm nhanh hơn `no_rerate_below`/năm thì lấy
+  mức thấp hơn giữa bình quân đó và năm gần nhất (`declining_base`).
 - Giá trị vốn chủ = EV − vay + tiền + đầu tư ngắn hạn − lợi ích cổ đông không kiểm soát.
 - Số cổ phiếu = vốn góp / mệnh giá 10.000 đ (năm BCTC gần nhất).
 - P/E = giá / (LNST cty mẹ / số cổ phiếu); P/B = giá / (VCSH cty mẹ / số cổ phiếu).
@@ -36,6 +38,8 @@ class Assumptions:
     forecast_years: int = 5
     max_stage1_growth: float = 0.15    # chặn trên cho g1 lấy từ lịch sử
     fade_growth: bool = True           # g1 giảm dần về g trong giai đoạn dự phóng
+    declining_base: bool = True        # lợi nhuận giảm: FCFF gốc = min(bình quân 3 năm, năm cuối)
+    no_rerate_below: float = -0.05     # ngưỡng "lợi nhuận đang giảm" (CAGR 3 năm)
     default_tax_rate: float = 0.20
     default_beta: float = 1.0          # dùng khi không đủ dữ liệu giá để tính beta
     beta_years: int = 3
@@ -87,6 +91,15 @@ def fcff(fin: pd.DataFrame, default_tax: float = 0.20) -> pd.Series:
     rates = fin.apply(lambda r: tax_rate(r, default_tax), axis=1)
     values = fin["cfo"] + fin["interest_expense"].fillna(0) * (1 - rates) - fin["capex"]
     return pd.Series(values.to_numpy(), index=fin["year"].astype(int), name="fcff")
+
+
+def declining_growth(fin: pd.DataFrame, years: int = 3) -> float:
+    """CAGR LNST công ty mẹ tối đa `years` năm gần nhất, KHÔNG chặn (để nhận biết đà giảm)."""
+    ni = fin.sort_values("year")["net_income_parent"].dropna()
+    span = min(years, len(ni) - 1)
+    if span < 1 or ni.iloc[-1 - span] <= 0 or ni.iloc[-1] <= 0:
+        return float("nan")
+    return float((ni.iloc[-1] / ni.iloc[-1 - span]) ** (1 / span) - 1)
 
 
 def historical_growth(fin: pd.DataFrame, cap: float) -> float:
@@ -207,6 +220,14 @@ def value(
 
     hist = fcff(fin, a.default_tax_rate)
     base = float(hist.tail(3).mean())
+    # Lợi nhuận đang giảm: bình quân 3 năm còn chứa các năm đỉnh -> lấy mức thấp hơn giữa bình quân
+    # và năm gần nhất (g1 đã bị chặn dưới ở 0 nên không thể hiện được đà giảm)
+    decline = declining_growth(fin)
+    if (a.declining_base and not pd.isna(decline) and decline < a.no_rerate_below
+            and len(hist) and hist.iloc[-1] < base):
+        notes.append(f"lợi nhuận giảm {decline:+.1%}/năm: FCFF gốc = năm gần nhất "
+                     f"({hist.iloc[-1] / 1e9:,.0f} tỷ) thay vì bình quân 3 năm ({base / 1e9:,.0f} tỷ)")
+        base = float(hist.iloc[-1])
     growth = historical_growth(fin, a.max_stage1_growth) if g1 is None else g1
     br = bridge(last)
     if base <= 0 or pd.isna(base):

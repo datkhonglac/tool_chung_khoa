@@ -216,7 +216,8 @@ def financial(d: Data):
     price = float(d.prices["close"].iloc[-1])
     rev = cfg.get("multiple_reversion", 1.0)
     fair = fv.combine(price, d.fin, d.prices, par, ri=ri, weights=_weights("financial"),
-                      current=d.current, reversion=rev, peers=peer_multiples(d))
+                      current=d.current, reversion=rev, peers=peer_multiples(d),
+                      quality={"roe_adjust": _quality_cfg()["roe_adjust"]})
     scenarios = []
     for k in (ke - 0.01, ke, ke + 0.01):
         for keep in (0.25, 0.75):
@@ -226,8 +227,9 @@ def financial(d: Data):
                 scenarios += [alt.value_per_share, alt.justified_pb * alt.book0]
     hist = fv.historical_multiples(d.fin, d.prices, par)
     pb = price / ri.book0
-    scenarios += [fv.revert(pb, x, rev) * ri.book0 for x in hist["pb"]]
+    scenarios += [fv.revert(pb, x * fair.roe_factor, rev) * ri.book0 for x in hist["pb"]]
     fair.p10, fair.p90 = fv.scenario_range(scenarios, fair.value)
+    fair = _cap_consensus(d, fair)
     score = financial_score(d.fin, settings()["fa_score"]["financials"],
                             market.profile(d.symbol)["model"], pb=pb, fair_upside=fair.upside,
                             roe=d.current.roe if d.current is not None else None,
@@ -270,6 +272,21 @@ def peer_multiples(d: Data) -> tuple[float, float, int] | None:
     return pe_med, float(np.median(pbs)), n
 
 
+def _quality_cfg() -> dict:
+    cfg = settings()["valuation"]
+    return {"roe_adjust": cfg.get("roe_adjust", False),
+            "no_rerate_below": cfg.get("no_rerate_below")}
+
+
+def _cap_consensus(d: Data, fair):
+    """Chặn giá trị hợp lý ở giá mục tiêu CTCK × (1 + `[valuation] consensus_cap`)."""
+    from vnsa.fa import fair_value as fv
+
+    target = (d.profile or {}).get("analyst_target")
+    target = float(target) if target is not None and not pd.isna(target) else float("nan")
+    return fv.cap_by_consensus(fair, target, settings()["valuation"].get("consensus_cap", 0.0))
+
+
 def general_fair_value(d: Data, v=None):
     """Doanh nghiệp thường: FairValue (DCF, P/E, P/B lịch sử) kèm dải P10/P90 từ ma trận độ nhạy
     DCF và P/E, P/B của từng năm lịch sử. v = Valuation đã tính (nếu có)."""
@@ -282,19 +299,22 @@ def general_fair_value(d: Data, v=None):
     price = float(d.prices["close"].iloc[-1])
     fair = fv.combine(price, d.fin, d.prices, par, dcf=v.value_per_share if v else nan,
                       weights=_weights("general"), current=d.current, reversion=rev,
-                      peers=peer_multiples(d))
+                      peers=peer_multiples(d), quality=_quality_cfg())
     hist = fv.historical_multiples(d.fin, d.prices, par)
     c = d.current
     eps, bvps = (c.eps, c.bvps) if c is not None else (hist["eps"].iloc[-1], hist["bvps"].iloc[-1])
     pe_now = price / eps if eps > 0 else nan
     pb_now = price / bvps if bvps > 0 else nan
-    scenarios = ([fv.revert(pe_now, x, rev) * eps for x in hist["pe"]]
-                 + [fv.revert(pb_now, x, rev) * bvps for x in hist["pb"]])
+    pe_s = [fv.revert(pe_now, x, rev) for x in hist["pe"]]
+    if fair.no_rerate and not pd.isna(pe_now):
+        pe_s = [min(x, pe_now) for x in pe_s]
+    scenarios = ([x * eps for x in pe_s]
+                 + [fv.revert(pb_now, x * fair.roe_factor, rev) * bvps for x in hist["pb"]])
     if v is not None and v.fcff_base > 0:
         a = val.Assumptions.from_settings(valuation_settings())
         scenarios += [x for x in val.sensitivity(v, a).to_numpy().ravel()]
     fair.p10, fair.p90 = fv.scenario_range(scenarios, fair.value)
-    return fair
+    return _cap_consensus(d, fair)
 
 
 def fundamentals_view(d: Data):

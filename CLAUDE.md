@@ -57,7 +57,11 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   `fv.revert`; `pe_median`/`pb_median` là trung vị thật, dùng cho điểm FA tương đối; P/E, P/B ngành
   `analysis.peer_multiples` khi kho có ≥ `min_peers` mã cùng ngành + loại DN; độ tin cậy "Cao" cần
   phương pháp độc lập (`FairValue.independent`) và lệch ≤ 30% giá mục tiêu CTCK `analyst_target`;
-  cổ tức > `max_dividend_yield` dùng bình quân 3 năm; F-Score phát hành theo vốn góp mẹ trừ thưởng); định chế tài chính: thu nhập thặng dư + P/B theo ROE (`analysis.financial`,
+  cổ tức > `max_dividend_yield` dùng bình quân 3 năm; F-Score phát hành theo vốn góp mẹ trừ thưởng;
+  chất lượng lợi nhuận `fv.quality_adjust`: P/B lịch sử × ROE hiện tại/ROE trung vị (≤ 1,
+  `roe_adjust`), LNST giảm > 5%/năm thì P/E mục tiêu ≤ P/E hiện tại và DCF lấy FCFF năm cuối
+  (`no_rerate_below`, `declining_base`); giá trị hợp lý chặn ở giá mục tiêu CTCK × 1,3
+  (`consensus_cap`, `fv.cap_by_consensus`, giá trị mô hình giữ ở `FairValue.uncapped`)); định chế tài chính: thu nhập thặng dư + P/B theo ROE (`analysis.financial`,
   `scores.financial_score`, `[valuation.financials]`). Khuyến nghị tự lưu vào bảng `signals` +
   `data/signals.csv` (`analysis.record_signals`); `review-signals` chấm sau 5/20/60 phiên
   (`recommend/review.py`); test cô lập CSV bằng `VNSA_SIGNALS_CSV`.

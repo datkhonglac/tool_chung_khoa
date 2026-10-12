@@ -108,6 +108,15 @@ T+2). Thay vào đó (`src/vnsa/ta/entry.py`, tham số `[entry]`):
   là bình quân 3 năm có trọng số (năm gần nhất nặng nhất); điểm FA riêng (ROE, tăng trưởng, vốn chủ /
   tổng tài sản, định giá). Tham số `[valuation.financials]`, `[fa_score.financials]`.
 
+- **Chất lượng lợi nhuận** (tránh mã "rẻ so với chính nó" chỉ vì lợi nhuận đã đi xuống):
+  - P/B lịch sử nhân với ROE hiện tại ÷ ROE trung vị lịch sử, tối đa 1. Thị trường từng trả P/B cao
+    cho ROE cao; ROE giảm thì P/B hợp lý cũng giảm.
+  - LNST công ty mẹ giảm nhanh hơn 5%/năm: không kỳ vọng P/E tăng lại về mức cũ hay mức ngành, và
+    DCF lấy dòng tiền năm gần nhất thay vì bình quân 3 năm (còn chứa các năm đỉnh).
+  - Giá trị hợp lý tối đa bằng giá mục tiêu CTCK (VCI tổng hợp) × 1,3. Mô hình lạc quan hơn thế thì
+    thẻ báo cáo ghi rõ giá trị mô hình và giá dùng để xếp hạng.
+  - Tham số ở `[valuation]`: `roe_adjust`, `no_rerate_below`, `declining_base`, `consensus_cap`.
+
 ## Lịch sử khuyến nghị — đo độ chính xác của tool
 
 Mỗi lần `recommend`, `analyze` (hoặc Claude Desktop) chạy, khuyến nghị được lưu vào bảng `signals`
