@@ -23,10 +23,12 @@ class Regime:
     slope: float            # MA50 hiện tại / MA50 slope_sessions phiên trước − 1
 
     def __str__(self) -> str:
+        from vnsa.report.card import vn_num, vn_pct
+
         if pd.isna(self.sma_long):
             return f"VNINDEX {self.state} (chưa đủ dữ liệu MA200)"
-        return (f"VNINDEX {self.state} ({self.close:,.0f} so với MA200 {self.sma_long:,.0f}; "
-                f"MA50 {self.slope:+.1%} trong 20 phiên)")
+        return (f"VNINDEX {self.state} ({vn_num(self.close)} so với MA200 {vn_num(self.sma_long)}; "
+                f"MA50 {vn_pct(self.slope, 1, sign=True)} trong 20 phiên)")
 
 
 def regime_series(index: pd.DataFrame, cfg: dict) -> pd.Series:

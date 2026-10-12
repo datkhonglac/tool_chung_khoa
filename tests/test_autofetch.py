@@ -348,3 +348,59 @@ def test_fetch_command_drops_unfinished_session(empty_db, monkeypatch):
     with Store(empty_db) as store:
         assert (store.prices("VNINDEX")["close"] > 0).all()
         assert store.last_price_date("DEMO_A") < pd.Timestamp.today().normalize() + pd.Timedelta(days=1)
+
+
+def test_source_unfinished_last_session_after_close(empty_db):
+    """Sau giờ đóng cửa CafeF vẫn có thể trả phiên hôm nay chưa đủ giá (thật: VNINDEX 12/10/2026
+    lúc 18h, một giá bằng 0): bỏ phiên cuối đó thay vì từ chối cả lần tải; phiên lỗi ở giữa chuỗi
+    vẫn bị chặn như cũ."""
+    class LateCafeF(FakeCafeF):
+        bad_middle = False
+
+        def ohlcv(self, symbol, start, end):
+            df = super().ohlcv(symbol, start, end)
+            if symbol != "VNINDEX":
+                return df
+            if self.bad_middle:
+                df.loc[len(df) // 2, "open"] = 0.0
+                return df
+            late = df.iloc[[-1]].assign(date=pd.Timestamp("2026-10-12"), open=0.0)
+            return pd.concat([df, late], ignore_index=True)
+
+    up = updater(LateCafeF(), now=datetime(2026, 10, 12, 18, 39, tzinfo=VN_TZ))
+    rep = up.ensure("DEMO_A")
+    steps = {s.what: s for s in rep.steps}
+    assert steps["VNINDEX"].status == "ok", rep
+    with Store(empty_db) as store:
+        assert store.last_price_date("VNINDEX") == pd.Timestamp("2026-10-09")
+
+    bad = LateCafeF()
+    bad.bad_middle = True
+    rep = updater(bad, now=datetime(2026, 10, 12, 18, 39, tzinfo=VN_TZ)).ensure("DEMO_C")
+    assert "gia_khong_duong" in {s.what: s for s in rep.steps}["VNINDEX"].detail
+
+
+def test_dividend_error_keeps_shares_and_retries(empty_db):
+    """Lỗi tải cổ tức: vẫn ghi số cp lưu hành nhưng không đánh dấu hồ sơ đã tải, để lần sau thử lại
+    (trước đây báo nhầm "số cổ phiếu tạm tính = vốn góp" và 7 ngày không tải lại cổ tức)."""
+    class NoDividends(FakeVnstock):
+        fail, div_calls = True, 0
+
+        def dividends(self, symbol):
+            self.div_calls += 1
+            if self.fail:
+                raise AttributeError("'numpy.float64' object has no attribute 'where'")
+            return super().dividends(symbol)
+
+    vn = NoDividends()
+    rep = updater(vn=vn).ensure("DEMO_A")
+    step = {s.what: s for s in rep.steps}["hồ sơ"]
+    assert step.status == "error" and "cổ tức" in step.detail and "vốn góp" not in step.detail
+    with Store(empty_db) as store:
+        assert store.company("DEMO_A")["shares_out"] == 33e6
+        assert store.company("DEMO_A")["profile_at"] is None
+    vn.fail = False
+    rep = updater(vn=vn).ensure("DEMO_A")
+    assert vn.div_calls == 2 and {s.what: s for s in rep.steps}["hồ sơ"].status == "ok"
+    with Store(empty_db) as store:
+        assert store.dividends("DEMO_A")["cash_per_share"].iloc[0] == 1500

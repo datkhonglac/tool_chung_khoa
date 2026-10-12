@@ -79,6 +79,20 @@ def _fmt(d) -> str:
     return pd.Timestamp(d).strftime("%d/%m/%Y")
 
 
+def _drop_unfinished_tail(df: pd.DataFrame) -> pd.DataFrame:
+    """Bỏ các phiên CUỐI chuỗi có giá ≤ 0: nguồn chưa ghi xong phiên mới nhất (thật: CafeF trả
+    VNINDEX phiên 12/10/2026 lúc 18h với một giá bằng 0, cả lần tải bị từ chối). Lần tải sau sẽ lấy
+    lại phiên đó. Phiên lỗi ở GIỮA chuỗi vẫn bị validate_prices chặn như cũ."""
+    cols = [c for c in ("open", "high", "low", "close") if c in df]
+    if df.empty or not cols:
+        return df
+    bad = (df[cols] <= 0).any(axis=1).to_numpy()
+    n = len(df)
+    while n and bad[n - 1]:
+        n -= 1
+    return df.iloc[:n]
+
+
 class Updater:
     """Cập nhật kho cho từng mã. Nguồn dữ liệu truyền vào được (test không cần mạng)."""
 
@@ -218,7 +232,8 @@ class Updater:
                 else:
                     df = prov.ohlcv(sym, start, end)
                 if not df.empty:
-                    df = df[pd.to_datetime(df["date"]) <= closed].reset_index(drop=True)
+                    df = _drop_unfinished_tail(
+                        df[pd.to_datetime(df["date"]) <= closed].reset_index(drop=True))
                 if df.empty:
                     raise ValueError(f"không có giá {sym} từ {start} đến {end}")
             except Exception as e:  # noqa: BLE001 - thử nguồn kế tiếp
@@ -288,12 +303,17 @@ class Updater:
             p = self.vn.profile(sym)
             if not p or pd.isna(p.get("shares_out", float("nan"))):
                 raise ValueError("nguồn không trả số cổ phiếu lưu hành")
-            store.write_profile(sym, p)
-            n_div = store.write_dividends(self.vn.dividends(sym), sym)
         except Exception as e:  # noqa: BLE001 - thiếu hồ sơ thì dùng vốn góp / mệnh giá
             return Step("hồ sơ", "error", f"{e}; số cổ phiếu tạm tính = vốn góp / mệnh giá")
-        return Step("hồ sơ", "ok", f"{p['shares_out'] / 1e6:,.1f} triệu cp lưu hành, "
-                    f"{n_div} lần chia cổ tức")
+        shares = f"{p['shares_out'] / 1e6:,.1f} triệu cp lưu hành"
+        try:
+            div = self.vn.dividends(sym)
+        except Exception as e:  # noqa: BLE001 - giữ số cp; không đánh dấu đã tải để lần sau thử lại
+            store.write_profile(sym, p, stamp=False)
+            return Step("hồ sơ", "error", f"cổ tức: {e} (đã có {shares}; lần sau tải lại cổ tức)")
+        store.write_profile(sym, p)
+        n_div = store.write_dividends(div, sym)
+        return Step("hồ sơ", "ok", f"{shares}, {n_div} lần chia cổ tức")
 
     def _flows(self, store: Store, sym: str) -> Step | None:
         """Khối ngoại + tự doanh (CafeF). Nguồn giá không có hàm flows (test) hoặc `[auto] flows =

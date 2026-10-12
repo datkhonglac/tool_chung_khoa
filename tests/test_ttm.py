@@ -99,6 +99,17 @@ def test_standardize_dividends_splits_cash_and_stock():
     assert d["stock_ratio"].iloc[1] == 0.1 and np.isnan(d["cash_per_share"].iloc[1])
 
 
+def test_standardize_dividends_missing_value_columns():
+    """VCI bỏ hẳn cột value_per_share/exercise_ratio khi không đợt nào có số (lượt chạy thật
+    12/10/2026: 48 mã lỗi "'numpy.float64' object has no attribute 'where'")."""
+    ev = pd.DataFrame({"category": ["DIVIDEND", "OTHER"],
+                       "exright_date": ["2026-06-10", "2026-08-26"],
+                       "event_title_vi": ["Cổ tức", "Niêm yết thêm"]})
+    d = standardize_dividends(ev, "vjc")
+    assert len(d) == 1 and np.isnan(d["cash_per_share"].iloc[0]) and np.isnan(d["stock_ratio"].iloc[0])
+    assert standardize_dividends(ev.drop(columns="exright_date"), "vjc").empty
+
+
 def test_unadjusted_close_kept_and_scaled():
     raw = pd.DataFrame({"Ngày": ["09/10/2026", "08/10/2026"], "Giá mở cửa": [57.5, 58.0],
                         "Giá cao nhất": [58.2, 58.5], "Giá thấp nhất": [57.1, 57.6],

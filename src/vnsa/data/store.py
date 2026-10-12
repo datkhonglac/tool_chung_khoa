@@ -413,14 +413,16 @@ class Store:
             self.con.unregister("incoming")
         return len(frame)
 
-    def write_profile(self, symbol: str, profile: dict) -> None:
-        """Ghi hồ sơ doanh nghiệp vào dòng companies của mã (thêm dòng nếu chưa có)."""
+    def write_profile(self, symbol: str, profile: dict, stamp: bool = True) -> None:
+        """Ghi hồ sơ doanh nghiệp vào dòng companies của mã (thêm dòng nếu chưa có). `stamp` = False:
+        không ghi thời điểm tải (profile_at) để lần sau tải lại (vd. chưa lấy được cổ tức)."""
         sym = symbol.upper()
         if self.company(sym) is None:
             self.con.execute("INSERT INTO companies (symbol) VALUES (?)", [sym])
         cols = [c for c in PROFILE_COLUMNS if c in profile]
         sets = ", ".join(f"{c} = ?" for c in cols)
-        self.con.execute(f"UPDATE companies SET {sets}, profile_at = current_timestamp "
+        when = ", profile_at = current_timestamp" if stamp else ""
+        self.con.execute(f"UPDATE companies SET {sets}{when} "
                          "WHERE symbol = ?", [*(None if isinstance(profile[c], float)
                                                  and np.isnan(profile[c]) else profile[c]
                                                  for c in cols), sym])

@@ -199,12 +199,17 @@ def standardize_dividends(events: pd.DataFrame, symbol: str) -> pd.DataFrame:
     """Sự kiện quyền (Company.events của VCI, category DIVIDEND) -> symbol, exright_date,
     cash_per_share (đồng/cp, cổ tức tiền), stock_ratio (tỷ lệ cổ tức/thưởng cổ phiếu), title."""
     cols = ["symbol", "exright_date", "cash_per_share", "stock_ratio", "title"]
-    if events is None or len(events) == 0 or "category" not in events:
+    if (events is None or len(events) == 0 or "category" not in events
+            or "exright_date" not in events):
         return pd.DataFrame(columns=cols)
     ev = events[events["category"].astype(str).str.upper() == "DIVIDEND"].copy()
-    date = pd.to_datetime(ev.get("exright_date"), errors="coerce")
-    cash = pd.to_numeric(ev.get("value_per_share"), errors="coerce")
-    ratio = pd.to_numeric(ev.get("exercise_ratio"), errors="coerce")
+
+    def num(key):          # VCI bỏ hẳn cột khi không đợt nào có số (vd. VJC chỉ chia cổ phiếu)
+        return (pd.to_numeric(ev[key], errors="coerce") if key in ev
+                else pd.Series(np.nan, index=ev.index))
+
+    date = pd.to_datetime(ev["exright_date"], errors="coerce")
+    cash, ratio = num("value_per_share"), num("exercise_ratio")
     out = pd.DataFrame({"symbol": symbol.upper(), "exright_date": date,
                         "cash_per_share": cash.where(cash > 0),
                         "stock_ratio": ratio.where(cash.isna() | (cash <= 0)),
