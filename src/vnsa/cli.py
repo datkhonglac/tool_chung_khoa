@@ -943,6 +943,21 @@ def cmd_study_timing(args) -> int:
     return 0
 
 
+def cmd_screen(args) -> int:
+    """Sàng lọc toàn thị trường (src/vnsa/screen/): lọc theo tầng, in và lưu kết quả."""
+    from vnsa.screen.report import format_liquidity
+    from vnsa.screen.run import liquidity
+
+    exchanges = [e.upper() for e in args.exchanges] if args.exchanges else None
+    try:
+        res = liquidity(update=not args.no_update, exchanges=exchanges, limit=args.limit)
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    print(format_liquidity(res, top=args.top))
+    return 0
+
+
 def cmd_history(args) -> int:
     """Lưu/nạp lịch sử khuyến nghị và BCTC năm/quý tích luỹ (history.py)."""
     from vnsa import history
@@ -1116,6 +1131,16 @@ def main(argv: list[str] | None = None) -> int:
     pst.add_argument("--years", type=int, help="Số năm giá cần có (mặc định [study] years)")
     pst.add_argument("--no-fetch", action="store_true", help="Không tải, chỉ dùng giá trong kho")
     pst.set_defaults(func=cmd_study_timing)
+
+    psc = sub.add_parser("screen", help="Sàng lọc toàn thị trường: nhóm ngành và mã tiềm năng")
+    psc.add_argument("--stage", choices=["liquidity"], default="liquidity",
+                     help="Chạy đến tầng nào (liquidity = tầng 1, lọc thanh khoản)")
+    psc.add_argument("--exchanges", nargs="+", metavar="SÀN",
+                     help="Sàn cần lọc, vd: HOSE HNX (mặc định [screen] exchanges)")
+    psc.add_argument("--no-update", action="store_true", help="Không tải, chỉ dùng dữ liệu trong kho")
+    psc.add_argument("--limit", type=int, help="Chỉ lấy N mã đầu danh sách (chạy thử)")
+    psc.add_argument("--top", type=int, default=20, help="Số mã in trong bảng GTGD lớn nhất")
+    psc.set_defaults(func=cmd_screen)
 
     ph = sub.add_parser("history", help="Lưu/nạp lịch sử khuyến nghị và BCTC tích luỹ")
     ph.add_argument("action", choices=["export", "import"])

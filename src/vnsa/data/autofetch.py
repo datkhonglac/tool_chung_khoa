@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -134,10 +134,11 @@ class Updater:
         self._order = [self.cafef, self.vn]
         if store.price_source(sym) == self.vn.name and not full:
             self._order.reverse()                       # mã này lần trước lấy được từ vnstock
+        depth = None                                    # ngày bắt đầu nếu tải toàn bộ
         try:
             if last is None or full:
-                df = self._download(sym, today - timedelta(days=round(365.25 * self.cfg["years"])),
-                                    today)
+                depth = start = self._full_start(store, sym, today)
+                df = self._download(sym, start, today)
                 note = f"tải {len(df)} phiên ({_fmt(df['date'].iloc[0])} → {_fmt(df['date'].iloc[-1])})"
                 write = store.write_prices
             else:
@@ -147,8 +148,8 @@ class Updater:
                 both = old.merge(df, on="date", suffixes=("_old", ""))
                 drift = (both["close"] / both["close_old"] - 1).abs().max() if len(both) else 0.0
                 if drift > self.cfg["adjust_tolerance"]:
-                    df = self._download(
-                        sym, today - timedelta(days=round(365.25 * self.cfg["years"])), today)
+                    depth = self._full_start(store, sym, today)
+                    df = self._download(sym, depth, today)
                     note = (f"giá lịch sử đã được nguồn điều chỉnh (lệch {drift:.1%}, thường do "
                             f"cổ tức/chia tách) → tải lại toàn bộ {len(df)} phiên")
                     write = store.write_prices
@@ -165,6 +166,8 @@ class Updater:
             return Step(label, "error", "dữ liệu tải về có lỗi, không nạp: "
                         + "; ".join(str(i) for i in errors))
         write(df, source=self._used.name)
+        if depth is not None:
+            store.set_price_depth(sym, depth)
         self._save_csv(store, sym)
         repaired = getattr(self._used, "repaired", None)
         if repaired:
@@ -173,6 +176,24 @@ class Updater:
             note += f" — nguồn {self._used.name}" + (f" (CafeF: {self._fallback_reason})"
                                                      if self._fallback_reason else "")
         return Step(label, "ok", note)
+
+    def _full_start(self, store: Store, sym: str, today) -> date:
+        """Ngày bắt đầu khi tải toàn bộ: `years` năm, hoặc sớm hơn nếu kho đã có lịch sử dài hơn
+        (tải lại vì nguồn điều chỉnh giá không được làm mất phần lịch sử đã có)."""
+        start = today - timedelta(days=round(365.25 * self.cfg["years"]))
+        first = store.first_price_date(sym)
+        return min(start, first.date()) if first is not None else start
+
+    def _short(self, store: Store, sym: str) -> bool:
+        """Kho có giá nhưng ngắn hơn `years` năm (vd. sàng lọc mới tải 1 năm) và chưa từng yêu cầu
+        đủ độ sâu — mã mới niêm yết đã tải đủ thì không tải lại."""
+        first = store.first_price_date(sym)
+        if first is None:
+            return False
+        want = pd.Timestamp(self.now().date()) - pd.Timedelta(
+            days=round(365.25 * self.cfg["years"]) - 30)
+        depth = store.price_depth(sym)
+        return first > want and (depth is None or depth > want)
 
     def _download(self, sym: str, start, end) -> pd.DataFrame:
         """Thử lần lượt các nguồn giá trong self._order; ghi nhận nguồn đã dùng vào self._used.
@@ -316,17 +337,41 @@ class Updater:
         steps = []
         cfg_years = self.cfg.get("years")
         self.cfg = {**self.cfg, "years": years}
-        want = pd.Timestamp(self.now().date()) - pd.Timedelta(days=round(365.25 * years) - 30)
         try:
             with Store(path("warehouse")) as store:
                 steps.append(self._listing(store, False))
                 for sym in [*symbols, self.index]:
-                    have = store.prices(sym)
-                    short = have.empty or have["date"].min() > want
-                    steps.append(self._prices(store, sym, sym, full=short))
+                    steps.append(self._prices(store, sym, sym, full=self._short(store, sym)))
         finally:
             self.cfg = {**self.cfg, "years": cfg_years}
         return steps
+
+    def listing(self, refresh: bool = False) -> Step:
+        """Danh sách niêm yết (sàn, ngành): tải lại khi cũ hơn `listing_max_age_days`."""
+        with Store(path("warehouse")) as store:
+            return self._listing(store, refresh)
+
+    def quick_prices(self, symbols: list[str], years: int = 1,
+                     progress: Callable[[int, int, str, Step], None] | None = None
+                     ) -> dict[str, Step]:
+        """Chỉ tải GIÁ cho nhiều mã (sàng lọc toàn thị trường, screen/): mã chưa có giá tải `years`
+        năm (1 lần gọi CafeF), mã đã có chỉ tải phần mới. Không tải BCTC/hồ sơ — phần đó để
+        ensure() làm cho các mã qua lọc (ensure tự bổ sung đủ `[auto] years` năm giá)."""
+        out: dict[str, Step] = {}
+        cfg_years = self.cfg.get("years")
+        self.cfg = {**self.cfg, "years": years}
+        todo = [self.index, *[s for s in dict.fromkeys(x.upper() for x in symbols)
+                              if s != self.index]]
+        try:
+            with Store(path("warehouse")) as store:
+                self._listing(store, False)
+                for i, sym in enumerate(todo, 1):
+                    out[sym] = self._prices(store, sym, sym, full=False)
+                    if progress:
+                        progress(i, len(todo), sym, out[sym])
+        finally:
+            self.cfg = {**self.cfg, "years": cfg_years}
+        return out
 
     # ---- điểm vào ----------------------------------------------------------------------------
     def ensure(self, symbol: str, refresh: bool = False, full: bool = False) -> UpdateReport:
@@ -343,10 +388,11 @@ class Updater:
             elif prof:
                 rep.steps.append(Step("thông tin", "ok", " · ".join(
                     str(x) for x in (prof["name"], prof["exchange"], prof["industry"]) if x)))
-            rep.steps.append(self._prices(store, sym, "giá", full))
+            rep.steps.append(self._prices(store, sym, "giá", full or self._short(store, sym)))
             if sym != self.index:
                 if self._index_step is None:
-                    self._index_step = self._prices(store, self.index, self.index, full)
+                    self._index_step = self._prices(store, self.index, self.index,
+                                                    full or self._short(store, self.index))
                 rep.steps.append(self._index_step)
             rep.has_prices = store.last_price_date(sym) is not None
             if rep.has_prices and sym != self.index:

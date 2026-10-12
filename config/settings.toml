@@ -11,6 +11,7 @@ signals_csv = "data/signals.csv"       # bản sao lịch sử khuyến nghị (
 bank_manual = "config/bank_manual.toml"   # NPL, CASA, CAR ngân hàng nhập tay (nguồn miễn phí không có)
 macro_map = "config/macro_map.toml"       # danh mục chuỗi vĩ mô + ánh xạ ngành → yếu tố vĩ mô
 macro_manual = "config/macro_manual.toml" # số vĩ mô Việt Nam nhập tay (CPI, tín dụng, PMI...)
+screen_dir = "data/screen"                # kết quả sàng lọc toàn thị trường (lệnh screen), mỗi lượt một CSV
 
 # Đơn vị giá trong file CSV: "auto" | "dong" | "nghin"
 # auto: nếu trung vị giá đóng cửa < 1000 thì coi là nghìn đồng và nhân 1000.
@@ -211,6 +212,15 @@ record = true
 horizons = [5, 20, 60]      # số phiên để chấm lại khuyến nghị (lệnh review-signals)
 # Mã workflow hằng ngày (.github/workflows/daily.yml) phân tích và lưu khuyến nghị vào nhánh `signals`
 daily = ["FPT", "HPG", "MWG", "VNM", "DGC", "VCB", "TCB", "MBB", "SSI", "ACV", "TNG", "GMD"]
+
+[screen]
+# Sàng lọc toàn thị trường (lệnh screen, src/vnsa/screen/). Tầng 1 chỉ cần giá 1 năm mỗi mã.
+exchanges = ["HOSE", "HNX", "UPCOM"]
+liquidity_years = 1         # số năm giá tải cho mã chưa có trong kho (CafeF: 1 lần gọi mỗi mã)
+min_value_bn = 3.0          # GTGD bình quân 20 phiên tối thiểu (tỷ đồng, giá khớp thật × KL khớp lệnh)
+min_price = 5000            # giá tối thiểu (đồng)
+min_sessions = 200          # số phiên có giao dịch trong 365 ngày gần nhất
+max_stale_days = 10         # phiên cuối cũ hơn số ngày này -> coi là ngừng giao dịch
 
 [study]
 # Kiểm định quy tắc thời điểm (lệnh study-timing, recommend/study.py): VN30 + một số mã vừa

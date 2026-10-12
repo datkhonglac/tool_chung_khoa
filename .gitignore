@@ -12,6 +12,7 @@ __pycache__/
 # Dữ liệu và kết quả sinh ra (giữ lại thư mục mẫu)
 data/raw/
 data/charts/
+data/screen/
 data/*.duckdb
 data/*.duckdb.wal
 !data/sample/

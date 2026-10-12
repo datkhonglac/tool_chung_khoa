@@ -186,6 +186,27 @@ python -m vnsa.cli macro HPG FPT        # yếu tố vĩ mô của ngành từng
   `[valuation] risk_free`.
 - **Tin tức:** tiêu đề tin theo mã (vnstock/VCI), chỉ để đọc; không chấm điểm cảm xúc tin.
 
+## Sàng lọc toàn thị trường (đang làm)
+
+Lọc mọi mã HOSE, HNX, UPCoM qua 5 tầng để ra nhóm ngành tiềm năng và mã tiềm năng trong từng
+nhóm. Kiến trúc: tầng 0 vũ trụ → tầng 1 thanh khoản → tầng 2 phân tích từng mã → tầng 3 chấm
+nhóm ngành → tầng 4 chọn mã. Hiện đã có tầng 0–1.
+
+```bash
+python -m vnsa.cli screen                       # tầng 1: lọc thanh khoản cả thị trường
+python -m vnsa.cli screen --exchanges HOSE HNX  # chỉ hai sàn
+python -m vnsa.cli screen --no-update           # dùng giá đã có trong kho, không tải
+```
+
+- **Tầng 1** chỉ cần giá 1 năm mỗi mã (1 lần gọi CafeF). Giữ mã có GTGD bình quân 20 phiên ≥ 3 tỷ,
+  giá ≥ 5.000đ, ≥ 200 phiên có giao dịch trong 1 năm, còn giao dịch trong 10 ngày gần nhất. Ngưỡng ở
+  mục `[screen]` của `config/settings.toml`.
+- Lần đầu tải giá cho khoảng 1.500 mã nên mất vài chục phút; các lần sau chỉ tải phiên mới.
+- Mã chỉ có 1 năm giá trong kho: `analyze` tự tải bổ sung đủ 5 năm khi cần.
+- Kết quả lưu ở bảng `screen` trong kho và `data/screen/screen_YYYY-MM-DD.csv` (mỗi mã: tầng đã
+  qua, lý do bị loại, GTGD, lợi nhuận 1/3/6 tháng, sức mạnh tương đối so với VNINDEX).
+- Chạy trên GitHub: Actions → **Sàng lọc thị trường** → Run workflow.
+
 ## 0. Chạy trên GitHub Codespaces (khuyến nghị)
 
 Trên trang repo GitHub: **Code → Codespaces → Create codespace on main**. Lần đầu mất vài phút để

@@ -1,0 +1,47 @@
+name: Sàng lọc thị trường
+
+# Sàng lọc toàn thị trường (lệnh screen, src/vnsa/screen/) trên máy chủ GitHub.
+# Kết quả in trong log; CSV và kho DuckDB ở mục Artifacts.
+on:
+  push:                         # chạy khi phần sàng lọc thay đổi
+    paths:
+      - ".github/workflows/screen.yml"
+      - "src/vnsa/screen/**"
+  workflow_dispatch:
+    inputs:
+      exchanges:
+        description: "Sàn cần lọc, cách nhau dấu cách (bỏ trống = HOSE HNX UPCOM)"
+        required: false
+        default: ""
+      limit:
+        description: "Chỉ lấy N mã đầu danh sách để chạy thử (bỏ trống = tất cả)"
+        required: false
+        default: ""
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      PYTHONUNBUFFERED: "1"
+      VNSTOCK_TELEMETRY: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+      - name: Sàng lọc tầng 1 (thanh khoản)
+        run: >-
+          python -m vnsa.cli screen --stage liquidity --top 40
+          ${{ inputs.exchanges && format('--exchanges {0}', inputs.exchanges) || '' }}
+          ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sang-loc
+          path: |
+            data/screen/
+            data/warehouse.duckdb
+          if-no-files-found: ignore

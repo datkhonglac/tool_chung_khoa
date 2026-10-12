@@ -136,6 +136,21 @@ CREATE TABLE IF NOT EXISTS news (
     PRIMARY KEY (symbol, date, title)
 );
 """
+# Độ sâu lịch sử giá đã yêu cầu ở lần tải toàn bộ gần nhất: phân biệt "kho mới tải ngắn" (sàng lọc
+# chỉ tải 1 năm) với "mã mới niêm yết, nguồn không có hơn" (không tải lại vô ích)
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS price_depth (
+    symbol    VARCHAR PRIMARY KEY,
+    full_from DATE,
+    loaded_at TIMESTAMP DEFAULT current_timestamp
+);
+-- Kết quả sàng lọc toàn thị trường (screen/): mỗi lượt (as_of) một dòng mỗi mã trong vũ trụ
+CREATE TABLE IF NOT EXISTS screen (
+    as_of  DATE    NOT NULL,     -- phiên giá của lượt sàng lọc
+    symbol VARCHAR NOT NULL,
+    PRIMARY KEY (as_of, symbol)
+);
+"""
 FLOW_COLUMNS = ["foreign_buy", "foreign_sell", "foreign_net", "foreign_net_vol", "foreign_room",
                 "foreign_pct", "prop_buy", "prop_sell", "prop_net"]
 
@@ -148,6 +163,15 @@ PROFILE_TYPES = {c: "VARCHAR" if c == "analyst_rating" else "DOUBLE" for c in PR
 SIGNAL_COLUMNS = ["as_of", "symbol", "action", "score", "fa_score", "ta_score", "price",
                   "fair_value", "zone_status", "buy_low", "buy_high", "stop", "target", "params",
                   "macro_industry", "macro_market"]
+# Cột bảng screen (ngoài as_of, symbol). stage = tầng cao nhất mã đã qua (0 = chỉ trong vũ trụ);
+# reason = lý do bị loại ở tầng kế tiếp. Giá thật (đồng), GTGD đồng; tỷ lệ là số thập phân.
+SCREEN_TYPES = {
+    "exchange": "VARCHAR", "industry": "VARCHAR", "stage": "INTEGER", "reason": "VARCHAR",
+    "last_date": "DATE", "price": "DOUBLE", "value_20d": "DOUBLE", "sessions": "INTEGER",
+    "ret_1m": "DOUBLE", "ret_3m": "DOUBLE", "ret_6m": "DOUBLE", "rs_3m": "DOUBLE",
+    "rs_6m": "DOUBLE", "above_ma50": "DOUBLE", "above_ma200": "DOUBLE",
+}
+SCREEN_COLUMNS = ["as_of", "symbol", *SCREEN_TYPES]
 
 
 class Store:
@@ -167,6 +191,8 @@ class Store:
         for c, t in [("industry3", "VARCHAR"), ("industry4", "VARCHAR"), *PROFILE_TYPES.items(),
                      ("profile_at", "TIMESTAMP")]:
             self.con.execute(f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {c} {t}")
+        for c, t in SCREEN_TYPES.items():
+            self.con.execute(f"ALTER TABLE screen ADD COLUMN IF NOT EXISTS {c} {t}")
 
     def close(self) -> None:
         self.con.close()
@@ -240,6 +266,33 @@ class Store:
         d = self.con.execute("SELECT MAX(date) FROM prices WHERE symbol = ?",
                              [symbol.upper()]).fetchone()[0]
         return None if d is None else pd.Timestamp(d)
+
+    def first_price_date(self, symbol: str) -> pd.Timestamp | None:
+        d = self.con.execute("SELECT MIN(date) FROM prices WHERE symbol = ?",
+                             [symbol.upper()]).fetchone()[0]
+        return None if d is None else pd.Timestamp(d)
+
+    def set_price_depth(self, symbol: str, full_from) -> None:
+        """Ghi ngày bắt đầu đã yêu cầu ở lần tải toàn bộ giá gần nhất của mã."""
+        self.con.execute("INSERT OR REPLACE INTO price_depth (symbol, full_from, loaded_at) "
+                         "VALUES (?, ?, current_timestamp)",
+                         [symbol.upper(), pd.Timestamp(full_from).date()])
+
+    def price_depth(self, symbol: str) -> pd.Timestamp | None:
+        row = self.con.execute("SELECT full_from FROM price_depth WHERE symbol = ?",
+                               [symbol.upper()]).fetchone()
+        return None if row is None or row[0] is None else pd.Timestamp(row[0])
+
+    def recent_prices(self, start, symbols: list[str] | None = None) -> pd.DataFrame:
+        """Giá mọi mã (hoặc `symbols`) từ ngày `start` — một truy vấn cho cả thị trường."""
+        sql = ("SELECT symbol, date, close, close_raw, volume FROM prices WHERE date >= ?")
+        params: list = [pd.Timestamp(start).date()]
+        if symbols is not None:
+            sql += f" AND symbol IN ({', '.join('?' * len(symbols))})" if symbols else " AND FALSE"
+            params += [s.upper() for s in symbols]
+        df = self.con.execute(sql + " ORDER BY symbol, date", params).df()
+        df["date"] = pd.to_datetime(df["date"])
+        return df
 
     def prices(self, symbol: str, start: str | None = None, end: str | None = None) -> pd.DataFrame:
         sql = ("SELECT symbol, date, open, high, low, close, volume, close_raw FROM prices "
@@ -443,6 +496,15 @@ class Store:
             [industry]).fetchall()
         return [r[0] for r in rows]
 
+    def companies(self, exchanges: list[str] | None = None) -> pd.DataFrame:
+        """Danh sách niêm yết (cột COMPANY_COLUMNS), lọc theo sàn nếu có."""
+        sql = f"SELECT {', '.join(COMPANY_COLUMNS)} FROM companies"
+        params: list = []
+        if exchanges:
+            sql += f" WHERE exchange IN ({', '.join('?' * len(exchanges))})"
+            params = [e.upper() for e in exchanges]
+        return self.con.execute(sql + " ORDER BY symbol", params).df()
+
     def has_icb_detail(self) -> bool:
         """Danh sách niêm yết đã có ngành ICB cấp 4 (kho tạo trước 10/2026 thì chưa: tải lại)."""
         return bool(self.con.execute("SELECT COUNT(*) FROM companies WHERE industry4 IS NOT NULL")
@@ -568,6 +630,39 @@ class Store:
         t = self.con.execute("SELECT MAX(loaded_at) FROM news WHERE symbol = ?",
                              [symbol.upper()]).fetchone()[0]
         return None if t is None else pd.Timestamp(t)
+
+    def write_screen(self, df: pd.DataFrame) -> int:
+        """Ghi một lượt sàng lọc: thay toàn bộ dòng của các ngày as_of có trong df."""
+        if df.empty:
+            return 0
+        frame = df.reindex(columns=SCREEN_COLUMNS).copy()
+        for c in ("as_of", "last_date"):
+            frame[c] = pd.to_datetime(frame[c]).dt.date
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute("BEGIN")
+            self.con.execute("DELETE FROM screen WHERE as_of IN (SELECT DISTINCT as_of FROM incoming)")
+            self.con.execute(f"INSERT INTO screen ({', '.join(SCREEN_COLUMNS)}) "
+                             f"SELECT {', '.join(SCREEN_COLUMNS)} FROM incoming")
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming")
+        return len(frame)
+
+    def screen(self, as_of=None) -> pd.DataFrame:
+        """Một lượt sàng lọc (mặc định lượt mới nhất); rỗng nếu chưa chạy."""
+        if as_of is None:
+            as_of = self.con.execute("SELECT MAX(as_of) FROM screen").fetchone()[0]
+            if as_of is None:
+                return pd.DataFrame(columns=SCREEN_COLUMNS)
+        df = self.con.execute(f"SELECT {', '.join(SCREEN_COLUMNS)} FROM screen WHERE as_of = ? "
+                              "ORDER BY symbol", [pd.Timestamp(as_of).date()]).df()
+        for c in ("as_of", "last_date"):
+            df[c] = pd.to_datetime(df[c])
+        return df
 
     def inventory(self) -> pd.DataFrame:
         """Mỗi mã có bao nhiêu phiên, từ ngày nào đến ngày nào."""

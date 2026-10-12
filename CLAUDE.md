@@ -104,6 +104,13 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   bảng `news`. Lệnh `macro [MÃ...]`, MCP `macro_context`, tab dashboard "Vĩ mô", workflow `macro.yml`
   (input probe: `scripts/probe_macro.py`). vnstock trả ngành dạng dài (icb_level/icb_name):
   `_wide_icb` đổi về icb_name1..4; `companies.industry` = cấp 2, `industry3/4` cho vĩ mô.
+- Sàng lọc toàn thị trường (`src/vnsa/screen/`, `[screen]`, lệnh `screen`, workflow `screen.yml`): T0 vũ trụ
+  (`Store.companies`), T1 thanh khoản (`screen/liquidity.py`: GTGD 20 phiên theo `close_raw` × KL, số phiên,
+  ngừng giao dịch, lợi nhuận/RS 1–6 tháng, MA50/200) — giá 1 năm mỗi mã qua `Updater.quick_prices`; `ensure`
+  tự tải bổ sung đủ `[auto] years` năm khi kho ngắn (`_short`, bảng `price_depth` để mã mới niêm yết không
+  tải lại mãi); tải lại vì nguồn điều chỉnh giá giữ nguyên độ sâu lịch sử (`_full_start`). Mỗi lượt ghi
+  bảng `screen` (thay theo `as_of`) + `data/screen/screen_YYYY-MM-DD.csv`. T2–T4 (assess hàng loạt, điểm
+  nhóm ngành, chọn mã) đang làm.
 - MCP server: `python -m vnsa.mcp_server` (extra `[mcp]`, chạy được mcp 1.x và 2.x); cấu hình mẫu cho
   Claude Desktop ở `docs/`. Dashboard: `streamlit run dashboard/app.py` (extra `[dashboard]`, cổng 8501).
 - `python scripts/smoke_test.py` gọi mọi công cụ MCP + dashboard trên kho thật. Test dùng fixture
