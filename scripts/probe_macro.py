@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import signal
 import sys
 import time
 import urllib.request
@@ -49,18 +50,31 @@ def section(title: str) -> None:
     print(f"\n===== {title}", flush=True)
 
 
-def try_(label: str, fn) -> None:
+class Timeout(Exception):
+    pass
+
+
+def _alarm(signum, frame):
+    raise Timeout("quá 45 giây")
+
+
+def try_(label: str, fn, limit: int = 45) -> None:
+    """Gọi thử một nguồn, tối đa `limit` giây (thư viện không đặt timeout cũng không treo cả job)."""
     t0 = time.time()
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.alarm(limit)
     try:
         out = fn()
-    except Exception as e:  # noqa: BLE001
-        print(f"  {label}: LỖI {type(e).__name__}: {str(e)[:200]}")
+    except BaseException as e:  # noqa: BLE001
+        print(f"  {label}: LỖI {type(e).__name__}: {str(e)[:200]}", flush=True)
         return
-    print(f"  {label}: {out}  ({time.time() - t0:.1f}s)")
+    finally:
+        signal.alarm(0)
+    print(f"  {label}: {out}  ({time.time() - t0:.1f}s)", flush=True)
 
 
 def fred(code: str) -> str:
-    raw = get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={code}")
+    raw = get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={code}", timeout=20)
     df = pd.read_csv(io.BytesIO(raw))
     df.columns = ["date", "value"]
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
@@ -168,15 +182,32 @@ def vnstock_probe() -> None:
     try_("Company.news (TCBS)", news_tcbs)
 
 
+YAHOO = ["VND=X", "JPYVND=X", "JPY=X", "^TNX", "^IRX", "BZ=F", "DX-Y.NYB", "CT=F", "SB=F",
+         "HG=F", "TIO=F", "HRC=F", "RB=F"]
+
+
+def fred_variants() -> None:
+    """FRED không trả lời máy chủ GitHub qua fredgraph.csv (lần dò 1): thử địa chỉ khác."""
+    for label, url, hdr in [
+        ("fredgraph curl UA", "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10",
+         {"User-Agent": "curl/8.5.0", "Accept": "*/*"}),
+        ("data/DGS10.txt", "https://fred.stlouisfed.org/data/DGS10.txt", {}),
+        ("api (không khoá)",
+         "https://api.stlouisfed.org/fred/series/observations?series_id=DGS10&file_type=json", {}),
+    ]:
+        try_(label, lambda u=url, h=hdr: f"{len(get(u, timeout=15, headers=h))} byte", limit=20)
+
+
 def main() -> int:
-    section("FRED (fredgraph.csv, không cần khoá)")
-    for code in FRED:
-        try_(code, lambda c=code: fred(c))
-        time.sleep(0.3)
-    pink_sheet()
-    section("Yahoo Finance (tỷ giá)")
-    for sym in ("VND=X", "JPYVND=X", "JPY=X"):
+    section("Yahoo Finance (tỷ giá, lợi suất, hàng hoá kỳ hạn)")
+    for sym in YAHOO:
         try_(sym, lambda s=sym: yahoo(s))
+    section("FRED (thử địa chỉ khác)")
+    fred_variants()
+    if os.environ.get("PROBE_FRED_ALL"):
+        for code in FRED:
+            try_(code, lambda c=code: fred(c), limit=25)
+    try_("Pink Sheet", lambda: pink_sheet() or "xong", limit=150)
     vnstock_probe()
     section("Trang số liệu Việt Nam (chỉ xem có truy cập được không)")
     for url in ("https://www.gso.gov.vn/", "https://sbv.gov.vn/",
