@@ -1,0 +1,245 @@
+# Lớp vĩ mô: danh mục chuỗi số liệu (mục [series]) và ánh xạ ngành → yếu tố vĩ mô.
+# Sửa ở đây, không sửa trong code. Nguồn đã dò thật bằng scripts/probe_macro.py (workflow "Vĩ mô").
+#
+# Mỗi chuỗi: name, source, code, freq, kind, unit [, months, neutral, scale, note]
+#   source : yahoo | fred (fred.stlouisfed.org) | worldbank (Pink Sheet) | manual (nhập tay)
+#            | derived (tính từ hai chuỗi: code = "a/b")
+#   code   : mã ở nguồn (yahoo: VND=X; FRED: mã chuỗi; worldbank: tên cột Pink Sheet)
+#   freq   : D ngày | M tháng | Q quý
+#   kind   : change = % thay đổi sau `months` tháng (mặc định 3) — giá, tỷ giá
+#            diff   = chênh lệch điểm % sau `months` tháng — lãi suất, lợi suất
+#            level  = so mức hiện tại với `neutral`, đơn vị `scale` — tăng trưởng so cùng kỳ, PMI
+#            ytd    = luỹ kế từ đầu năm so với cùng kỳ năm trước — tăng trưởng tín dụng
+#   scale  : với change/diff/ytd, dùng khi chưa đủ 2 năm lịch sử để tính z (nhập tay mới bắt đầu)
+# Mốc `neutral` của các chuỗi Việt Nam là giả định của tool (mức "bình thường"), xem lại định kỳ.
+
+[series]
+# --- Thế giới (Yahoo hằng ngày; FRED hằng tháng) ---
+us_10y    = { name = "Lợi suất TPCP Mỹ 10 năm", source = "yahoo", code = "^TNX", freq = "D", kind = "diff", unit = "%", scale = 0.5 }
+fed_funds = { name = "Lãi suất Fed", source = "fred", code = "FEDFUNDS", freq = "M", kind = "diff", unit = "%", scale = 0.5 }
+usd_index = { name = "Chỉ số USD (DXY)", source = "yahoo", code = "DX-Y.NYB", freq = "D", kind = "change", unit = "điểm" }
+brent     = { name = "Dầu Brent", source = "yahoo", code = "BZ=F", freq = "D", kind = "change", unit = "$/thùng" }
+usd_jpy   = { name = "USD/JPY", source = "yahoo", code = "JPY=X", freq = "D", kind = "change", unit = "yên", note = "tăng = yên yếu đi" }
+us_apparel_retail = { name = "Bán lẻ quần áo Mỹ", source = "fred", code = "RSCCAS", freq = "M", kind = "change", unit = "tr USD" }
+
+# --- Hàng hoá (Yahoo: hợp đồng kỳ hạn gần nhất; World Bank Pink Sheet: giá tháng) ---
+iron_ore  = { name = "Quặng sắt 62% (CFR Trung Quốc)", source = "yahoo", code = "TIO=F", freq = "D", kind = "change", unit = "$/tấn" }
+steel_hrc = { name = "Thép HRC (Mỹ, đại diện)", source = "yahoo", code = "HRC=F", freq = "D", kind = "change", unit = "$/tấn ngắn", note = "giá Mỹ; giá thép châu Á không có nguồn miễn phí" }
+cotton    = { name = "Bông", source = "yahoo", code = "CT=F", freq = "D", kind = "change", unit = "US cent/pound" }
+sugar     = { name = "Đường", source = "yahoo", code = "SB=F", freq = "D", kind = "change", unit = "US cent/pound" }
+coal      = { name = "Than (Úc)", source = "worldbank", code = "Coal, Australian", freq = "M", kind = "change", unit = "$/tấn" }
+rubber    = { name = "Cao su TSR20", source = "worldbank", code = "Rubber, TSR20", freq = "M", kind = "change", unit = "$/kg" }
+urea      = { name = "Urê", source = "worldbank", code = "Urea", freq = "M", kind = "change", unit = "$/tấn" }
+dap       = { name = "Phân DAP", source = "worldbank", code = "DAP", freq = "M", kind = "change", unit = "$/tấn" }
+phosphate_rock = { name = "Đá phốt phát", source = "worldbank", code = "Phosphate rock", freq = "M", kind = "change", unit = "$/tấn" }
+
+# --- Tỷ giá ---
+usd_vnd   = { name = "USD/VND", source = "yahoo", code = "VND=X", freq = "D", kind = "change", unit = "đồng" }
+jpy_vnd   = { name = "JPY/VND", source = "derived", code = "usd_vnd/usd_jpy", freq = "D", kind = "change", unit = "đồng", note = "tăng = yên mạnh lên" }
+
+# --- Việt Nam (NHẬP TAY ở config/macro_manual.toml; nguồn: Tổng cục Thống kê, NHNN, S&P Global, HNX) ---
+vn_cpi_yoy      = { name = "CPI so cùng kỳ", source = "manual", freq = "M", kind = "level", unit = "%", neutral = 3.5, scale = 1.0 }
+vn_credit_ytd   = { name = "Tín dụng tăng từ đầu năm", source = "manual", freq = "M", kind = "ytd", unit = "%", scale = 2.0 }
+vn_retail_yoy   = { name = "Bán lẻ hàng hoá, dịch vụ so cùng kỳ", source = "manual", freq = "M", kind = "level", unit = "%", neutral = 9.0, scale = 2.0 }
+vn_exports_yoy  = { name = "Xuất khẩu so cùng kỳ", source = "manual", freq = "M", kind = "level", unit = "%", neutral = 8.0, scale = 5.0 }
+vn_iip_yoy      = { name = "Sản xuất công nghiệp so cùng kỳ", source = "manual", freq = "M", kind = "level", unit = "%", neutral = 7.0, scale = 2.0 }
+vn_pmi          = { name = "PMI sản xuất", source = "manual", freq = "M", kind = "level", unit = "điểm", neutral = 50.0, scale = 2.0 }
+vn_arrivals_yoy = { name = "Khách quốc tế so cùng kỳ", source = "manual", freq = "M", kind = "level", unit = "%", neutral = 10.0, scale = 10.0 }
+vn_public_invest_yoy = { name = "Vốn đầu tư ngân sách so cùng kỳ", source = "manual", freq = "M", kind = "level", unit = "%", neutral = 10.0, scale = 5.0 }
+vn_interbank_on = { name = "Lãi suất liên ngân hàng qua đêm", source = "manual", freq = "M", kind = "diff", unit = "%", scale = 1.0 }
+vn_gov_10y      = { name = "Lợi suất TPCP Việt Nam 10 năm", source = "manual", freq = "M", kind = "diff", unit = "%", scale = 0.5 }
+vn_gdp_yoy      = { name = "GDP so cùng kỳ", source = "manual", freq = "Q", kind = "level", unit = "%", neutral = 6.0, scale = 1.0 }
+
+# =====================================================================================================
+# Bối cảnh vĩ mô Việt Nam: mỗi nhóm một phiếu, điểm chung = trung bình các nhóm có số.
+# sign = +1: chuỗi tăng (bất thường so với 5 năm) là TỐT cho thị trường; −1: là XẤU.
+[market.tien_te]
+name = "Tiền tệ"
+drivers = [
+  { series = "vn_interbank_on", sign = -1, why = "lãi suất liên ngân hàng tăng: tiền tệ thắt lại" },
+  { series = "vn_credit_ytd", sign = 1, why = "tín dụng tăng nhanh hơn cùng kỳ" },
+  { series = "vn_gov_10y", sign = -1, why = "lợi suất TPCP tăng: chi phí vốn tăng" },
+]
+
+[market.ty_gia]
+name = "Tỷ giá"
+drivers = [
+  { series = "usd_vnd", sign = -1, weight = 2, why = "VND mất giá nhanh: áp lực hút tiền, khối ngoại bán" },
+  { series = "usd_index", sign = -1, why = "USD mạnh lên trên thế giới" },
+]
+
+[market.lam_phat]
+name = "Lạm phát"
+drivers = [
+  { series = "vn_cpi_yoy", sign = -1, why = "lạm phát cao: dễ thắt chặt tiền tệ" },
+]
+
+[market.tang_truong]
+name = "Tăng trưởng"
+drivers = [
+  { series = "vn_gdp_yoy", sign = 1, weight = 2, why = "GDP" },
+  { series = "vn_pmi", sign = 1, why = "PMI sản xuất" },
+  { series = "vn_iip_yoy", sign = 1, why = "sản xuất công nghiệp" },
+  { series = "vn_retail_yoy", sign = 1, why = "bán lẻ" },
+  { series = "vn_exports_yoy", sign = 1, why = "xuất khẩu" },
+]
+
+[market.the_gioi]
+name = "Thế giới"
+drivers = [
+  { series = "us_10y", sign = -1, why = "lợi suất Mỹ tăng: vốn rút khỏi thị trường mới nổi" },
+  { series = "fed_funds", sign = -1, why = "Fed tăng lãi suất" },
+]
+
+# =====================================================================================================
+# Ngành → yếu tố. Mục [[industry]] đầu tiên có `match` (biểu thức chính quy, không phân biệt hoa
+# thường) khớp tên ngành ICB cấp 4 của mã, rồi cấp 3, rồi cấp 2, được dùng. `model` khớp loại doanh
+# nghiệp (bank/securities/insurance) khi tên ngành không khớp. Mã đặc thù khai báo riêng ở [symbol.MÃ].
+# Dấu là GIẢ THUYẾT kinh tế; lệnh `macro MÃ --sensitivity` (bước 3) kiểm tra lại bằng 10 năm giá.
+
+[symbol.FPT]
+name = "FPT (phần mềm xuất khẩu, doanh thu Nhật lớn)"
+drivers = [
+  { series = "usd_vnd", sign = 1, why = "VND yếu: doanh thu xuất khẩu phần mềm quy đổi tăng" },
+  { series = "jpy_vnd", sign = 1, why = "yên mạnh lên: doanh thu từ Nhật quy đổi tăng" },
+  { series = "us_10y", sign = -1, weight = 0.5, why = "lãi suất Mỹ cao: khách hàng cắt chi CNTT" },
+]
+
+[symbol.ACV]
+name = "ACV (sân bay, có nợ vay bằng yên)"
+drivers = [
+  { series = "vn_arrivals_yoy", sign = 1, weight = 2, why = "khách quốc tế tăng: phí sân bay tăng" },
+  { series = "jpy_vnd", sign = -1, why = "yên mạnh lên: lỗ tỷ giá khoản vay ODA bằng yên" },
+]
+
+[[industry]]
+name = "Ngân hàng"
+match = "ngân hàng"
+model = "bank"
+drivers = [
+  { series = "vn_credit_ytd", sign = 1, weight = 2, why = "tín dụng tăng nhanh: thu nhập lãi tăng" },
+  { series = "vn_interbank_on", sign = -1, why = "lãi suất liên ngân hàng tăng: chi phí vốn tăng" },
+  { series = "vn_cpi_yoy", sign = -1, why = "lạm phát cao: dễ thắt chặt tiền tệ" },
+  { series = "vn_gdp_yoy", sign = 1, why = "kinh tế tốt: nợ xấu giảm" },
+]
+
+[[industry]]
+name = "Chứng khoán"
+match = "chứng khoán|môi giới|ngân hàng đầu tư"
+model = "securities"
+drivers = [
+  { series = "vn_interbank_on", sign = -1, why = "lãi suất tăng: dòng tiền rời cổ phiếu, vốn vay ký quỹ đắt" },
+  { series = "vn_credit_ytd", sign = 1, why = "tín dụng nới: thanh khoản thị trường tốt" },
+  { series = "usd_vnd", sign = -1, why = "VND mất giá nhanh: khối ngoại bán ròng" },
+  { series = "us_10y", sign = -1, why = "lợi suất Mỹ tăng: vốn ngoại rút" },
+]
+
+[[industry]]
+name = "Thép"
+match = "thép|kim loại"
+drivers = [
+  { series = "steel_hrc", sign = 1, why = "giá thép tăng (giá Mỹ, đại diện)" },
+  { series = "iron_ore", sign = 1, why = "quặng sắt tăng cùng chu kỳ giá thép (kiểm chứng 60 tháng HPG: t +3,0)" },
+  { series = "coal", sign = -1, weight = 0.5, why = "than tăng: chi phí luyện cốc" },
+  { series = "vn_credit_ytd", sign = 1, why = "tín dụng xây dựng, bất động sản" },
+  { series = "vn_public_invest_yoy", sign = 1, why = "giải ngân đầu tư công" },
+]
+
+[[industry]]
+name = "Bán lẻ"
+match = "bán lẻ|phân phối"
+drivers = [
+  { series = "vn_retail_yoy", sign = 1, weight = 2, why = "tổng mức bán lẻ tăng" },
+  { series = "vn_cpi_yoy", sign = -1, weight = 0.5, why = "lạm phát cao: sức mua giảm" },
+  { series = "vn_interbank_on", sign = -1, weight = 0.5, why = "lãi suất tăng: mua trả góp giảm" },
+]
+
+[[industry]]
+name = "Thực phẩm, đồ uống"
+match = "thực phẩm|đồ uống|sữa|bia"
+drivers = [
+  { series = "vn_retail_yoy", sign = 1, why = "tiêu dùng tăng" },
+  { series = "sugar", sign = -1, why = "giá đường tăng: chi phí" },
+  { series = "usd_vnd", sign = -1, weight = 0.5, why = "nguyên liệu nhập khẩu đắt hơn (sữa bột: không có nguồn miễn phí)" },
+]
+
+[[industry]]
+name = "Hoá chất, phân bón"
+match = "hoá chất|hóa chất|phân bón"
+drivers = [
+  { series = "phosphate_rock", sign = 1, why = "giá phốt phát tăng (đại diện cho phốt pho vàng)" },
+  { series = "dap", sign = 1, why = "giá DAP tăng" },
+  { series = "urea", sign = 1, why = "giá urê tăng" },
+  { series = "usd_vnd", sign = 1, weight = 0.5, why = "xuất khẩu nhiều: VND yếu có lợi" },
+]
+
+[[industry]]
+name = "Dệt may"
+match = "dệt|may mặc|quần áo|sợi"
+drivers = [
+  { series = "usd_vnd", sign = 1, why = "VND yếu: hàng xuất khẩu cạnh tranh hơn" },
+  { series = "us_apparel_retail", sign = 1, why = "bán lẻ quần áo Mỹ tăng: đơn hàng tăng" },
+  { series = "cotton", sign = -1, why = "giá bông tăng: chi phí" },
+]
+
+[[industry]]
+name = "Công nghệ"
+match = "phần mềm|công nghệ|máy tính|viễn thông"
+drivers = [
+  { series = "usd_vnd", sign = 1, why = "doanh thu xuất khẩu quy đổi tăng" },
+]
+
+[[industry]]
+name = "Cảng, vận tải, logistics"
+match = "cảng|vận tải|kho bãi|logistics|hàng hải"
+drivers = [
+  { series = "vn_exports_yoy", sign = 1, weight = 2, why = "xuất khẩu tăng: sản lượng hàng qua cảng tăng" },
+  { series = "vn_iip_yoy", sign = 1, why = "sản xuất công nghiệp" },
+]
+
+[[industry]]
+name = "Hàng không, sân bay"
+match = "hàng không|sân bay"
+drivers = [
+  { series = "vn_arrivals_yoy", sign = 1, weight = 2, why = "khách quốc tế tăng" },
+  { series = "brent", sign = -1, why = "dầu tăng: nhiên liệu bay đắt" },
+]
+
+[[industry]]
+name = "Dầu khí"
+match = "dầu khí|dầu mỏ|khí đốt|xăng dầu"
+drivers = [
+  { series = "brent", sign = 1, weight = 2, why = "giá dầu tăng: doanh thu, dự án thượng nguồn" },
+]
+
+[[industry]]
+name = "Bất động sản"
+match = "bất động sản"
+drivers = [
+  { series = "vn_credit_ytd", sign = 1, why = "tín dụng nới" },
+  { series = "vn_interbank_on", sign = -1, why = "lãi suất tăng: lãi vay mua nhà tăng" },
+  { series = "vn_gov_10y", sign = -1, why = "lợi suất tăng: chi phí vốn tăng" },
+]
+
+[[industry]]
+name = "Xây dựng, vật liệu"
+match = "xây dựng|vật liệu"
+drivers = [
+  { series = "vn_public_invest_yoy", sign = 1, weight = 2, why = "giải ngân đầu tư công" },
+  { series = "vn_credit_ytd", sign = 1, why = "tín dụng" },
+]
+
+[[industry]]
+name = "Cao su"
+match = "cao su"
+drivers = [
+  { series = "rubber", sign = 1, weight = 2, why = "giá cao su tăng" },
+]
+
+[[industry]]
+name = "Thuỷ sản"
+match = "thuỷ sản|thủy sản|nuôi trồng"
+drivers = [
+  { series = "usd_vnd", sign = 1, why = "VND yếu: xuất khẩu có lợi" },
+  { series = "vn_exports_yoy", sign = 1, why = "xuất khẩu tăng" },
+]

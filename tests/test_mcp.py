@@ -9,7 +9,7 @@ from vnsa import mcp_server as srv
 
 EXPECTED = {"list_symbols", "get_prices", "get_ratios", "get_valuation", "get_fa_score",
             "get_technical", "get_trade_plan", "get_risk", "get_recommendations", "run_backtest",
-            "update_symbol", "analyze_symbol", "review_signals"}
+            "update_symbol", "analyze_symbol", "review_signals", "macro_context"}
 
 
 def test_all_tools_registered_with_schemas():

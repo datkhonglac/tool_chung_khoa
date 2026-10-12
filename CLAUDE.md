@@ -87,6 +87,19 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   vào nhánh `signals`. `python -m vnsa.cli history import --git origin/signals` nạp về kho (chỉ thêm
   dòng chưa có, BCTC nạp vào đánh dấu cũ để autofetch vẫn tải mới); `history export DIR`. BCTC năm
   ghi đè theo (mã, năm) nên năm cũ hơn 4 năm miễn phí được giữ lại (tích luỹ).
+- Lớp vĩ mô (`src/vnsa/macro/`, CHỈ THAM KHẢO, chưa vào điểm): `fetch-macro` (Yahoo: USD/VND,
+  USD/JPY, ^TNX, dầu, DXY, quặng sắt, HRC, bông, đường; World Bank Pink Sheet: urê, DAP, đá phốt phát,
+  than, cao su; FRED cần User-Agent curl; JPY/VND = derived) → bảng `macro_series`; số Việt Nam NHẬP
+  TAY `config/macro_manual.toml` (GSO không truy cập được từ Actions). Danh mục + nhóm bối cảnh +
+  ánh xạ ngành (`[[industry]]` regex ICB cấp 4→3→2, `[symbol.MÃ]`) ở `config/macro_map.toml`.
+  `macro/signals.py` biến động + z 5 năm; `macro/score.py` điểm −1..+1 (độ phủ < 50% = chưa đủ số);
+  `macro/sensitivity.py` hồi quy tháng mã ~ VNINDEX + yếu tố (≥ 36 tháng) báo NGƯỢC dấu. Thẻ báo cáo
+  mục VĨ MÔ & NGÀNH; rào chắn: ngành ≤ −0,5 (độ phủ ≥ 60%) chỉ giảm độ tin cậy một bậc; k_e/WACC
+  dùng `analysis.risk_free()` (TPCP 10 năm nhập tay nếu ≤ 45 ngày); `signals.macro_industry/
+  macro_market` + `review-signals` chia theo nhóm vĩ mô. Tin tức: tiêu đề `Company.news` (VCI) →
+  bảng `news`. Lệnh `macro [MÃ...]`, MCP `macro_context`, tab dashboard "Vĩ mô", workflow `macro.yml`
+  (input probe: `scripts/probe_macro.py`). vnstock trả ngành dạng dài (icb_level/icb_name):
+  `_wide_icb` đổi về icb_name1..4; `companies.industry` = cấp 2, `industry3/4` cho vĩ mô.
 - MCP server: `python -m vnsa.mcp_server` (extra `[mcp]`, chạy được mcp 1.x và 2.x); cấu hình mẫu cho
   Claude Desktop ở `docs/`. Dashboard: `streamlit run dashboard/app.py` (extra `[dashboard]`, cổng 8501).
 - `python scripts/smoke_test.py` gọi mọi công cụ MCP + dashboard trên kho thật. Test dùng fixture

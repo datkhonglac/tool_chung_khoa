@@ -9,6 +9,8 @@ warehouse = "data/warehouse.duckdb"
 charts_dir = "data/charts"
 signals_csv = "data/signals.csv"       # bản sao lịch sử khuyến nghị (không bị .gitignore, commit để giữ lại)
 bank_manual = "config/bank_manual.toml"   # NPL, CASA, CAR ngân hàng nhập tay (nguồn miễn phí không có)
+macro_map = "config/macro_map.toml"       # danh mục chuỗi vĩ mô + ánh xạ ngành → yếu tố vĩ mô
+macro_manual = "config/macro_manual.toml" # số vĩ mô Việt Nam nhập tay (CPI, tín dụng, PMI...)
 
 # Đơn vị giá trong file CSV: "auto" | "dong" | "nghin"
 # auto: nếu trung vị giá đóng cửa < 1000 thì coi là nghìn đồng và nhân 1000.
@@ -38,10 +40,31 @@ listing_max_age_days = 30   # danh sách niêm yết (sàn, ngành) cũ hơn s�
 profile_max_age_days = 7    # hồ sơ (số cp lưu hành, sở hữu NN) và cổ tức cũ hơn số ngày này thì tải lại
 pause = 0.3                 # giây nghỉ giữa các lần gọi CafeF
 flow_sessions = 60          # số phiên giao dịch khối ngoại / tự doanh tải từ CafeF
+macro = true                # cập nhật số vĩ mô (một lần mỗi lượt, khi đã cũ hơn [macro] max_age_hours)
+news = true                 # tải tiêu đề tin theo mã (vnstock/VCI) — chỉ tham khảo, không vào điểm
+news_max_age_hours = 12
 
 [flows]
 # Dòng tiền khối ngoại / tự doanh: chỉ để THAM KHẢO trên thẻ báo cáo, không vào điểm số
 windows = [5, 20]           # cộng dồn mua/bán ròng 5 và 20 phiên
+
+[macro]
+# Lớp vĩ mô (src/vnsa/macro/). Lệnh: fetch-macro (tải), macro (xem). Chỉ THAM KHẢO và rào chắn,
+# chưa vào điểm cho tới khi review-signals chứng minh có lợi thế.
+years = 10                  # số năm tải lần đầu
+z_years = 5                 # so biến động hiện tại với 5 năm gần nhất của chính chuỗi đó
+z_cap = 2.0                 # chặn z trong ±2 (một chuỗi bất thường không lấn át cả ngành)
+max_age_hours = 20          # phân tích tự tải lại số vĩ mô cũ hơn số giờ này
+favorable = 0.3             # điểm ngành/bối cảnh ≥ 0,3 -> Thuận lợi; ≤ unfavorable -> Bất lợi
+unfavorable = -0.3
+min_coverage = 0.5          # yếu tố có số < 50% trọng số -> "Chưa đủ số liệu", không xếp loại
+guard = -0.5                # rào chắn: ngành ≤ −0,5 (độ phủ ≥ guard_coverage) -> độ tin cậy giảm 1 bậc
+guard_coverage = 0.6
+rf_series = "vn_gov_10y"    # WACC/k_e dùng lợi suất TPCP 10 năm nhập tay nếu kỳ đó không cũ quá
+rf_max_age_days = 45        # số ngày này (tính từ cuối tháng); ngược lại dùng [valuation] risk_free
+sensitivity_min_months = 36 # độ nhạy (hồi quy tháng giá mã theo yếu tố) cần ≥ 36 tháng số liệu chung
+news_items = 5              # số tiêu đề tin (vnstock/VCI) trong 30 ngày gần nhất hiện trên thẻ/MCP
+news_days = 30
 
 [watchlist]
 symbols = ["FPT", "HPG", "MWG", "VNM", "DGC"]

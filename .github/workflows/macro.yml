@@ -1,0 +1,56 @@
+name: Vĩ mô
+
+# Dò nguồn và tải số liệu vĩ mô (FRED, World Bank, tỷ giá, nhập tay) trên máy chủ GitHub.
+# Kết quả in trong log; kho DuckDB ở mục Artifacts.
+on:
+  push:                         # chạy khi phần vĩ mô thay đổi
+    paths:
+      - ".github/workflows/macro.yml"
+      - "scripts/probe_macro.py"
+      - "src/vnsa/macro/**"
+      - "src/vnsa/data/providers/macro_provider.py"
+      - "config/macro_map.toml"
+      - "config/macro_manual.toml"
+  workflow_dispatch:
+    inputs:
+      probe:
+        description: "Dò lại các nguồn (scripts/probe_macro.py)"
+        type: boolean
+        default: false
+      symbols:
+        description: "Mã để phân tích thử (bỏ trống = FPT HPG DGC TNG SSI)"
+        required: false
+        default: ""
+
+jobs:
+  macro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUNBUFFERED: "1"
+      VNSTOCK_TELEMETRY: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+      - name: Dò nguồn vĩ mô
+        if: inputs.probe
+        continue-on-error: true
+        run: python scripts/probe_macro.py
+      - name: Tải số liệu vĩ mô
+        run: python -m vnsa.cli fetch-macro
+      - name: Bảng số liệu vĩ mô
+        run: python -m vnsa.cli macro
+      - name: Phân tích thử (thẻ báo cáo có mục vĩ mô)
+        run: python -m vnsa.cli analyze ${{ inputs.symbols || 'FPT HPG DGC TNG SSI' }}
+      - name: Yếu tố vĩ mô theo mã
+        run: python -m vnsa.cli macro ${{ inputs.symbols || 'FPT HPG DGC TNG SSI' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kho-vi-mo
+          path: data/warehouse.duckdb
+          if-no-files-found: ignore

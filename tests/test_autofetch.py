@@ -190,6 +190,7 @@ def test_standardize_vnstock_listing():
     by_industry = pd.DataFrame({
         "symbol": ["VCB", "SHS", "ACV", "FPT"],
         "icb_name2": ["Ngân hàng", "Dịch vụ tài chính", "Công nghiệp", "Công nghệ"],
+        "icb_name4": ["Ngân hàng", "Môi giới chứng khoán", "Sân bay", "Phần mềm"],
         "com_type_code": ["NH", None, "CT", "CT"]})
     out = standardize_listing(by_exchange, by_industry).set_index("symbol")
     assert list(out.index) == ["VCB", "SHS", "ACV", "FPT"]
@@ -197,6 +198,25 @@ def test_standardize_vnstock_listing():
     assert out.loc["VCB", "model"] == "bank"
     assert out.loc["SHS", "model"] == "securities"       # suy ra từ tên ngành
     assert out.loc["FPT", "model"] == "general"
+    assert out.loc["ACV", "industry4"] == "Sân bay"       # ICB cấp 4 cho ánh xạ vĩ mô
+    assert out["industry3"].isna().all()                  # nguồn không có cấp 3: để trống
+
+
+def test_standardize_listing_long_icb_format():
+    """vnstock mới: mỗi mã 4 dòng icb_level/icb_name — phải lấy đúng cấp 2 (không lấy cấp 1)."""
+    by_exchange = pd.DataFrame({"symbol": ["HPG", "SSI"], "exchange": ["HSX", "HSX"],
+                                "type": ["STOCK", "STOCK"], "organ_name": ["Hòa Phát", "SSI"]})
+    rows = [("HPG", "CT", 1, "Nguyên vật liệu"), ("HPG", "CT", 2, "Tài nguyên Cơ bản"),
+            ("HPG", "CT", 3, "Kim loại"), ("HPG", "CT", 4, "Thép và sản phẩm thép"),
+            ("SSI", "CK", 1, "Tài chính"), ("SSI", "CK", 2, "Dịch vụ tài chính"),
+            ("SSI", "CK", 3, "Dịch vụ tài chính"), ("SSI", "CK", 4, "Môi giới chứng khoán")]
+    by_industry = pd.DataFrame(rows, columns=["symbol", "com_type_code", "icb_level", "icb_name"])
+    by_industry["icb_code"] = "0"
+    out = standardize_listing(by_exchange, by_industry).set_index("symbol")
+    assert out.loc["HPG", "industry"] == "Tài nguyên Cơ bản"
+    assert out.loc["HPG", "industry3"] == "Kim loại"
+    assert out.loc["HPG", "industry4"] == "Thép và sản phẩm thép"
+    assert out.loc["SSI", "model"] == "securities"
 
 
 def test_exchange_rules_band_ticks_and_financials(warehouse):
@@ -288,3 +308,22 @@ def test_vnstock_history_is_converted_to_dong():
     assert fixed.repaired == ["08/10/2026"]
     idx = VnstockProvider(get_history=lambda s, a, b: raw.assign(close=[1290.5, 1301.2]))
     assert idx.ohlcv("VNINDEX", date(2026, 10, 1), date(2026, 10, 9))["close"].iloc[-1] == 1301   # chỉ số: điểm, làm tròn như CafeF
+
+
+def test_unfinished_session_is_dropped_not_rejected(empty_db):
+    """Trong giờ giao dịch CafeF trả cả phiên hôm nay với giá 0: bỏ phiên đó, vẫn nạp phần còn lại."""
+    class IntradayCafeF(FakeCafeF):
+        def ohlcv(self, symbol, start, end):
+            df = super().ohlcv(symbol, start, end)
+            today = pd.DataFrame({"symbol": [symbol], "date": [pd.Timestamp("2026-10-12")],
+                                  "open": [0.0], "high": [0.0], "low": [0.0], "close": [0.0],
+                                  "volume": [0]})
+            return pd.concat([df, today], ignore_index=True)
+
+    up = updater(IntradayCafeF(), now=datetime(2026, 10, 12, 10, 20, tzinfo=VN_TZ))
+    rep = up.ensure("DEMO_A")
+    steps = {s.what: s for s in rep.steps}
+    assert steps["giá"].status == "ok" and steps["VNINDEX"].status == "ok", rep
+    with Store(empty_db) as store:
+        assert store.last_price_date("DEMO_A") < pd.Timestamp("2026-10-12")
+        assert (store.prices("VNINDEX")["close"] > 0).all()

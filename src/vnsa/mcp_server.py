@@ -112,7 +112,7 @@ def analyze_symbol(symbol: str) -> dict:
             "confidence": card.confidence, "confidence_checks": card.confidence_checks,
             "intrinsic_value": {"p10": card.p10, "p50": card.p50, "p90": card.p90},
             "scores": {"fa": card.fa, "ta": card.ta, "quant": card.quant, "total": card.total},
-            "red_flags": card.red_flags, "profile": market.profile(rec.symbol),
+            "red_flags": card.red_flags, "macro": card.macro, "profile": market.profile(rec.symbol),
             "band": market.band(rec.symbol), "action": rec.action, "score": rec.score,
             "reasons": rec.reasons, "inputs": rec.inputs, "plan": plan,
             "data_update": [str(s).strip() for s in rep.steps],
@@ -320,6 +320,66 @@ def review_signals(horizons: list[int] | None = None) -> dict:
     ev, summary, n = analysis.review(horizons)
     return {"recorded_signals": n, "summary": summary, "evaluated": ev.tail(200),
             "note": "Dưới ~30 mẫu mỗi nhóm chỉ để tham khảo."}
+
+
+def _reading(r) -> dict:
+    from vnsa.macro.signals import fmt_change, fmt_period
+
+    return {"series": r.series, "name": r.name, "period": fmt_period(r), "value": r.value,
+            "unit": r.unit, "change": fmt_change(r), "z": r.z, "basis": r.basis, "stale": r.stale}
+
+
+def _score(m) -> dict:
+    return {"scope": m.scope, "label": m.label, "score": m.score, "coverage": m.coverage,
+            "drivers": [{"series": d.series, "sign": d.sign, "weight": d.weight, "why": d.why,
+                         "contribution": d.contribution,
+                         "reading": _reading(d.reading) if d.reading is not None else None}
+                        for d in m.drivers]}
+
+
+@mcp.tool()
+@_guard
+def macro_context(symbol: str | None = None) -> dict:
+    """Lớp vĩ mô (chỉ THAM KHẢO, chưa vào điểm xếp hạng): bối cảnh Việt Nam theo nhóm (tiền tệ, tỷ
+    giá, lạm phát, tăng trưởng, thế giới), và nếu có `symbol`: các yếu tố vĩ mô của ngành mã đó
+    (giá hàng hoá, tỷ giá, lãi suất...) kèm biến động, z so với 5 năm, đóng góp vào điểm ngành
+    −1..+1, kiểm chứng độ nhạy bằng giá lịch sử, và tiêu đề tin gần đây. Chỉ diễn giải các con số có
+    ở đây; số thiếu thì nói là thiếu, không tự đưa số liệu thị trường khác vào. Không có `symbol`:
+    bảng mọi chuỗi vĩ mô trong kho."""
+    from vnsa.config import path
+    from vnsa.data.store import Store
+    from vnsa.macro.catalog import catalog
+    from vnsa.macro.signals import readings
+
+    if not symbol:
+        with Store(path("warehouse")) as store:
+            data = store.macro()
+        if data.empty:
+            return {"error": "Kho chưa có số vĩ mô: chạy python -m vnsa.cli fetch-macro"}
+        rs = readings(data, catalog())
+        return {"series": [_reading(r) for r in rs.values()],
+                "note": "Số Việt Nam (CPI, tín dụng, PMI, TPCP...) nhập tay ở config/macro_manual.toml."}
+    sym = symbol.upper().strip()
+    mv = analysis.macro_view(sym)
+    if mv is None:
+        return {"error": "Kho chưa có số vĩ mô: chạy python -m vnsa.cli fetch-macro"}
+    sens = []
+    try:
+        sens = analysis.macro_sensitivity(analysis.load(sym, need_fin=False))
+    except analysis.DataMissing:
+        pass
+    from vnsa.report.card import macro_guard
+
+    return {"symbol": sym, "market": _score(mv.market),
+            "groups": {k: _score(g) for k, g in mv.groups.items()},
+            "industry": _score(mv.industry) if mv.industry is not None else None,
+            "sensitivity": sens, "guard": macro_guard(mv),
+            "risk_free": {"value": mv.risk_free, "source": mv.rf_source},
+            "news": mv.news.head(10),
+            "how_to_read": ("điểm −1..+1: ≥ +0,3 Thuận lợi, ≤ −0,3 Bất lợi; z: biến động hiện tại so "
+                            "với 5 năm của chính chuỗi; sensitivity.verdict: dấu giả định có khớp "
+                            "lịch sử giá không. Vĩ mô chưa vào điểm xếp hạng (chờ review_signals "
+                            "chứng minh).")}
 
 
 def main() -> None:

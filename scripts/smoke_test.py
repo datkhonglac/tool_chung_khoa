@@ -31,6 +31,10 @@ def check_mcp(symbols: list[str]) -> list[str]:
             if "error" in out:
                 errors.append(f"MCP {name}({sym}): {out['error']}")
         print(f"  MCP {sym}: {len(calls)} công cụ", flush=True)
+        mc = srv.macro_context(sym)          # kho chưa tải vĩ mô thì chỉ báo, không tính là lỗi
+        json.dumps(mc, allow_nan=False)
+        ind = (mc.get("industry") or {}).get("label", mc.get("error", "chưa có ánh xạ ngành"))
+        print(f"  MCP macro_context {sym}: {ind}", flush=True)
     rec = srv.get_recommendations(symbols)
     errors += [f"MCP get_recommendations: {e}" for e in rec["errors"]]
     for r in rec["recommendations"]:

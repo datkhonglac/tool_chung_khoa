@@ -10,6 +10,8 @@ Với mỗi khuyến nghị (ngày D, mã, giá đóng cửa P) và mỗi kỳ h
   hơn mua ngay giá đóng cửa).
 Khuyến nghị chưa đủ h phiên sau đó thì chưa chấm. MUA/KHẢ QUAN tốt khi vượt trội bình quân > 0,
 KÉM KHẢ QUAN/BÁN tốt khi < 0. Ít mẫu (dưới ~30) thì kết quả chỉ mang tính tham khảo.
+Lớp vĩ mô (summarize_macro): chia theo điểm vĩ mô ngành lúc khuyến nghị (Thuận lợi / Trung tính /
+Bất lợi) để xem vĩ mô có giúp phân biệt mã vượt trội không — điều kiện trước khi cho vĩ mô vào điểm.
 """
 
 from __future__ import annotations
@@ -56,6 +58,7 @@ def evaluate(signals: pd.DataFrame, prices: dict[str, pd.DataFrame], index: pd.D
                       if not pd.isna(s.buy_high) else False)
             rows.append({
                 "as_of": s.as_of, "symbol": s.symbol, "action": s.action, "horizon": h,
+                "macro_industry": getattr(s, "macro_industry", np.nan),
                 "ret": ret, "index_ret": idx_ret, "excess": ret - idx_ret,
                 "touch": _first_touch(window, s.stop, s.target),
                 "zone_filled": filled,
@@ -81,4 +84,23 @@ def summarize(ev: pd.DataFrame) -> pd.DataFrame:
             "zone_fill": g["zone_filled"].mean(),
             "avg_ret_from_zone": g["ret_from_zone"].mean(),
         })
+    return pd.DataFrame(out)
+
+
+def macro_label(score: float, favorable: float = 0.3, unfavorable: float = -0.3) -> str:
+    if pd.isna(score):
+        return "chưa có điểm"
+    return "Thuận lợi" if score >= favorable else "Bất lợi" if score <= unfavorable else "Trung tính"
+
+
+def summarize_macro(ev: pd.DataFrame, favorable: float = 0.3,
+                    unfavorable: float = -0.3) -> pd.DataFrame:
+    """Lớp vĩ mô có ích không? Theo kỳ × nhóm vĩ mô ngành lúc khuyến nghị: số mẫu, vượt trội VNINDEX
+    bình quân, tỷ lệ thắng. Có ích khi nhóm Thuận lợi vượt trội cao hơn rõ nhóm Bất lợi, đủ mẫu."""
+    if ev.empty or "macro_industry" not in ev:
+        return pd.DataFrame()
+    ev = ev.assign(macro=[macro_label(x, favorable, unfavorable) for x in ev["macro_industry"]])
+    out = [{"horizon": h, "macro": m, "n": len(g), "avg_excess": g["excess"].mean(),
+            "win_rate": (g["ret"] > 0).mean()}
+           for (h, m), g in ev.groupby(["horizon", "macro"], sort=True)]
     return pd.DataFrame(out)

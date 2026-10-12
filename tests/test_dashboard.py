@@ -11,7 +11,7 @@ APP = str(Path(__file__).resolve().parents[1] / "dashboard" / "app.py")
 def test_dashboard_renders_all_tabs_without_errors(warehouse):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception, at.exception
-    assert len(at.tabs) == 7
+    assert len(at.tabs) == 8
     assert at.selectbox[0].options == ["DEMO_A", "DEMO_B", "DEMO_C"]
     labels = " | ".join(m.label for m in at.metric)
     for label in ("Điểm TA", "Điểm FA", "Giá trị DCF/cp", "Lợi nhuận/năm", "VaR 95% 1 ngày"):
@@ -64,3 +64,27 @@ def test_dashboard_bank_uses_residual_income(warehouse):
     labels = " | ".join(m.label for m in at.metric)
     for label in ("P/B", "Thu nhập thặng dư", "P/B hợp lý theo ROE", "Vùng mua"):
         assert label in labels, label
+
+
+def test_dashboard_macro_tab_with_data(warehouse):
+    import numpy as np
+    import pandas as pd
+
+    from vnsa.data.store import Store
+
+    today = pd.Timestamp.today().normalize()
+    with Store(warehouse) as store:
+        store.write_companies(pd.DataFrame({
+            "symbol": ["DEMO_A"], "name": ["Thép Demo"], "exchange": ["HOSE"],
+            "industry": ["Tài nguyên Cơ bản"], "model": ["general"], "industry3": ["Kim loại"],
+            "industry4": ["Thép và sản phẩm thép"]}), "test")
+        d = list(pd.date_range(end=today.replace(day=1), periods=72, freq="MS"))
+        d[-1] = today
+        for sid in ("iron_ore", "steel_hrc", "usd_vnd"):
+            store.write_macro(pd.DataFrame({"series": sid, "date": d,
+                                            "value": np.linspace(100, 130, 72), "source": "t"}))
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception, at.exception
+    text = " ".join(str(m.value) for m in at.markdown) + " ".join(str(s.value) for s in at.subheader)
+    assert "Thép (ICB cấp 4" in text
+    assert any("Thép" in str(x.label) or "Chuỗi" in str(x.label) for x in at.selectbox)
