@@ -1,2 +1,2 @@
-Đã lưu 12 khuyến nghị (bảng signals, bản sao signals.csv).
+Đã lưu 24 khuyến nghị (bảng signals, bản sao signals.csv).
 Chưa có khuyến nghị nào đủ số phiên để chấm. Chạy recommend/analyze đều đặn; sau 5 phiên sẽ có kết quả đầu tiên.
