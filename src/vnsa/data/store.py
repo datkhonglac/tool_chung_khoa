@@ -150,6 +150,11 @@ CREATE TABLE IF NOT EXISTS screen (
     symbol VARCHAR NOT NULL,
     PRIMARY KEY (as_of, symbol)
 );
+CREATE TABLE IF NOT EXISTS screen_industry (
+    as_of      DATE    NOT NULL,
+    group_name VARCHAR NOT NULL,
+    PRIMARY KEY (as_of, group_name)
+);
 """
 FLOW_COLUMNS = ["foreign_buy", "foreign_sell", "foreign_net", "foreign_net_vol", "foreign_room",
                 "foreign_pct", "prop_buy", "prop_sell", "prop_net"]
@@ -170,8 +175,26 @@ SCREEN_TYPES = {
     "last_date": "DATE", "price": "DOUBLE", "value_20d": "DOUBLE", "sessions": "INTEGER",
     "ret_1m": "DOUBLE", "ret_3m": "DOUBLE", "ret_6m": "DOUBLE", "rs_3m": "DOUBLE",
     "rs_6m": "DOUBLE", "above_ma50": "DOUBLE", "above_ma200": "DOUBLE",
+    # tầng 2 (assess + thẻ báo cáo), tầng 3 (nhóm ngành)
+    "group_name": "VARCHAR", "model": "VARCHAR", "action": "VARCHAR", "expected_return": "DOUBLE",
+    "score": "DOUBLE", "fair_value": "DOUBLE", "upside": "DOUBLE", "dividend_yield": "DOUBLE",
+    "fa_score": "DOUBLE", "ta_score": "DOUBLE", "quant": "DOUBLE", "confidence": "VARCHAR",
+    "eps_growth": "DOUBLE", "growth_basis": "VARCHAR", "roe": "DOUBLE", "pe": "DOUBLE",
+    "pb": "DOUBLE", "z_em": "DOUBLE", "macro_industry": "DOUBLE", "zone_status": "VARCHAR",
+    "buy_low": "DOUBLE", "buy_high": "DOUBLE", "stop": "DOUBLE", "red_flags": "VARCHAR",
+    "fin_basis": "VARCHAR", "group_rank": "DOUBLE", "group_score": "DOUBLE",
 }
 SCREEN_COLUMNS = ["as_of", "symbol", *SCREEN_TYPES]
+# Điểm nhóm ngành mỗi lượt sàng lọc (screen/industry.py): số thô + điểm thành phần (pt_*) 0–100
+INDUSTRY_TYPES = {
+    "rank": "DOUBLE", "score": "DOUBLE", "members": "INTEGER", "rs": "DOUBLE", "breadth": "DOUBLE",
+    "growth": "DOUBLE", "growing": "DOUBLE", "expected": "DOUBLE", "fa": "DOUBLE",
+    "macro": "DOUBLE", "macro_coverage": "DOUBLE", "value_20d": "DOUBLE",
+    "pt_momentum": "DOUBLE", "pt_breadth": "DOUBLE", "pt_earnings": "DOUBLE",
+    "pt_valuation": "DOUBLE", "pt_quality": "DOUBLE", "pt_macro": "DOUBLE",
+    "weight_used": "DOUBLE", "note": "VARCHAR",
+}
+INDUSTRY_COLUMNS = ["as_of", "group_name", *INDUSTRY_TYPES]
 
 
 class Store:
@@ -193,6 +216,8 @@ class Store:
             self.con.execute(f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {c} {t}")
         for c, t in SCREEN_TYPES.items():
             self.con.execute(f"ALTER TABLE screen ADD COLUMN IF NOT EXISTS {c} {t}")
+        for c, t in INDUSTRY_TYPES.items():
+            self.con.execute(f"ALTER TABLE screen_industry ADD COLUMN IF NOT EXISTS {c} {t}")
 
     def close(self) -> None:
         self.con.close()
@@ -631,19 +656,21 @@ class Store:
                              [symbol.upper()]).fetchone()[0]
         return None if t is None else pd.Timestamp(t)
 
-    def write_screen(self, df: pd.DataFrame) -> int:
-        """Ghi một lượt sàng lọc: thay toàn bộ dòng của các ngày as_of có trong df."""
+    def _replace_run(self, table: str, columns: list[str], df: pd.DataFrame,
+                     dates: tuple[str, ...]) -> int:
+        """Thay toàn bộ dòng của các ngày as_of có trong df (một lượt sàng lọc)."""
         if df.empty:
             return 0
-        frame = df.reindex(columns=SCREEN_COLUMNS).copy()
-        for c in ("as_of", "last_date"):
+        frame = df.reindex(columns=columns).copy()
+        for c in dates:
             frame[c] = pd.to_datetime(frame[c]).dt.date
         self.con.register("incoming", frame)
         try:
             self.con.execute("BEGIN")
-            self.con.execute("DELETE FROM screen WHERE as_of IN (SELECT DISTINCT as_of FROM incoming)")
-            self.con.execute(f"INSERT INTO screen ({', '.join(SCREEN_COLUMNS)}) "
-                             f"SELECT {', '.join(SCREEN_COLUMNS)} FROM incoming")
+            self.con.execute(f"DELETE FROM {table} WHERE as_of IN "
+                             "(SELECT DISTINCT as_of FROM incoming)")
+            self.con.execute(f"INSERT INTO {table} ({', '.join(columns)}) "
+                             f"SELECT {', '.join(columns)} FROM incoming")
             self.con.execute("COMMIT")
         except Exception:
             self.con.execute("ROLLBACK")
@@ -652,16 +679,39 @@ class Store:
             self.con.unregister("incoming")
         return len(frame)
 
+    def write_screen(self, df: pd.DataFrame, industry: pd.DataFrame | None = None) -> int:
+        """Ghi một lượt sàng lọc (bảng screen, và screen_industry nếu có điểm nhóm ngành): thay
+        toàn bộ dòng của các ngày as_of có trong df."""
+        n = self._replace_run("screen", SCREEN_COLUMNS, df, ("as_of", "last_date"))
+        if industry is not None and not industry.empty:
+            self._replace_run("screen_industry", INDUSTRY_COLUMNS, industry, ("as_of",))
+        return n
+
+    def _latest_run(self, table: str, as_of):
+        if as_of is None:
+            as_of = self.con.execute(f"SELECT MAX(as_of) FROM {table}").fetchone()[0]
+        return None if as_of is None else pd.Timestamp(as_of).date()
+
     def screen(self, as_of=None) -> pd.DataFrame:
         """Một lượt sàng lọc (mặc định lượt mới nhất); rỗng nếu chưa chạy."""
-        if as_of is None:
-            as_of = self.con.execute("SELECT MAX(as_of) FROM screen").fetchone()[0]
-            if as_of is None:
-                return pd.DataFrame(columns=SCREEN_COLUMNS)
+        day = self._latest_run("screen", as_of)
+        if day is None:
+            return pd.DataFrame(columns=SCREEN_COLUMNS)
         df = self.con.execute(f"SELECT {', '.join(SCREEN_COLUMNS)} FROM screen WHERE as_of = ? "
-                              "ORDER BY symbol", [pd.Timestamp(as_of).date()]).df()
+                              "ORDER BY symbol", [day]).df()
         for c in ("as_of", "last_date"):
             df[c] = pd.to_datetime(df[c])
+        return df
+
+    def screen_industry(self, as_of=None) -> pd.DataFrame:
+        """Điểm nhóm ngành của một lượt sàng lọc (mặc định mới nhất), xếp theo thứ hạng."""
+        day = self._latest_run("screen", as_of)
+        if day is None:
+            return pd.DataFrame(columns=INDUSTRY_COLUMNS)
+        df = self.con.execute(f"SELECT {', '.join(INDUSTRY_COLUMNS)} FROM screen_industry "
+                              "WHERE as_of = ? ORDER BY rank NULLS LAST, members DESC",
+                              [day]).df()
+        df["as_of"] = pd.to_datetime(df["as_of"])
         return df
 
     def inventory(self) -> pd.DataFrame:

@@ -1,14 +1,21 @@
 name: Sàng lọc thị trường
 
 # Sàng lọc toàn thị trường (lệnh screen, src/vnsa/screen/) trên máy chủ GitHub.
-# Kết quả in trong log; CSV và kho DuckDB ở mục Artifacts.
+# Kết quả in trong log; CSV và kho DuckDB ở mục Artifacts. Kho được giữ giữa các lần chạy (cache)
+# nên BCTC đã tải không phải tải lại (vnstock chế độ Khách chỉ ~140 mã/giờ).
+# Tuỳ chọn: thêm khoá API vnstock miễn phí vào Settings → Secrets → Actions, tên VNSTOCK_API_KEY
+# (hạn mức 60 lượt/phút thay vì 20).
 on:
-  push:                         # chạy khi phần sàng lọc thay đổi
+  push:                         # chạy khi phần sàng lọc thay đổi (tải BCTC tối đa 45 phút để thử nhanh)
     paths:
       - ".github/workflows/screen.yml"
       - "src/vnsa/screen/**"
   workflow_dispatch:
     inputs:
+      stage:
+        description: "Chạy đến tầng: industry (phân tích từng mã + nhóm ngành) | liquidity (chỉ lọc thanh khoản)"
+        required: false
+        default: "industry"
       exchanges:
         description: "Sàn cần lọc, cách nhau dấu cách (bỏ trống = HOSE HNX UPCOM)"
         required: false
@@ -21,10 +28,11 @@ on:
 jobs:
   screen:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 300
     env:
       PYTHONUNBUFFERED: "1"
       VNSTOCK_TELEMETRY: "off"
+      VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,11 +40,27 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
-      - name: Sàng lọc tầng 1 (thanh khoản)
+      - name: Lấy kho của lần chạy trước
+        uses: actions/cache/restore@v4
+        with:
+          path: data/warehouse.duckdb*
+          key: kho-sang-loc-${{ github.run_id }}
+          restore-keys: kho-sang-loc-
+      - name: Sàng lọc
         run: >-
-          python -m vnsa.cli screen --stage liquidity --top 40
+          python -m vnsa.cli screen --stage ${{ inputs.stage || 'industry' }} --top 40
+          ${{ github.event_name == 'push' && '--deep-minutes 45' || '' }}
           ${{ inputs.exchanges && format('--exchanges {0}', inputs.exchanges) || '' }}
           ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
+      - name: Nhóm ngành ← ngành ICB (kiểm tra macro_map.toml)
+        if: always()
+        run: python -m vnsa.cli screen --groups
+      - name: Lưu kho cho lần chạy sau
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/warehouse.duckdb*
+          key: kho-sang-loc-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

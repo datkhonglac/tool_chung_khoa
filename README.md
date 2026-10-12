@@ -189,23 +189,37 @@ python -m vnsa.cli macro HPG FPT        # yếu tố vĩ mô của ngành từng
 ## Sàng lọc toàn thị trường (đang làm)
 
 Lọc mọi mã HOSE, HNX, UPCoM qua 5 tầng để ra nhóm ngành tiềm năng và mã tiềm năng trong từng
-nhóm. Kiến trúc: tầng 0 vũ trụ → tầng 1 thanh khoản → tầng 2 phân tích từng mã → tầng 3 chấm
-nhóm ngành → tầng 4 chọn mã. Hiện đã có tầng 0–1.
+nhóm: tầng 0 vũ trụ → tầng 1 thanh khoản → tầng 2 phân tích từng mã → tầng 3 chấm nhóm ngành →
+tầng 4 chọn mã. Hiện đã có tầng 0–3.
 
 ```bash
-python -m vnsa.cli screen                       # tầng 1: lọc thanh khoản cả thị trường
+python -m vnsa.cli screen                       # tầng 1–3: thanh khoản, phân tích từng mã, nhóm ngành
+python -m vnsa.cli screen --stage liquidity     # chỉ tầng 1 (nhanh)
 python -m vnsa.cli screen --exchanges HOSE HNX  # chỉ hai sàn
-python -m vnsa.cli screen --no-update           # dùng giá đã có trong kho, không tải
+python -m vnsa.cli screen --no-update           # dùng dữ liệu đã có trong kho, không tải
+python -m vnsa.cli screen --groups              # bảng ngành ICB → nhóm ngành
 ```
 
 - **Tầng 1** chỉ cần giá 1 năm mỗi mã (1 lần gọi CafeF). Giữ mã có GTGD bình quân 20 phiên ≥ 3 tỷ,
-  giá ≥ 5.000đ, ≥ 200 phiên có giao dịch trong 1 năm, còn giao dịch trong 10 ngày gần nhất. Ngưỡng ở
-  mục `[screen]` của `config/settings.toml`.
-- Lần đầu tải giá cho khoảng 1.500 mã nên mất vài chục phút; các lần sau chỉ tải phiên mới.
+  giá ≥ 5.000đ, ≥ 200 phiên có giao dịch trong 1 năm, còn giao dịch trong 10 ngày gần nhất.
+- **Tầng 2** tải đủ 5 năm giá + BCTC năm/quý + hồ sơ cho các mã qua tầng 1 (thanh khoản cao trước),
+  rồi chạy đúng bộ phân tích của `analyze` cho từng mã: xếp hạng, giá trị hợp lý, FA, TA, độ tin cậy,
+  vùng mua, cắt lỗ.
+- **Tầng 3** chấm mỗi nhóm ngành 0–100: động lượng 30% (sức mạnh tương đối so VNINDEX), tăng trưởng
+  lợi nhuận 25%, định giá 15% (lợi nhuận kỳ vọng), độ rộng 10% (tỷ lệ mã trên MA50/MA200), chất lượng
+  10% (điểm FA), vĩ mô 10%. Mỗi phần là thứ hạng giữa các nhóm; phần thiếu số thì chia lại trọng số.
+  Nhóm ngành lấy theo `config/macro_map.toml` (Ngân hàng, Chứng khoán, Bảo hiểm, Điện, Dầu khí, Thép,
+  Bất động sản...); mã không thuộc nhóm nào xếp theo ngành ICB cấp 2.
+- **Hạn mức vnstock:** bản miễn phí chỉ 20 lượt gọi/phút, 1.200/giờ (khoảng 140 mã/giờ khi tải BCTC).
+  Vượt hạn mức thì thư viện tự thoát chương trình, nên tool tự chờ cho đủ dưới hạn mức. Mỗi lượt chỉ
+  tải BCTC tối đa 150 phút (`[screen] deep_minutes`); mã chưa kịp tải sẽ được tải ở lượt sau.
+  - Muốn nhanh gấp 3: đăng ký khoá API miễn phí ở vnstocks.com/login, rồi đặt biến môi trường
+    `VNSTOCK_API_KEY` (trên GitHub: Settings → Secrets and variables → Actions → New repository
+    secret, tên `VNSTOCK_API_KEY`).
 - Mã chỉ có 1 năm giá trong kho: `analyze` tự tải bổ sung đủ 5 năm khi cần.
-- Kết quả lưu ở bảng `screen` trong kho và `data/screen/screen_YYYY-MM-DD.csv` (mỗi mã: tầng đã
-  qua, lý do bị loại, GTGD, lợi nhuận 1/3/6 tháng, sức mạnh tương đối so với VNINDEX).
-- Chạy trên GitHub: Actions → **Sàng lọc thị trường** → Run workflow.
+- Kết quả: bảng `screen`, `screen_industry` trong kho và `data/screen/screen_YYYY-MM-DD.csv`,
+  `industry_YYYY-MM-DD.csv`.
+- Chạy trên GitHub: Actions → **Sàng lọc thị trường** → Run workflow. Kho được giữ giữa các lần chạy.
 
 ## 0. Chạy trên GitHub Codespaces (khuyến nghị)
 

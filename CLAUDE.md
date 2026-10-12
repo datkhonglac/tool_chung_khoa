@@ -104,13 +104,17 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   bảng `news`. Lệnh `macro [MÃ...]`, MCP `macro_context`, tab dashboard "Vĩ mô", workflow `macro.yml`
   (input probe: `scripts/probe_macro.py`). vnstock trả ngành dạng dài (icb_level/icb_name):
   `_wide_icb` đổi về icb_name1..4; `companies.industry` = cấp 2, `industry3/4` cho vĩ mô.
-- Sàng lọc toàn thị trường (`src/vnsa/screen/`, `[screen]`, lệnh `screen`, workflow `screen.yml`): T0 vũ trụ
-  (`Store.companies`), T1 thanh khoản (`screen/liquidity.py`: GTGD 20 phiên theo `close_raw` × KL, số phiên,
-  ngừng giao dịch, lợi nhuận/RS 1–6 tháng, MA50/200) — giá 1 năm mỗi mã qua `Updater.quick_prices`; `ensure`
-  tự tải bổ sung đủ `[auto] years` năm khi kho ngắn (`_short`, bảng `price_depth` để mã mới niêm yết không
-  tải lại mãi); tải lại vì nguồn điều chỉnh giá giữ nguyên độ sâu lịch sử (`_full_start`). Mỗi lượt ghi
-  bảng `screen` (thay theo `as_of`) + `data/screen/screen_YYYY-MM-DD.csv`. T2–T4 (assess hàng loạt, điểm
-  nhóm ngành, chọn mã) đang làm.
+- Sàng lọc toàn thị trường (`src/vnsa/screen/`, `[screen]`, lệnh `screen [--stage liquidity|industry]
+  [--groups]`, workflow `screen.yml` có cache kho): T0 vũ trụ (`Store.companies`); T1 thanh khoản
+  (`screen/liquidity.py`: GTGD 20 phiên `close_raw` × KL, số phiên, ngừng GD, RS 3/6 tháng, MA50/200) — giá
+  1 năm qua `Updater.quick_prices`, `ensure` tự bổ sung đủ `[auto] years` năm (`_short`, bảng `price_depth`;
+  tải lại vì điều chỉnh giá giữ độ sâu `_full_start`); T2 (`screen/deep.py`) hai lượt: `fetch_all` (ensure
+  không khối ngoại/tin, thanh khoản cao trước, dừng sau `deep_minutes`) rồi `assess_all` (assess + build_card
+  → cột bảng `screen`; tăng trưởng LNST: 8 quý cùng kỳ > TTM so năm > năm so năm); T3 (`screen/industry.py`)
+  nhóm theo `macro.score.match_industry` (`screen/groups.py`, rơi về ICB cấp 2), 6 thành phần đổi ra thứ hạng
+  0–100 giữa nhóm, thiếu thì chia lại trọng số, < `min_members` mã không xếp; bảng `screen_industry`.
+  vnstock: mọi lượt gọi qua `vnstock_provider._call` (`RateLimiter` theo `[vnstock]`, khoá
+  `VNSTOCK_API_KEY`) vì vnai vượt hạn mức (Khách 20/phút, 1.200/giờ) là SystemExit. T4 (chọn mã) đang làm.
 - MCP server: `python -m vnsa.mcp_server` (extra `[mcp]`, chạy được mcp 1.x và 2.x); cấu hình mẫu cho
   Claude Desktop ở `docs/`. Dashboard: `streamlit run dashboard/app.py` (extra `[dashboard]`, cổng 8501).
 - `python scripts/smoke_test.py` gọi mọi công cụ MCP + dashboard trên kho thật. Test dùng fixture

@@ -8,12 +8,22 @@ vnstock không có trên PyPI, cài riêng:
 
 Bản miễn phí (Cộng đồng) chỉ trả 4 kỳ gần nhất. Đã kiểm tra: nguồn KBS gắn nhãn năm bị đảo
 ngược (cột "2025" chứa số năm 2022), nên dùng VCI.
+
+Hạn mức lượt gọi (thư viện vnai, đo thật trên GitHub Actions 12/10/2026): chế độ Khách 20 lượt/phút,
+1.200/giờ, 5.000/ngày; có khoá API miễn phí (Cộng đồng) 60 lượt/phút. Vượt hạn mức thì vnai THOÁT
+chương trình (SystemExit) chứ không báo lỗi thường — một lượt sàng lọc nhiều mã sẽ chết giữa chừng.
+Vì vậy mọi lượt gọi đi qua `_call`: tự chờ cho đủ dưới hạn mức (`[vnstock]` trong settings, hoặc hạn
+mức vnai báo khi có khoá) và đổi SystemExit thành lỗi thường. Khoá API đặt ở biến môi trường
+VNSTOCK_API_KEY (GitHub: Settings → Secrets → Actions).
 """
 
 from __future__ import annotations
 
 import os
 import re
+import sys
+import time
+from collections import deque
 from collections.abc import Callable
 
 import numpy as np
@@ -228,11 +238,84 @@ def standardize_news(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
     return out.sort_values("date", ascending=False).reset_index(drop=True)
 
 
+class RateLimiter:
+    """Giữ số lượt gọi trong mọi cửa sổ 60 giây / 3.600 giây dưới hạn mức (tự ngủ chờ)."""
+
+    def __init__(self, per_minute: int, per_hour: int, clock=time.monotonic, sleep=time.sleep,
+                 log: Callable[[str], None] | None = None):
+        self.per_minute, self.per_hour = per_minute, per_hour
+        self.clock, self.sleep, self.log = clock, sleep, log
+        self.calls: deque[float] = deque()
+        self.waited = 0.0
+
+    def _wait_for(self, window: float, limit: int) -> None:
+        now = self.clock()
+        recent = [t for t in self.calls if now - t < window]
+        if limit > 0 and len(recent) >= limit:
+            pause = recent[-limit] + window - now + 0.05
+            if pause > 0:
+                if self.log and pause > 30:
+                    self.log(f"  … chờ {pause / 60:.0f} phút cho hạn mức vnstock ({limit} lượt/"
+                             f"{'giờ' if window > 60 else 'phút'})")
+                self.waited += pause
+                self.sleep(pause)
+
+    def wait(self) -> None:
+        now = self.clock()
+        while self.calls and now - self.calls[0] >= 3600:
+            self.calls.popleft()
+        self._wait_for(3600, self.per_hour)
+        self._wait_for(60, self.per_minute)
+        self.calls.append(self.clock())
+
+
+_LIMITER: RateLimiter | None = None
+
+
+def limiter() -> RateLimiter:
+    """Bộ điều tiết dùng chung cả tiến trình. Có VNSTOCK_API_KEY thì đăng ký khoá với vnai và lấy
+    hạn mức vnai báo (chừa 10%); không thì dùng [vnstock] per_minute/per_hour (chế độ Khách)."""
+    global _LIMITER
+    if _LIMITER is None:
+        from vnsa.config import settings
+
+        cfg = settings().get("vnstock", {})
+        per_min, per_hour = cfg.get("per_minute", 18), cfg.get("per_hour", 1100)
+        key = os.environ.get("VNSTOCK_API_KEY", "").strip()
+        if key:
+            try:
+                import vnai
+
+                vnai.setup_api_key(key)
+                lim = (vnai.get_user_tier() or {}).get("limits", {})
+                per_min = int(lim.get("per_minute", cfg.get("key_per_minute", 55)) * 0.9)
+                per_hour = int(lim.get("per_hour", cfg.get("key_per_hour", 3000)) * 0.9)
+            except Exception as e:  # noqa: BLE001 - khoá lỗi thì vẫn chạy với hạn mức Khách
+                print(f"  ! không dùng được VNSTOCK_API_KEY ({e}); chạy với hạn mức Khách",
+                      file=sys.stderr)
+        _LIMITER = RateLimiter(per_min, per_hour, log=print)
+    return _LIMITER
+
+
+def _call(fn: Callable, *args, **kwargs):
+    """Một lượt gọi vnstock: chờ hạn mức, đổi SystemExit (vnai hết hạn mức) thành RuntimeError;
+    hết hạn mức dù đã điều tiết (lượt gọi từ tiến trình khác) thì chờ 61 giây, thử lại một lần."""
+    for attempt in (1, 2):
+        limiter().wait()
+        try:
+            return fn(*args, **kwargs)
+        except SystemExit as e:
+            if attempt == 2:
+                raise RuntimeError("vnstock: hết hạn mức lượt gọi (vnai), thử lại sau") from e
+            time.sleep(61)
+    return None
+
+
 def _vnstock_company(symbol: str, method: str) -> pd.DataFrame:
     os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
     from vnstock import Company
 
-    return getattr(Company(source="VCI", symbol=symbol.upper()), method)()
+    return _call(lambda: getattr(Company(source="VCI", symbol=symbol.upper()), method)())
 
 
 def _vnstock_statements(symbol: str, period: str = "year") -> dict[str, pd.DataFrame]:
@@ -245,7 +328,7 @@ def _vnstock_statements(symbol: str, period: str = "year") -> dict[str, pd.DataF
             "https://vnstocks.com/api/simple vnstock vnai"
         ) from e
     fin = Finance(source="VCI", symbol=symbol.upper())
-    return {name: getattr(fin, name)(period=period) for name in STATEMENTS}
+    return {name: _call(getattr(fin, name), period=period) for name in STATEMENTS}
 
 
 # Sàn trong danh sách niêm yết VCI -> tên chuẩn của tool
@@ -329,10 +412,10 @@ def _vnstock_listing() -> pd.DataFrame:
         ) from e
     ls = Listing(source="VCI")
     try:
-        by_industry = ls.symbols_by_industries()
+        by_industry = _call(ls.symbols_by_industries)
     except Exception:  # noqa: BLE001 - thiếu ngành vẫn dùng được sàn
         by_industry = None
-    return standardize_listing(ls.symbols_by_exchange(), by_industry)
+    return standardize_listing(_call(ls.symbols_by_exchange), by_industry)
 
 
 def _vnstock_history(symbol: str, start: str, end: str) -> pd.DataFrame:
@@ -344,7 +427,8 @@ def _vnstock_history(symbol: str, start: str, end: str) -> pd.DataFrame:
             "Chưa cài vnstock. Chạy: pip install -U --extra-index-url "
             "https://vnstocks.com/api/simple vnstock vnai"
         ) from e
-    return Quote(symbol=symbol.upper(), source="VCI").history(start=start, end=end, interval="1D")
+    return _call(lambda: Quote(symbol=symbol.upper(), source="VCI").history(
+        start=start, end=end, interval="1D"))
 
 
 INDEX_SYMBOLS = {"VNINDEX", "VN30", "HNXINDEX", "HNX30", "UPCOMINDEX"}

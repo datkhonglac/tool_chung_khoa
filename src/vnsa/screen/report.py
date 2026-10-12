@@ -70,3 +70,92 @@ def format_liquidity(res: ScreenResult, top: int = 20) -> str:
         lines += ["", f"Đã lưu bảng screen trong kho và {res.csv}"]
     lines.append("Sàng lọc theo quy tắc trong config/settings.toml, không phải lời khuyên đầu tư.")
     return "\n".join(lines)
+
+
+PT = [("pt_momentum", "ĐL"), ("pt_breadth", "ĐR"), ("pt_earnings", "LN"), ("pt_valuation", "ĐG"),
+      ("pt_quality", "CL"), ("pt_macro", "VM")]
+LEGEND = ("ĐL động lượng (RS so VNINDEX) · ĐR độ rộng (giá trên MA50/MA200) · LN tăng trưởng lợi "
+          "nhuận · ĐG định giá (lợi nhuận kỳ vọng) · CL chất lượng (điểm FA) · VM vĩ mô")
+RATING_ORDER = ["MUA", "KHẢ QUAN", "NẮM GIỮ", "KÉM KHẢ QUAN", "BÁN", "KHÔNG XẾP HẠNG"]
+
+
+def _pt(x: float) -> str:
+    return "—" if pd.isna(x) else f"{x:.0f}"
+
+
+def _weights_line(cfg: dict) -> str:
+    from vnsa.screen.industry import DEFAULT_WEIGHTS
+
+    w = {**DEFAULT_WEIGHTS, **cfg.get("industry_weights", {})}
+    names = {"momentum": "động lượng", "breadth": "độ rộng", "earnings": "lợi nhuận",
+             "valuation": "định giá", "quality": "chất lượng", "macro": "vĩ mô"}
+    return " · ".join(f"{names[k]} {vn_num(v * 100)}%" for k, v in w.items() if v)
+
+
+def format_industry(res: ScreenResult, top_groups: int | None = None) -> str:
+    cfg = screen_cfg()
+    t, ind = res.table, res.industry
+    top_groups = top_groups or cfg.get("top_industries", 5)
+    analysed = t[t["stage"] >= 2]
+    rated = ind[ind["score"].notna()] if ind is not None and not ind.empty else pd.DataFrame()
+    lines = [
+        f"SÀNG LỌC TOÀN THỊ TRƯỜNG — tầng 1–3 · phiên {res.as_of:%d/%m/%Y}",
+        (f"Vũ trụ {vn_num(len(t))} mã → qua thanh khoản {vn_num(len(res.passed(1)))} → phân tích "
+         f"được {vn_num(len(analysed))} → {vn_num(len(rated))} nhóm ngành được chấm"),
+    ]
+    if len(res.passed(1)) < len(t):
+        lines.append(f"Loại ở tầng 1: {_counter(res.rejected(1))}")
+    bad = t[(t["stage"] == 1) & t["reason"].fillna("").str.startswith("phân tích lỗi")]
+    if len(bad):
+        lines.append(f"Lỗi phân tích ({len(bad)} mã): "
+                     + " · ".join(f"{r.symbol} ({r.reason[15:70]})" for r in bad.head(5).itertuples())
+                     + (" …" if len(bad) > 5 else ""))
+    if rated.empty:
+        lines += ["", "Chưa nhóm ngành nào đủ số liệu để chấm."]
+        return "\n".join(lines)
+    lines += ["", "NHÓM NGÀNH — điểm 0–100 (thành phần là thứ hạng giữa các nhóm)",
+              f"Trọng số: {_weights_line(cfg)}",
+              (f"  {'#':>2}  {'Nhóm ngành':<28}{'Mã':>4}{'Điểm':>6}  "
+               + "".join(f"{lab:>4}" for _, lab in PT)
+               + f"{'RS':>7}{'LN tăng':>9}{'LN kỳ vọng':>12}")]
+    for r in ind.itertuples(index=False):
+        if pd.isna(r.score):
+            continue
+        lines.append(
+            f"  {int(r.rank):>2}  {r.group_name[:27]:<28}{int(r.members):>4}{_pt(r.score):>6}  "
+            + "".join(f"{_pt(getattr(r, k)):>4}" for k, _ in PT)
+            + f"{vn_pct(r.rs, 0, sign=True):>7}{vn_pct(r.growth, 0, sign=True):>9}"
+            + f"{vn_pct(r.expected, 0, sign=True):>12}")
+    lines.append(f"  {LEGEND}")
+    lines.append("  RS, LN tăng, LN kỳ vọng: trung vị các mã trong nhóm")
+    skipped = ind[ind["score"].isna()] if ind is not None else pd.DataFrame()
+    if len(skipped):
+        lines.append("Không xếp hạng: " + " · ".join(
+            f"{r.group_name} ({int(r.members)} mã)" for r in skipped.itertuples(index=False)))
+    lines += ["", f"{top_groups} NHÓM DẪN ĐẦU — xếp hạng các mã (chưa qua bộ lọc tầng 4)"]
+    for r in rated.head(top_groups).itertuples(index=False):
+        g = analysed[analysed["group_name"] == r.group_name]
+        counts = g["action"].value_counts()
+        lines.append(f"  {int(r.rank)}. {r.group_name}: " + " · ".join(
+            f"{a} {counts[a]}" for a in RATING_ORDER if counts.get(a, 0)))
+        good = g[g["action"].isin(["MUA", "KHẢ QUAN"])]
+        good = good.assign(_o=good["action"].map(RATING_ORDER.index)).sort_values(
+            ["_o", "score"], ascending=[True, False])
+        if len(good):
+            lines.append("     " + ", ".join(
+                f"{x.symbol} {x.action} ({vn_pct(x.expected_return, 0, sign=True)})"
+                for x in good.head(8).itertuples(index=False)))
+    if res.csv:
+        lines += ["", f"Đã lưu bảng screen, screen_industry trong kho và {res.csv}"]
+    lines.append("Sàng lọc theo quy tắc trong config/settings.toml, không phải lời khuyên đầu tư.")
+    return "\n".join(lines)
+
+
+def format_taxonomy(tax: pd.DataFrame) -> str:
+    """Ngành ICB cấp 2/3/4 → nhóm (kiểm tra quy tắc `match` trong config/macro_map.toml)."""
+    lines = ["NHÓM NGÀNH ← ngành ICB (cấp 2 › cấp 3 › cấp 4: số mã)"]
+    for name, g in tax.groupby("group", sort=True):
+        lines.append(f"{name} — {int(g['n'].sum())} mã")
+        for r in g.itertuples(index=False):
+            lines.append(f"    {r.industry} › {r.industry3} › {r.industry4}: {r.n}")
+    return "\n".join(lines)

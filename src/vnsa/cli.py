@@ -945,16 +945,29 @@ def cmd_study_timing(args) -> int:
 
 def cmd_screen(args) -> int:
     """Sàng lọc toàn thị trường (src/vnsa/screen/): lọc theo tầng, in và lưu kết quả."""
-    from vnsa.screen.report import format_liquidity
-    from vnsa.screen.run import liquidity
+    from vnsa.screen.report import format_industry, format_liquidity, format_taxonomy
+    from vnsa.screen.run import run
 
     exchanges = [e.upper() for e in args.exchanges] if args.exchanges else None
+    if args.groups:
+        from vnsa import analysis
+        from vnsa.data.store import Store
+        from vnsa.screen.groups import taxonomy
+
+        with Store(path("warehouse")) as store:
+            companies = store.companies(exchanges)
+        if companies.empty:
+            print("  ✗ kho chưa có danh sách niêm yết: chạy lệnh screen trước")
+            return 1
+        print(format_taxonomy(taxonomy(companies, analysis.macro_mapping())))
+        return 0
     try:
-        res = liquidity(update=not args.no_update, exchanges=exchanges, limit=args.limit)
+        res = run(args.stage, update=not args.no_update, exchanges=exchanges, limit=args.limit,
+                  deep_minutes=args.deep_minutes)
     except ValueError as e:
         print(f"  ✗ {e}")
         return 1
-    print(format_liquidity(res, top=args.top))
+    print(format_liquidity(res, top=args.top) if res.stage == "liquidity" else format_industry(res))
     return 0
 
 
@@ -1133,13 +1146,18 @@ def main(argv: list[str] | None = None) -> int:
     pst.set_defaults(func=cmd_study_timing)
 
     psc = sub.add_parser("screen", help="Sàng lọc toàn thị trường: nhóm ngành và mã tiềm năng")
-    psc.add_argument("--stage", choices=["liquidity"], default="liquidity",
-                     help="Chạy đến tầng nào (liquidity = tầng 1, lọc thanh khoản)")
+    psc.add_argument("--stage", choices=["liquidity", "industry"], default="industry",
+                     help="Chạy đến tầng nào: liquidity = tầng 1 (lọc thanh khoản); industry = "
+                          "tầng 2–3 (phân tích từng mã, chấm nhóm ngành; mặc định)")
+    psc.add_argument("--groups", action="store_true",
+                     help="Chỉ in bảng ngành ICB → nhóm ngành (kiểm tra macro_map.toml)")
     psc.add_argument("--exchanges", nargs="+", metavar="SÀN",
                      help="Sàn cần lọc, vd: HOSE HNX (mặc định [screen] exchanges)")
     psc.add_argument("--no-update", action="store_true", help="Không tải, chỉ dùng dữ liệu trong kho")
     psc.add_argument("--limit", type=int, help="Chỉ lấy N mã đầu danh sách (chạy thử)")
     psc.add_argument("--top", type=int, default=20, help="Số mã in trong bảng GTGD lớn nhất")
+    psc.add_argument("--deep-minutes", type=float,
+                     help="Thời gian tối đa tải BCTC ở tầng 2 (mặc định [screen] deep_minutes)")
     psc.set_defaults(func=cmd_screen)
 
     ph = sub.add_parser("history", help="Lưu/nạp lịch sử khuyến nghị và BCTC tích luỹ")

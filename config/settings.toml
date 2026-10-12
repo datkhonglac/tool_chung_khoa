@@ -213,6 +213,15 @@ horizons = [5, 20, 60]      # số phiên để chấm lại khuyến nghị (l�
 # Mã workflow hằng ngày (.github/workflows/daily.yml) phân tích và lưu khuyến nghị vào nhánh `signals`
 daily = ["FPT", "HPG", "MWG", "VNM", "DGC", "VCB", "TCB", "MBB", "SSI", "ACV", "TNG", "GMD"]
 
+[vnstock]
+# Hạn mức lượt gọi vnstock (thư viện vnai; vượt thì vnai THOÁT chương trình). Chế độ Khách: 20/phút,
+# 1.200/giờ, 5.000/ngày — để dư một chút. Có khoá API miễn phí (biến môi trường VNSTOCK_API_KEY,
+# đăng ký ở vnstocks.com/login) thì dùng hạn mức vnai báo (Cộng đồng 60/phút), dự phòng key_*.
+per_minute = 18
+per_hour = 1100
+key_per_minute = 55
+key_per_hour = 3000
+
 [screen]
 # Sàng lọc toàn thị trường (lệnh screen, src/vnsa/screen/). Tầng 1 chỉ cần giá 1 năm mỗi mã.
 exchanges = ["HOSE", "HNX", "UPCOM"]
@@ -221,6 +230,20 @@ min_value_bn = 3.0          # GTGD bình quân 20 phiên tối thiểu (tỷ đ�
 min_price = 5000            # giá tối thiểu (đồng)
 min_sessions = 200          # số phiên có giao dịch trong 365 ngày gần nhất
 max_stale_days = 10         # phiên cuối cũ hơn số ngày này -> coi là ngừng giao dịch
+# Tầng 2–3 (phân tích từng mã, chấm nhóm ngành; screen/deep.py, screen/industry.py)
+deep_minutes = 150          # thời gian tối đa tải BCTC mỗi lượt (vnstock Khách ~140 mã/giờ); còn lại lượt sau
+min_members = 3             # nhóm ngành cần ≥ 3 mã qua tầng 1 mới xếp hạng
+min_weight = 0.5            # và các thành phần có số chiếm ≥ 50% tổng trọng số
+macro_coverage = 0.6        # điểm vĩ mô nhóm chỉ dùng khi độ phủ yếu tố có số ≥ 60%
+top_industries = 5          # số nhóm dẫn đầu (tầng 3 → 4)
+
+[screen.industry_weights]
+momentum = 0.30             # sức mạnh tương đối so VNINDEX (3 và 6 tháng)
+breadth = 0.10              # tỷ lệ mã trên MA50, MA200
+earnings = 0.25             # tăng trưởng lợi nhuận (trung vị) + tỷ lệ DN lợi nhuận tăng
+valuation = 0.15            # lợi nhuận kỳ vọng (upside giá trị hợp lý + cổ tức)
+quality = 0.10              # điểm FA
+macro = 0.10                # điểm vĩ mô nhóm; đặt 0 nếu muốn vĩ mô chỉ để tham khảo
 
 [study]
 # Kiểm định quy tắc thời điểm (lệnh study-timing, recommend/study.py): VN30 + một số mã vừa

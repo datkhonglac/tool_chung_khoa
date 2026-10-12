@@ -135,6 +135,40 @@ drivers = [
 ]
 
 [[industry]]
+name = "Bảo hiểm"
+match = "bảo hiểm"
+model = "insurance"
+drivers = [
+  { series = "vn_gov_10y", sign = 1, why = "lợi suất trái phiếu tăng: thu nhập đầu tư tăng" },
+  { series = "vn_gdp_yoy", sign = 1, why = "kinh tế tốt: phí bảo hiểm tăng" },
+]
+
+# Điện, Dầu khí, Dược đứng trước Bán lẻ: tên ICB "Sản xuất & Phân phối điện", "Phân phối khí đốt",
+# "Phân phối dược phẩm" có chữ "phân phối" — mục khớp trước được chọn.
+[[industry]]
+name = "Điện, nước"
+match = "phân phối điện|sản xuất.*điện|điện lực|năng lượng tái tạo|^điện|cấp nước|nước sạch|tiện ích"
+drivers = [
+  { series = "vn_iip_yoy", sign = 1, why = "sản xuất công nghiệp tăng: nhu cầu điện tăng" },
+  { series = "coal", sign = -1, weight = 0.5, why = "than tăng: chi phí nhiệt điện" },
+]
+
+[[industry]]
+name = "Dầu khí"
+match = "dầu khí|dầu mỏ|khí đốt|xăng dầu"
+drivers = [
+  { series = "brent", sign = 1, weight = 2, why = "giá dầu tăng: doanh thu, dự án thượng nguồn" },
+]
+
+[[industry]]
+name = "Dược phẩm, y tế"
+match = "dược|y tế|chăm sóc sức kh"
+drivers = [
+  { series = "usd_vnd", sign = -1, why = "VND yếu: nguyên liệu nhập khẩu đắt hơn" },
+  { series = "vn_retail_yoy", sign = 1, weight = 0.5, why = "tiêu dùng tăng" },
+]
+
+[[industry]]
 name = "Thép"
 match = "thép|kim loại"
 drivers = [
@@ -203,13 +237,6 @@ match = "hàng không|sân bay"
 drivers = [
   { series = "vn_arrivals_yoy", sign = 1, weight = 2, why = "khách quốc tế tăng" },
   { series = "brent", sign = -1, why = "dầu tăng: nhiên liệu bay đắt" },
-]
-
-[[industry]]
-name = "Dầu khí"
-match = "dầu khí|dầu mỏ|khí đốt|xăng dầu"
-drivers = [
-  { series = "brent", sign = 1, weight = 2, why = "giá dầu tăng: doanh thu, dự án thượng nguồn" },
 ]
 
 [[industry]]

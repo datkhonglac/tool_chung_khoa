@@ -145,3 +145,138 @@ def test_quick_update_with_adjusted_history_keeps_depth(market_db):
     assert steps["DEMO_A"].status == "ok" and "tải lại toàn bộ" in steps["DEMO_A"].detail
     with Store(market_db) as store:
         assert store.first_price_date("DEMO_A") == pd.Timestamp("2021-10-11")
+
+
+def test_earnings_growth_prefers_same_period_then_ttm_then_annual():
+    from types import SimpleNamespace
+
+    from conftest import B, _fundamentals
+
+    from vnsa.screen.deep import earnings_growth
+
+    fin = _fundamentals("X")                                  # LNST mẹ 75 → 101,25 tỷ (2022–2025)
+    q8 = pd.DataFrame({"year": [2024] * 4 + [2025] * 4, "quarter": [1, 2, 3, 4] * 2,
+                       "net_income_parent": [20 * B] * 4 + [25 * B] * 4})
+    g, basis = earnings_growth(fin, q8)
+    assert g == pytest.approx(0.25) and basis == "TTM Q4/2025 so cùng kỳ"
+    ttm = SimpleNamespace(basis="TTM Q2/2026", net_income_parent=81 * B)
+    g, basis = earnings_growth(fin, q8.tail(4), ttm)
+    assert g == pytest.approx(81 / 101.25 - 1) and basis == "TTM Q2/2026 so năm 2025"
+    g, basis = earnings_growth(fin, None)
+    assert g == pytest.approx(1.35 / 1.2 - 1) and basis == "năm 2025 so 2024"
+    loss = fin.assign(net_income_parent=[10 * B, 5 * B, -3 * B, 4 * B])
+    assert np.isnan(earnings_growth(loss, None)[0])           # năm gốc lỗ: không tính %
+    gap = q8.drop(index=3)                                    # thiếu một quý: không đủ 8 quý liền
+    assert earnings_growth(fin, gap)[1] == "năm 2025 so 2024"
+
+
+def test_groups_follow_macro_map_then_icb_level_2():
+    from vnsa.screen.groups import industry_group
+
+    mapping = {"industry": [{"name": "Thép", "match": "thép"},
+                            {"name": "Ngân hàng", "match": "ngân hàng", "model": "bank"}]}
+    assert industry_group({"industry": "Tài nguyên Cơ bản", "industry4": "Thép và sản phẩm thép"},
+                          mapping) == "Thép"
+    assert industry_group({"industry": "Tài chính", "model": "bank"}, mapping) == "Ngân hàng"
+    assert industry_group({"industry": "Truyền thông", "model": "general"}, mapping) == "Truyền thông"
+    assert industry_group({}, mapping) == "Chưa rõ ngành"
+
+
+def _members(group, n, rs, growth, expected, fa):
+    return pd.DataFrame({"group_name": group, "symbol": [f"{group}{i}" for i in range(n)],
+                         "rs_3m": rs, "rs_6m": rs, "above_ma50": 1.0 if rs > 0 else 0.0,
+                         "above_ma200": 1.0 if rs > 0 else 0.0, "eps_growth": growth,
+                         "expected_return": expected, "fa_score": fa, "value_20d": 5e9})
+
+
+def test_industry_scores_rank_groups_and_reweight_missing_parts():
+    from vnsa.screen.industry import industry_scores
+
+    table = pd.concat([_members("Mạnh", 4, 0.10, 0.30, 0.25, 70),
+                       _members("Vừa", 3, 0.00, -0.02, 0.10, 60),
+                       _members("Yếu", 5, -0.10, -0.20, -0.05, 40),
+                       _members("Ít mã", 2, 0.50, 0.50, 0.50, 90)])
+    ind = industry_scores(table, {"Mạnh": (0.5, 1.0), "Yếu": (-0.5, 0.3)}, {"min_members": 3})
+    ranked = ind.dropna(subset=["score"])
+    assert list(ranked["group_name"]) == ["Mạnh", "Vừa", "Yếu"]
+    assert ranked["rank"].tolist() == [1, 2, 3]
+    top = ranked.iloc[0]
+    assert top["pt_momentum"] == 100 and top["pt_macro"] == 75     # điểm vĩ mô 0,5 → 75
+    assert top["score"] == pytest.approx(100 * 0.9 + 75 * 0.1)     # mọi phần khác hạng nhất
+    assert np.isnan(ranked.iloc[2]["pt_macro"])                   # độ phủ 30% < 60%: bỏ vĩ mô
+    last = ranked.iloc[2]                                         # hoà với "Vừa" ở độ rộng và tỷ lệ
+    assert last["weight_used"] == pytest.approx(0.9)              # DN lãi tăng: chung hạng bình quân
+    assert last["score"] == pytest.approx((0.10 * 25 + 0.25 * 12.5) / 0.9)
+    few = ind[ind["group_name"] == "Ít mã"].iloc[0]
+    assert np.isnan(few["score"]) and "dưới 3 mã" in few["note"]
+
+
+def test_full_run_to_industry_stage(market_db, monkeypatch):
+    from vnsa.screen import run as screen_run
+    from vnsa.screen.report import format_industry
+
+    cfg = {**screen_run.screen_cfg(), "min_members": 1, "top_industries": 1}
+    monkeypatch.setattr(screen_run, "screen_cfg", lambda: cfg)
+    monkeypatch.setattr("vnsa.screen.report.screen_cfg", lambda: cfg)
+    res = screen_run.run("industry", updater=_updater(), log=None)
+    t = res.table.set_index("symbol")
+    assert t.loc["DEMO_A", "stage"] >= 2 and t.loc["DEMO_C", "stage"] >= 2
+    assert t.loc["DEMO_A", "action"] in ("MUA", "KHẢ QUAN", "NẮM GIỮ", "KÉM KHẢ QUAN", "BÁN")
+    assert not np.isnan(t.loc["DEMO_A", "fa_score"]) and t.loc["DEMO_A", "growth_basis"]
+    assert t.loc["LOWVOL", "stage"] == 0 and np.isnan(t.loc["LOWVOL", "fa_score"])
+    ind = res.industry
+    assert set(ind["group_name"]) == {"Công nghệ", "Bán lẻ"} and ind["score"].notna().all()
+    assert (t["stage"] == 3).sum() == 1                            # chỉ nhóm hạng 1
+    with Store(market_db) as store:
+        assert store.first_price_date("DEMO_A") == pd.Timestamp("2021-10-11")   # tầng 2 đủ 5 năm
+        assert len(store.screen_industry()) == 2
+        assert store.screen().set_index("symbol").loc["DEMO_A", "action"] == t.loc["DEMO_A", "action"]
+    text = format_industry(res)
+    assert "NHÓM NGÀNH" in text and "Công nghệ" in text and "phân tích được 2" in text
+
+
+def test_rate_limiter_waits_below_vnstock_quota():
+    from vnsa.data.providers.vnstock_provider import RateLimiter
+
+    clock = [0.0]
+    slept = []
+
+    def sleep(s):
+        slept.append(s)
+        clock[0] += s
+
+    lim = RateLimiter(per_minute=3, per_hour=5, clock=lambda: clock[0], sleep=sleep)
+    for _ in range(3):
+        lim.wait()
+        clock[0] += 1
+    assert not slept                                         # 3 lượt trong phút đầu: không chờ
+    lim.wait()                                               # lượt 4: chờ hết cửa sổ 60 giây
+    assert slept and clock[0] >= 60
+    lim.wait()
+    lim.wait()                                               # lượt 6 vượt 5/giờ: chờ tới giờ sau
+    assert clock[0] >= 3600 and lim.waited == pytest.approx(sum(slept))
+
+
+def test_vnstock_system_exit_becomes_error(monkeypatch):
+    import vnsa.data.providers.vnstock_provider as vp
+
+    monkeypatch.setattr(vp, "_LIMITER", vp.RateLimiter(100, 1000))
+    monkeypatch.setattr(vp.time, "sleep", lambda s: None)
+    calls = []
+
+    def quota_exit():
+        calls.append(1)
+        raise SystemExit("Rate limit exceeded")
+
+    with pytest.raises(RuntimeError, match="hết hạn mức"):
+        vp._call(quota_exit)
+    assert len(calls) == 2                                   # thử lại một lần sau khi chờ
+    assert vp._call(lambda: "ok") == "ok"
+
+
+def test_deep_fetch_stops_at_time_budget(market_db):
+    from vnsa.screen.deep import fetch_all
+
+    errors = fetch_all(["DEMO_A", "DEMO_C"], _updater(), log=None, minutes=-1)
+    assert set(errors) == {"DEMO_A", "DEMO_C"}
+    assert all(e.startswith("chưa tải BCTC lượt này") for e in errors.values())

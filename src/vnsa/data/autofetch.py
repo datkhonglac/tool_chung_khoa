@@ -282,9 +282,10 @@ class Updater:
                     f"{n_div} lần chia cổ tức")
 
     def _flows(self, store: Store, sym: str) -> Step | None:
-        """Khối ngoại + tự doanh (CafeF). Nguồn giá không có hàm flows (test) thì bỏ qua."""
+        """Khối ngoại + tự doanh (CafeF). Nguồn giá không có hàm flows (test) hoặc `[auto] flows =
+        false` (sàng lọc hàng loạt không cần) thì bỏ qua."""
         get = getattr(self.cafef, "flows", None)
-        if get is None:
+        if get is None or not self.cfg.get("flows", True):
             return None
         have = store.flows(sym)
         last_px = store.last_price_date(sym)
