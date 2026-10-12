@@ -141,7 +141,8 @@ def run(stage: str = "pick", update: bool = True, exchanges: list[str] | None = 
             log(f"Tầng 2: tải dữ liệu đủ {settings()['auto']['years']} năm giá + BCTC cho "
                 f"{len(passed)} mã (thanh khoản cao trước"
                 + (f", tối đa {minutes:.0f} phút)" if minutes else ")"))
-        res.deep_fetch_errors = deep.fetch_all(passed, updater, log, minutes)
+        res.deep_fetch_errors = deep.fetch_all(passed, updater, log, minutes,
+                                               workers=cfg.get("workers", 4))
     rows, errors = deep.assess_all(passed, log)
     try:
         res.regime = str(analysis.market_regime())

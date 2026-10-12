@@ -93,17 +93,27 @@ def _ticker(log: Callable[[str], None] | None, what: str, n: int, every: int = 2
 
 
 def fetch_all(symbols: list[str], updater=None, log: Callable[[str], None] | None = print,
-              minutes: float | None = None) -> dict[str, str]:
+              minutes: float | None = None, workers: int = 1) -> dict[str, str]:
     """Lượt 1: tải dữ liệu cho mọi mã (theo thứ tự truyền vào — mã thanh khoản cao trước). Trả
     {mã: lỗi khi tải} để ghi chú; mã vẫn còn giá trong kho thì lượt 2 vẫn phân tích (thiếu BCTC thì
     thành KHÔNG XẾP HẠNG, như lệnh analyze). Quá `minutes` phút thì dừng tải (hạn mức vnstock chế độ
-    Khách ~140 mã/giờ); mã chưa tải ghi "chưa tải lượt này" — kho giữ lại thì lượt sau tải tiếp."""
+    Khách ~140 mã/giờ); mã chưa tải ghi "chưa tải lượt này" — kho giữ lại thì lượt sau tải tiếp.
+    `workers` > 1: trước đó tải song song đủ `[auto] years` năm GIÁ cho mọi mã (CafeF chỉ trả 30
+    phiên mỗi trang nên 5 năm ≈ 45 lần gọi mỗi mã); thời gian `minutes` chỉ tính phần BCTC."""
     from vnsa.data.autofetch import Updater
 
     if updater is None:
         cfg = {**settings()["auto"], "news": False, "flows": False}
         updater = Updater(cfg=cfg)
     errors: dict[str, str] = {}
+    if workers > 1 and symbols:
+        years = updater.cfg.get("years", 5)
+        t_px = time.monotonic()
+        steps = updater.long_prices(symbols, years, workers=workers)
+        if log:
+            bad = sum(st.status == "error" for st in steps)
+            log(f"  … giá {years} năm cho {len(symbols)} mã ({workers} luồng): "
+                f"{(time.monotonic() - t_px) / 60:.0f} phút, {bad} lỗi")
     tick = _ticker(log, "tải dữ liệu", len(symbols))
     t0 = time.monotonic()
     for i, sym in enumerate(symbols, 1):
