@@ -68,14 +68,27 @@ def test_historical_multiples_use_current_shares_and_yearly_average():
     assert hist["bvps"].iloc[-1] == pytest.approx(parent_eq / shares)
 
 
-def test_combine_takes_median_of_positive_methods():
+def test_combine_weights_methods_and_drops_outliers():
     fin, px = _fundamentals("X"), _prices(price=40_000)
-    fair = fv.combine(40_000, fin, px, dcf=10_000.0)
-    used = sorted(fair.used.values())
-    assert len(used) == 3 and fair.value == pytest.approx(used[1])
-    no_dcf = fv.combine(40_000, fin, px, dcf=-5.0)                  # DCF âm bị bỏ
+    base = fv.combine(40_000, fin, px, dcf=float("nan"))
+    pe, pb = base.methods["pe_hist"], base.methods["pb_hist"]
+    assert base.weights == pytest.approx({"pe_hist": 0.5, "pb_hist": 0.5})   # chia lại 30/30
+    assert base.value == pytest.approx((pe + pb) / 2)
+    dcf = (pe + pb) / 2 * 1.2
+    fair = fv.combine(40_000, fin, px, dcf=dcf)
+    assert fair.value == pytest.approx(0.4 * dcf + 0.3 * pe + 0.3 * pb)
+    wild = fv.combine(40_000, fin, px, dcf=pe * 10)                   # DCF lệch 10 lần -> bỏ
+    assert "dcf" not in wild.weights and any("lệch quá xa" in n for n in wild.notes)
+    no_dcf = fv.combine(40_000, fin, px, dcf=-5.0)                    # DCF âm bị bỏ
     assert set(no_dcf.used) == {"pe_hist", "pb_hist"}
     assert no_dcf.upside == pytest.approx(no_dcf.value / 40_000 - 1)
+
+
+def test_scenario_range_brackets_center():
+    assert fv.scenario_range([10, 20, 30, 40, 50], 30) == pytest.approx((14, 46))
+    assert fv.scenario_range([10, 20, 30], 60)[1] == 60              # luôn bao giá trị trung tâm
+    lo, hi = fv.scenario_range([10, -5], 20)
+    assert np.isnan(lo) and np.isnan(hi)                               # quá ít kịch bản
 
 
 def test_financial_fair_value_balances_roe_models_and_history():
@@ -84,15 +97,16 @@ def test_financial_fair_value_balances_roe_models_and_history():
     fair = fv.combine(15_000, _bank(0.15), _prices(price=15_000), ri=ri)
     m = fair.methods
     assert m["pb_hist"] == pytest.approx(1.5 * 10_000)              # P/B lịch sử 1,5 × B0
-    assert fair.value == pytest.approx(((m["ri"] + m["pb_roe"]) / 2 + m["pb_hist"]) / 2)
+    assert fair.value == pytest.approx(0.25 * m["ri"] + 0.25 * m["pb_roe"] + 0.5 * m["pb_hist"])
 
 
 def test_financial_score_uses_bank_thresholds():
     cfg = {"weights": {"sinh_loi": 35, "tang_truong": 20, "an_toan": 15, "dinh_gia": 30},
-           "thresholds": {"roe": [0.08, 0.20], "ni_cagr": [0.0, 0.20], "pb": [3.0, 0.8],
+           "thresholds": {"roe": [0.08, 0.20], "ni_cagr": [0.0, 0.20], "pb_rel": [1.3, 0.7],
                           "fair_upside": [-0.2, 0.3]},
            "equity_to_assets": {"bank": [0.05, 0.11], "securities": [0.25, 0.60]}}
-    s = financial_score(_bank(0.20), cfg, "bank", pb=0.8, fair_upside=0.3)
+    s = financial_score(_bank(0.20), cfg, "bank", pb=0.8, fair_upside=0.3, pb_hist=1.2)
+    assert s.items["pb_rel"][0] == pytest.approx(0.8 / 1.2)          # rẻ hơn lịch sử 33%
     assert s.items["equity_to_assets"][1] == pytest.approx((0.10 - 0.05) / 0.06 * 100)
     assert s.groups["sinh_loi"] == 100 and s.groups["dinh_gia"] == 100
     sec = financial_score(_bank(0.20), cfg, "securities", pb=0.8, fair_upside=0.3)
@@ -172,7 +186,7 @@ def test_recommend_records_signals_and_review_cli(warehouse, capsys, monkeypatch
 
     assert cli.main(["recommend", "DEMO_A", "DEMO_C"]) == 0
     out = capsys.readouterr().out
-    assert "Vùng mua" in out and "Hợp lý" in out
+    assert "Vùng mua" in out and "LN kỳ vọng" in out and "Thời điểm" in out
     with Store(warehouse) as store:
         sig = store.signals()
         px = store.prices("DEMO_A")
@@ -193,3 +207,33 @@ def test_recommend_records_signals_and_review_cli(warehouse, capsys, monkeypatch
     # Kho mới (đổi Codespace) nạp lại lịch sử từ CSV
     monkeypatch.setenv("VNSA_WAREHOUSE", str(warehouse.parent / "fresh.duckdb"))
     assert analysis.import_signals_csv() == 2
+
+
+def test_partial_reversion_to_historical_multiples():
+    assert fv.revert(10.0, 20.0, 0.5) == 15.0                        # thu hẹp nửa khoảng cách
+    assert fv.revert(10.0, 20.0, 1.0) == 20.0                        # cách cũ: quay hẳn về trung vị
+    assert fv.revert(float("nan"), 20.0, 0.5) == 20.0                # EPS âm: dùng trung vị
+    fin = _fundamentals("X")
+    px = _prices(price=40_000)
+    price = 20_000.0                                                  # rẻ một nửa so với lịch sử
+    full = fv.combine(price, fin, px)
+    half = fv.combine(price, fin, px, reversion=0.5)
+    assert half.pe_median == pytest.approx(full.pe_target)
+    eps = full.methods["pe_hist"] / full.pe_target
+    pe_now = price / eps
+    assert half.pe_target == pytest.approx(pe_now + 0.5 * (full.pe_median - pe_now))
+    assert price < half.value < full.value                           # upside nhỏ hơn, vẫn dương
+
+
+def test_peer_multiples_add_independent_method():
+    fin, px = _fundamentals("X"), _prices(price=40_000)
+    hist_only = fv.combine(40_000, fin, px)
+    assert not hist_only.independent                              # chỉ bội số quá khứ
+    peer = fv.combine(40_000, fin, px, peers=(12.0, 1.5, 4))
+    assert {"pe_peer", "pb_peer"} <= set(peer.weights) and peer.independent
+    eps = hist_only.methods["pe_hist"] / hist_only.pe_target
+    assert peer.methods["pe_peer"] == pytest.approx(12.0 * eps)   # reversion mặc định 1
+    half = fv.combine(40_000, fin, px, peers=(12.0, 1.5, 4), reversion=0.5)
+    pe_now = 40_000 / eps
+    assert half.methods["pe_peer"] == pytest.approx((pe_now + 0.5 * (12.0 - pe_now)) * eps)
+    assert any("4 mã cùng ngành" in n for n in peer.notes)

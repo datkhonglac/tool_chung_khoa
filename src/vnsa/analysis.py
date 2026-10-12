@@ -6,7 +6,7 @@ Dòng lệnh (cli.py), MCP server (mcp_server.py) và dashboard đều gọi qua
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -23,6 +23,22 @@ class Data:
     fin: pd.DataFrame      # BCTC năm (year + FIELDS, đồng)
     prices: pd.DataFrame   # giá ngày (đồng, đã điều chỉnh)
     index: pd.DataFrame    # giá chỉ số thị trường (để tính beta)
+    quarterly: pd.DataFrame = field(default_factory=pd.DataFrame)   # BCTC quý (4 quý gần nhất)
+    profile: dict = field(default_factory=dict)   # hồ sơ: shares_out, foreign_pct, avg_value_1m...
+    dividends: pd.DataFrame = field(default_factory=pd.DataFrame)
+    flows: pd.DataFrame = field(default_factory=pd.DataFrame)       # khối ngoại / tự doanh (CafeF)
+
+    @property
+    def current(self):
+        """fa.ttm.Current: số liệu hiện tại (TTM nếu có) theo số cổ phiếu lưu hành hiện tại."""
+        from vnsa.fa.ttm import current
+
+        if not hasattr(self, "_current"):
+            shares = self.profile.get("shares_out") if self.profile else None
+            self._current = current(self.fin, self.quarterly,
+                                    float("nan") if shares is None else float(shares),
+                                    settings()["valuation"]["par_value"])
+        return self._current
 
 
 def load(symbol: str, need_fin: bool = True, need_prices: bool = True) -> Data:
@@ -33,13 +49,17 @@ def load(symbol: str, need_fin: bool = True, need_prices: bool = True) -> Data:
         fin = store.fundamentals(sym)
         prices = store.prices(sym)
         index = store.prices(settings()["valuation"]["index"])
+        quarterly = store.quarterly(sym)
+        profile = store.company(sym) or {}
+        dividends = store.dividends(sym)
+        flows = store.flows(sym)
     missing = [c for c, miss in (("fetch", need_prices and prices.empty),
                                  ("fetch-bctc", need_fin and fin.empty)) if miss]
     if missing:
         steps = " và ".join(f"'{c} {sym}'" for c in missing)
         raise DataMissing(f"{sym}: kho chưa có đủ dữ liệu. Chạy {steps} trước "
                           f"(hoặc 'analyze {sym}' để tự tải).")
-    return Data(sym, fin, prices, index)
+    return Data(sym, fin, prices, index, quarterly, profile, dividends, flows)
 
 
 def update(symbol: str, refresh: bool = False, full: bool = False, log=None):
@@ -59,18 +79,14 @@ def _not_financial(symbol: str) -> None:
 
 
 def multiples(d: Data) -> tuple[float, float]:
-    """(P/E, P/B) đơn giản từ BCTC năm gần nhất: giá / EPS, giá / giá trị sổ sách mỗi cp
-    (vốn chủ công ty mẹ / số cp = vốn điều lệ / mệnh giá). Dùng được cho cả ngân hàng."""
+    """(P/E, P/B) hiện tại: giá / EPS TTM (hoặc năm gần nhất), giá / BVPS quý gần nhất, theo số cổ
+    phiếu lưu hành hiện tại (fa/ttm.py). Dùng được cho cả ngân hàng."""
     nan = float("nan")
-    if d.fin.empty or d.prices.empty:
+    if d.fin.empty or d.prices.empty or d.current is None:
         return nan, nan
-    last = d.fin.iloc[-1]
-    price = float(d.prices["close"].iloc[-1])
-    shares = last["paid_in_capital"] / settings()["valuation"]["par_value"]
-    book = last["equity"] - (0 if pd.isna(last["minority_interest"]) else last["minority_interest"])
-    pe = price / last["eps"] if last["eps"] > 0 else nan
-    pb = price / (book / shares) if shares > 0 and book > 0 else nan
-    return float(pe), float(pb)
+    c, price = d.current, float(d.prices["close"].iloc[-1])
+    return (float(price / c.eps) if c.eps > 0 else nan,
+            float(price / c.bvps) if c.bvps > 0 else nan)
 
 
 def symbols() -> list[str]:
@@ -94,9 +110,58 @@ def cost_of_equity(d: Data) -> tuple[float, float, float, int]:
     return a.risk_free + b * a.equity_risk_premium, b, raw, weeks
 
 
+def _weights(kind: str) -> dict:
+    return settings()["valuation"].get("weights", {}).get(kind)
+
+
+def sector(d: Data):
+    """Chỉ số riêng ngân hàng / công ty chứng khoán (fa/sector.py) hoặc None."""
+    from vnsa import market
+    from vnsa.fa import sector as sec
+
+    if d.fin.empty:
+        return None
+    return sec.metrics(market.profile(d.symbol)["model"], d.fin, d.quarterly, d.symbol)
+
+
+def bank_peers(d: Data) -> dict[str, float] | None:
+    """Trung vị NIM, CIR, chi phí tín dụng của các ngân hàng khác trong kho (cùng cách tính xấp xỉ
+    của fa/sector.py) và số ngân hàng `n`; None nếu ít hơn `min_bank_peers`."""
+    import numpy as np
+
+    from vnsa import market
+    from vnsa.data.store import Store
+    from vnsa.fa import sector as sec
+
+    prof = market.profile(d.symbol)
+    if prof["model"] != "bank" or not prof.get("industry"):
+        return None
+    with Store(path("warehouse")) as store:
+        peers = [s for s in store.peers(prof["industry"]) if s != d.symbol]
+    vals: dict[str, list[float]] = {"nim": [], "cir": [], "credit_cost": []}
+    for s in peers:
+        if market.profile(s)["model"] != "bank":
+            continue
+        try:
+            p = load(s, need_prices=False)
+        except DataMissing:
+            continue
+        m = sec.bank(p.fin, p.quarterly)
+        if m is None:
+            continue
+        for k, lst in vals.items():
+            if not pd.isna(m.values.get(k, float("nan"))):
+                lst.append(m.values[k])
+    n = len(vals["nim"])
+    if n < settings()["fa_score"]["financials"].get("min_bank_peers", 4):
+        return None
+    return {**{k: float(np.median(v)) for k, v in vals.items() if v}, "n": n}
+
+
 def financial(d: Data):
     """Định chế tài chính: (FAScore, FairValue) bằng thu nhập thặng dư + P/B theo ROE + P/B lịch
-    sử (fa/fair_value.py) và điểm FA riêng (scores.financial_score). ValueError nếu thiếu số."""
+    sử (fa/fair_value.py) và điểm FA riêng (scores.financial_score). ValueError nếu thiếu số.
+    FairValue có dải P10/P90 từ các kịch bản k_e ± 1%, độ bền ROE 0,25/0,75, P/B từng năm."""
     from vnsa import market
     from vnsa.fa import fair_value as fv
     from vnsa.fa.scores import financial_score
@@ -104,38 +169,110 @@ def financial(d: Data):
     if d.fin.empty or d.prices.empty:
         raise ValueError(f"{d.symbol}: thiếu BCTC hoặc giá")
     cfg = settings()["valuation"]
+    g, par = cfg["terminal_growth"], cfg["par_value"]
     ke, _, _, _ = cost_of_equity(d)
-    ri = fv.residual_income(d.fin, ke, cfg["terminal_growth"], cfg["financials"], cfg["par_value"])
+    ri = fv.residual_income(d.fin, ke, g, cfg["financials"], par, current=d.current)
     price = float(d.prices["close"].iloc[-1])
-    fair = fv.combine(price, d.fin, d.prices, cfg["par_value"], ri=ri)
+    rev = cfg.get("multiple_reversion", 1.0)
+    fair = fv.combine(price, d.fin, d.prices, par, ri=ri, weights=_weights("financial"),
+                      current=d.current, reversion=rev, peers=peer_multiples(d))
+    scenarios = []
+    for k in (ke - 0.01, ke, ke + 0.01):
+        for keep in (0.25, 0.75):
+            if k > g:
+                alt = fv.residual_income(d.fin, k, g, {**cfg["financials"], "roe_persistence": keep},
+                                         par, current=d.current)
+                scenarios += [alt.value_per_share, alt.justified_pb * alt.book0]
+    hist = fv.historical_multiples(d.fin, d.prices, par)
     pb = price / ri.book0
+    scenarios += [fv.revert(pb, x, rev) * ri.book0 for x in hist["pb"]]
+    fair.p10, fair.p90 = fv.scenario_range(scenarios, fair.value)
     score = financial_score(d.fin, settings()["fa_score"]["financials"],
-                            market.profile(d.symbol)["model"], pb=pb, fair_upside=fair.upside)
+                            market.profile(d.symbol)["model"], pb=pb, fair_upside=fair.upside,
+                            roe=d.current.roe if d.current is not None else None,
+                            pb_hist=fair.pb_median, sector=sector(d), peer=bank_peers(d))
     return score, fair
+
+
+def peer_multiples(d: Data) -> tuple[float, float, int] | None:
+    """(P/E, P/B trung vị hiện tại, số mã) của các mã CÙNG NGÀNH và cùng loại doanh nghiệp đã có
+    trong kho; None nếu ít hơn `[valuation] min_peers` mã. Kho chỉ có những mã đã phân tích, nên
+    càng phân tích nhiều mã cùng ngành (hoặc workflow hằng ngày) thì so sánh càng đầy đủ."""
+    import numpy as np
+
+    from vnsa import market
+    from vnsa.data.store import Store
+
+    cfg = settings()["valuation"]
+    prof = market.profile(d.symbol)
+    if not prof.get("industry"):
+        return None
+    with Store(path("warehouse")) as store:
+        peers = [s for s in store.peers(prof["industry"]) if s != d.symbol]
+    pes, pbs = [], []
+    for s in peers:
+        if market.profile(s)["model"] != prof["model"]:
+            continue
+        try:
+            p = load(s)
+        except DataMissing:
+            continue
+        pe, pb = multiples(p)
+        if 0 < pe <= cfg.get("max_peer_pe", 60):
+            pes.append(pe)
+        if pb > 0:
+            pbs.append(pb)
+    n = len(pbs)
+    if n < cfg.get("min_peers", 3):
+        return None
+    pe_med = float(np.median(pes)) if len(pes) >= cfg.get("min_peers", 3) else float("nan")
+    return pe_med, float(np.median(pbs)), n
+
+
+def general_fair_value(d: Data, v=None):
+    """Doanh nghiệp thường: FairValue (DCF, P/E, P/B lịch sử) kèm dải P10/P90 từ ma trận độ nhạy
+    DCF và P/E, P/B của từng năm lịch sử. v = Valuation đã tính (nếu có)."""
+    from vnsa.fa import fair_value as fv
+    from vnsa.fa import valuation as val
+
+    nan = float("nan")
+    par = settings()["valuation"]["par_value"]
+    rev = settings()["valuation"].get("multiple_reversion", 1.0)
+    price = float(d.prices["close"].iloc[-1])
+    fair = fv.combine(price, d.fin, d.prices, par, dcf=v.value_per_share if v else nan,
+                      weights=_weights("general"), current=d.current, reversion=rev,
+                      peers=peer_multiples(d))
+    hist = fv.historical_multiples(d.fin, d.prices, par)
+    c = d.current
+    eps, bvps = (c.eps, c.bvps) if c is not None else (hist["eps"].iloc[-1], hist["bvps"].iloc[-1])
+    pe_now = price / eps if eps > 0 else nan
+    pb_now = price / bvps if bvps > 0 else nan
+    scenarios = ([fv.revert(pe_now, x, rev) * eps for x in hist["pe"]]
+                 + [fv.revert(pb_now, x, rev) * bvps for x in hist["pb"]])
+    if v is not None and v.fcff_base > 0:
+        a = val.Assumptions.from_settings(settings()["valuation"])
+        scenarios += [x for x in val.sensitivity(v, a).to_numpy().ravel()]
+    fair.p10, fair.p90 = fv.scenario_range(scenarios, fair.value)
+    return fair
 
 
 def fundamentals_view(d: Data):
     """(điểm FA 0–100, FairValue hoặc None, P/E, P/B) cho mọi loại doanh nghiệp; thiếu BCTC ->
     (NaN, None, NaN, NaN). Dùng cho khuyến nghị và vùng mua."""
-    from vnsa.fa import fair_value as fv
     from vnsa.market import financial_note
 
     nan = float("nan")
     if d.fin.empty or d.prices.empty:
         return nan, None, nan, nan
     if financial_note(d.symbol):
+        pe, pb = multiples(d)
         try:
             score, fair = financial(d)
         except ValueError:
-            pe, pb = multiples(d)
             return nan, None, pe, pb
-        pe, pb = multiples(d)
         return score.total, fair, pe, pb
     _, _, score, v = fa(d)
-    dcf = v.value_per_share if v is not None else nan
-    fair = fv.combine(float(d.prices["close"].iloc[-1]), d.fin, d.prices,
-                      settings()["valuation"]["par_value"], dcf=dcf)
-    return score.total, fair, (v.pe if v else nan), (v.pb if v else nan)
+    return score.total, general_fair_value(d, v), (v.pe if v else nan), (v.pb if v else nan)
 
 
 def valuation(d: Data, growth: float | None = None, wacc: float | None = None):
@@ -148,7 +285,7 @@ def valuation(d: Data, growth: float | None = None, wacc: float | None = None):
                 else (float("nan"), 0))
     price = float(d.prices["close"].iloc[-1])
     v = val.value(d.symbol, d.fin, price, a, beta_value=b, beta_weeks=weeks, g1=growth,
-                  wacc_override=wacc)
+                  wacc_override=wacc, current=d.current)
     return a, v, b
 
 
@@ -164,13 +301,30 @@ def fa(d: Data):
             _, v, _ = valuation(d)
         except ValueError:
             v = None
-    caps = sc.year_end_market_caps(d.fin, d.prices, settings()["valuation"]["par_value"])
-    f = sc.piotroski(d.fin, cfg.get("issue_materiality", 0.01))
+    from vnsa.fa.fair_value import history_targets
+
+    par = settings()["valuation"]["par_value"]
+    caps = sc.year_end_market_caps(d.fin, d.prices, par)
+    f = sc.piotroski(d.fin, cfg.get("issue_materiality", 0.01), stock_ratios(d))
     z = sc.altman(d.fin, caps)
     nan = float("nan")
+    pe_hist, pb_hist = history_targets(d.fin, d.prices, par) if not d.prices.empty else (nan, nan)
     score = sc.fa_score(d.fin, cfg, pe=v.pe if v else nan, pb=v.pb if v else nan,
-                        dcf_upside=v.upside if v else nan)
+                        dcf_upside=v.upside if v else nan,
+                        roe=d.current.roe if d.current is not None else None,
+                        pe_hist=pe_hist, pb_hist=pb_hist, stock_ratio=stock_ratios(d))
     return f, z, score, v
+
+
+def stock_ratios(d: Data) -> dict[int, float] | None:
+    """{năm: tổng tỷ lệ thưởng/cổ tức bằng cổ phiếu theo ngày GDKHQ} hoặc None nếu chưa có lịch sử
+    sự kiện quyền (khi đó F-Score dùng dòng tiền phát hành)."""
+    div = d.dividends
+    if div is None or div.empty:
+        return None
+    s = div.dropna(subset=["stock_ratio"])
+    return {int(y): float(v) for y, v in
+            s.groupby(pd.to_datetime(s["exright_date"]).dt.year)["stock_ratio"].sum().items()}
 
 
 def indicators(prices: pd.DataFrame) -> pd.DataFrame:
@@ -202,7 +356,68 @@ def _value_anchor(symbol: str) -> tuple[float, float]:
     return (fair.value if fair else nan), score
 
 
-def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | None = None):
+def adv_value(prices: pd.DataFrame, n: int = 20) -> float:
+    """Giá trị giao dịch bình quân n phiên gần nhất (đồng): giá khớp thật × khối lượng."""
+    tail = prices.tail(n)
+    px = tail["close_raw"].fillna(tail["close"]) if "close_raw" in tail else tail["close"]
+    return float((px * tail["volume"]).mean()) if len(tail) else float("nan")
+
+
+def flow_summary(d: Data) -> dict | None:
+    """Khối ngoại / tự doanh mua(+)/bán(−) ròng cộng dồn N phiên gần nhất ([flows] windows), đồng,
+    kèm tỷ lệ so với GTGD cùng kỳ. Chỉ để tham khảo, không vào điểm. None nếu chưa có dữ liệu."""
+    f = d.flows
+    if f is None or f.empty:
+        return None
+    f = f.sort_values("date")
+    px = d.prices.assign(value=d.prices["close"] * d.prices["volume"]).set_index("date")["value"]
+    out = {"last_date": f["date"].iloc[-1], "foreign_pct": f["foreign_pct"].dropna().iloc[-1]
+           if f["foreign_pct"].notna().any() else float("nan")}
+    for n in settings().get("flows", {}).get("windows", [5, 20]):
+        tail = f.tail(n)
+        traded = px[px.index.isin(tail["date"])].sum()
+        for who in ("foreign", "prop"):
+            net = tail[f"{who}_net"].sum(min_count=1)
+            out[f"{who}_{n}"] = net
+            out[f"{who}_{n}_pct"] = net / traded if traded > 0 and not pd.isna(net) else float("nan")
+    return out
+
+
+def market_regime(index: pd.DataFrame | None = None):
+    """Trạng thái VNINDEX (ta/regime.py); không truyền thì đọc từ kho."""
+    from vnsa.ta.regime import regime
+
+    if index is None:
+        from vnsa.data.store import Store
+
+        with Store(path("warehouse")) as store:
+            index = store.prices(settings()["valuation"]["index"])
+    return regime(index, settings().get("regime", {}))
+
+
+def dividend_yield(d: Data, raw: bool = False) -> float:
+    """Tỷ suất cổ tức tiền dùng cho lợi nhuận kỳ vọng.
+
+    Cổ tức 12 tháng (GDKHQ trong 365 ngày trước phiên giá cuối) / giá. Nếu vượt
+    `[recommend] max_dividend_yield` (10%) — thường do hai đợt của hai năm tài chính rơi vào cùng
+    12 tháng hoặc cổ tức đặc biệt một lần — thì dùng bình quân năm của 3 năm gần nhất, và không quá
+    ngưỡng đó (thận trọng). raw=True: trả số 12 tháng chưa điều chỉnh (để hiển thị)."""
+    if d.dividends is None or d.dividends.empty or d.prices.empty:
+        return 0.0
+    last, price = d.prices["date"].iloc[-1], float(d.prices["close"].iloc[-1])
+    div = d.dividends
+    paid = div[div["exright_date"] <= last]
+    ttm = paid[paid["exright_date"] > last - pd.Timedelta(days=365)]["cash_per_share"].sum() / price
+    cap = settings()["recommend"].get("max_dividend_yield", 0.10)
+    if raw or ttm <= cap:
+        return float(ttm)
+    avg3 = (paid[paid["exright_date"] > last - pd.Timedelta(days=3 * 365)]["cash_per_share"].sum()
+            / 3 / price)
+    return float(min(ttm, avg3, cap))
+
+
+def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | None = None,
+         risk_scale: float = 1.0):
     """Kế hoạch mua với giá vào = đỉnh VÙNG MUA khuyến nghị (ta/entry.py: hỗ trợ / VWAP20 / SMA20,
     chặn bởi giá trị hợp lý trừ biên an toàn), không phải giá đóng cửa. Không truyền fair_value thì
     tự tính từ kho. ValueError nếu chưa đủ dữ liệu tính ATR."""
@@ -218,9 +433,40 @@ def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | N
         fair_value, fa_score = _value_anchor(sym) if sym else (float("nan"), float("nan"))
     zone = entry_zone(ind, sup, settings()["entry"], ticks, fair_value,
                       float("nan") if fa_score is None else fa_score)
-    p = trade_plan(zone.entry, float(last["atr"]), sup, res, settings()["plan"], ticks)
+    p = trade_plan(zone.entry, float(last["atr"]), sup, res, settings()["plan"], ticks,
+                   adv_value=adv_value(ind), risk_scale=risk_scale)
     p.zone = zone
     return p
+
+
+def timing_study(symbols: list[str], split: str = "2022-01-01", start: str = "2016-01-01"):
+    """Kiểm định các quy tắc thời điểm trên danh mục `symbols` (recommend/study.py). Dùng giá trong
+    kho (cần đủ năm: lệnh study-timing --years 10 tự tải)."""
+    from vnsa import market
+    from vnsa.data.store import Store
+    from vnsa.recommend.study import study
+    from vnsa.ta.regime import regime_series
+    from vnsa.ta.score import ta_score_series
+
+    data, skipped = {}, []
+    weights = settings()["ta_score"]["weights"]
+    with Store(path("warehouse")) as store:
+        prices = {s: store.prices(s) for s in symbols}
+        index = store.prices(settings()["valuation"]["index"])
+    for s in symbols:
+        if len(prices[s]) < 300:
+            skipped.append(s)
+            continue
+        ind = indicators(prices[s])
+        data[s] = {"ind": ind, "score": ta_score_series(ind, weights, require_all=True),
+                   "band": market.band(s)}
+    if not data:
+        raise ValueError("không mã nào đủ dữ liệu giá")
+    data["__regime__"] = {"series": regime_series(index, settings().get("regime", {}))}
+    grid = tuple(settings().get("study", {}).get("atr_grid", (2.5, 3.0, 4.0)))
+    res = study(data, settings()["backtest"], split, start, grid)
+    res.skipped = skipped
+    return res
 
 
 def backtest_config(symbol: str) -> dict:
@@ -228,6 +474,43 @@ def backtest_config(symbol: str) -> dict:
     from vnsa import market
 
     return dict(settings()["backtest"], ticks=market.ticks(symbol))
+
+
+def backtests(d: Data, entry: float | None = None, exit_: float | None = None) -> dict:
+    """So sánh các quy tắc thời điểm trên cùng dữ liệu bằng máy mô phỏng chung
+    (recommend/strategies.simulate: khớp mở cửa phiên sau, không mua khi mở cửa giá trần, không
+    bán khi cả phiên nằm sàn, T+2, phí + thuế): "Điểm TA" (cách cũ), "Phá nền 55 phiên" (quy tắc
+    gần đạt nhất trong kiểm định study-timing) và quy tắc đang dùng cho trục thời điểm
+    (`[recommend] timing_rule`, nếu là quy tắc khác). Trả về
+    {tên: BacktestResult}; mua & giữ nằm ở .benchmark_stats. ValueError nếu chưa đủ dữ liệu."""
+    from vnsa import market
+    from vnsa.recommend.strategies import NAMES, rule_set, simulate
+    from vnsa.ta.regime import regime_series
+    from vnsa.ta.score import ta_score_series
+
+    cfg = backtest_config(d.symbol)
+    if entry is not None:
+        cfg["entry_score"] = entry
+    if exit_ is not None:
+        cfg["exit_score"] = exit_
+    ind = indicators(d.prices)
+    score = ta_score_series(ind, settings()["ta_score"]["weights"], require_all=True)
+    ok = (score.notna() & ind["atr"].notna()).to_numpy()
+    if not ok.any():
+        raise ValueError("chưa đủ dữ liệu để backtest (cần điểm TA cho ít nhất 30 phiên)")
+    start = pd.Timestamp(ind["date"].iloc[int(ok.argmax())])
+    rec = settings()["recommend"]
+    rules = rule_set(ind, score, regime_series(d.index, settings().get("regime", {})),
+                     rec.get("timing_atr_k", 3.0), cfg)
+    names = ["ta", "breakout"]
+    if rec.get("timing_rule", "ta") in rules and rec["timing_rule"] not in names:
+        names.append(rec["timing_rule"])
+    band = market.band(d.symbol)
+    try:
+        return {NAMES[n]: simulate(ind, rules[n], band, cfg["fee"], cfg["sell_tax"], start)
+                for n in names}
+    except ValueError as e:
+        raise ValueError("chưa đủ dữ liệu để backtest (cần điểm TA cho ít nhất 30 phiên)") from e
 
 
 @dataclass
@@ -243,7 +526,7 @@ class RiskReport:
 
 
 def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
-         n_paths: int | None = None) -> RiskReport:
+         n_paths: int | None = None, trade_plan=None) -> RiskReport:
     from vnsa import market
     from vnsa.risk.garch import fit_garch, log_returns_pct
     from vnsa.risk.simulate import Simulation, garch_var, historical_var, simulate
@@ -261,10 +544,12 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
     band = market.band(prices["symbol"].iloc[-1]) if "symbol" in prices else market.band()
     sim = simulate(fit, p0, max(horizons), n_paths=n_paths or cfg["n_paths"], band=band,
                    bootstrap=cfg["bootstrap"], seed=cfg["seed"])
-    try:
-        p = plan(indicators(prices))
-    except (ValueError, IndexError):
-        p = None
+    p = trade_plan
+    if p is None:
+        try:
+            p = plan(indicators(prices))
+        except (ValueError, IndexError):
+            p = None
     touch = None
     if p and p.targets:
         h = max(horizons)
@@ -273,10 +558,28 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
     return RiskReport(p0, fit, hist_vol, var, sim, horizons, p, touch)
 
 
-def recommendation(symbol: str):
-    """Khuyến nghị tổng hợp cho một mã (xem recommend/engine.py)."""
+@dataclass
+class Assessment:
+    """Mọi kết quả phân tích của một mã, tính một lần (khuyến nghị, báo cáo, dashboard dùng chung)."""
+    data: Data
+    fa_score: float
+    fair: object             # FairValue | None
+    pe: float
+    pb: float
+    z_em: float
+    dcf_upside: float
+    ind: pd.DataFrame
+    ta: object               # TAScore
+    plan: object             # TradePlan | None
+    risk: RiskReport | None
+    quant: float
+    rec: object              # Recommendation
+
+
+def assess(symbol: str) -> Assessment:
+    """Phân tích đầy đủ một mã: FA, giá trị hợp lý, TA, vùng mua, rủi ro, Quant, khuyến nghị."""
     from vnsa.market import financial_note
-    from vnsa.recommend.engine import Inputs, recommend
+    from vnsa.recommend.engine import Inputs, quant_score, recommend
 
     d = load(symbol, need_fin=False)
     nan = float("nan")
@@ -293,8 +596,11 @@ def recommendation(symbol: str):
         notes.append("chưa có BCTC: chỉ dựa vào kỹ thuật")
     ind = indicators(d.prices)
     t = ta(ind)
+    reg = market_regime(d.index)
+    scale = settings().get("regime", {}).get("bear_risk_factor", 1.0) if reg.state == "giảm" else 1.0
+    notes.append(str(reg))
     try:
-        p = plan(ind, fair.value if fair else nan, fa_score)
+        p = plan(ind, fair.value if fair else nan, fa_score, risk_scale=scale)
     except ValueError:
         p = None
     if p is not None and p.zone is not None:
@@ -304,20 +610,55 @@ def recommendation(symbol: str):
                         f"chờ giá về ≤ {zn.high:,.0f} mới mua")
     r = None
     try:
-        r = risk(d.prices)
+        r = risk(d.prices, trade_plan=p)
     except ValueError as e:
         notes.append(str(e))
+    vol = r.fit.current_vol_annual if r else nan
+    prob_up = r.sim.prob_above(day=max(r.horizons)) if r else nan
+    rr = p.targets[0].reward_risk if p and p.targets else nan
+    q = quant_score(prob_up, vol, rr, settings()["recommend"]["quant"])
     inputs = Inputs(
         symbol=d.symbol, price=float(d.prices["close"].iloc[-1]),
         date=d.prices["date"].iloc[-1], fa_score=fa_score, ta_score=t.total, z_em=z_em,
-        dcf_upside=upside, pe=pe, pb=pb,
-        fair_value=fair.value if fair else nan, fair_upside=fair.upside if fair else nan,
-        vol_annual=r.fit.current_vol_annual if r else float("nan"),
-        prob_up=r.sim.prob_above(day=max(r.horizons)) if r else float("nan"),
-        first_target_rr=p.targets[0].reward_risk if p and p.targets else float("nan"),
+        dcf_upside=upside, pe=pe, pb=pb, vol_annual=vol, prob_up=prob_up, first_target_rr=rr,
         horizon=max(r.horizons) if r else 60,
+        fair_value=fair.value if fair else nan, fair_upside=fair.upside if fair else nan,
+        quant_score=q, dividend_yield=dividend_yield(d), regime=reg.state,
+        zone_status=p.zone.status if p is not None and p.zone is not None else "",
     )
-    return recommend(inputs, settings()["recommend"], notes), p
+    inputs.rule_state = timing_state(d, ind)
+    rec = recommend(inputs, settings()["recommend"], notes)
+    return Assessment(d, fa_score, fair, pe, pb, z_em, upside, ind, t, p, r, q, rec)
+
+
+def timing_state(d: Data, ind: pd.DataFrame) -> dict | None:
+    """Trạng thái quy tắc thời điểm `[recommend] timing_rule` (khi không phải "ta"/"none")."""
+    from vnsa import market
+    from vnsa.recommend.strategies import rule_state
+    from vnsa.ta.regime import regime_series
+    from vnsa.ta.score import ta_score_series
+
+    cfg = settings()["recommend"]
+    name = cfg.get("timing_rule", "ta")
+    if name in ("ta", "none") or len(ind) < 260:
+        return None
+    score = ta_score_series(ind, settings()["ta_score"]["weights"], require_all=True)
+    reg = regime_series(d.index, settings().get("regime", {}))
+    return rule_state(ind, score, reg, name, cfg.get("timing_atr_k", 3.0), settings()["backtest"],
+                      market.band(d.symbol))
+
+
+def recommendation(symbol: str):
+    """(Recommendation, TradePlan | None) cho một mã (xem recommend/engine.py)."""
+    a = assess(symbol)
+    return a.rec, a.plan
+
+
+def report_card(symbol: str):
+    """Thẻ báo cáo gọn một màn hình (report/card.py)."""
+    from vnsa.report.card import build_card
+
+    return build_card(assess(symbol))
 
 
 def _params_hash() -> str:

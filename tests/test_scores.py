@@ -91,7 +91,7 @@ def test_fa_score_reweights_when_valuation_missing():
                        "dinh_gia": 20},
            "thresholds": {"roe": [0.05, 0.25], "ni_cagr": [0.0, 0.20], "z_em": [1.1, 2.6],
                           "debt_to_equity": [1.5, 0.3], "f_score": [2, 8], "cfo_to_ni": [0.5, 1.0],
-                          "pe": [25, 8], "pb": [4.0, 1.0], "dcf_upside": [-0.2, 0.3]}}
+                          "pe_rel": [1.3, 0.7], "pb_rel": [1.3, 0.7], "dcf_upside": [-0.2, 0.3]}}
     s = sc.fa_score(_fin(), cfg)
     assert np.isnan(s.groups["dinh_gia"])
     expected = sum(s.groups[g] * w for g, w in cfg["weights"].items() if g != "dinh_gia") / 80
@@ -99,5 +99,22 @@ def test_fa_score_reweights_when_valuation_missing():
     assert s.items["f_score"] == (9.0, 100.0)
     assert s.items["ni_cagr"][0] == pytest.approx(0.5)          # 40 -> 60 tỷ trong 1 năm
     assert s.items["cfo_to_ni"][0] == pytest.approx(140 / 100)  # cộng dồn, không lấy TB tỷ lệ
-    with_val = sc.fa_score(_fin(), cfg, pe=8, pb=1, dcf_upside=0.3)
-    assert with_val.groups["dinh_gia"] == 100
+    with_val = sc.fa_score(_fin(), cfg, pe=8, pb=1, dcf_upside=0.3, pe_hist=12, pb_hist=1.5)
+    assert with_val.groups["dinh_gia"] == 100                  # rẻ hơn lịch sử 33% -> 100 điểm
+    pricey = sc.fa_score(_fin(), cfg, pe=18, pb=2.25, pe_hist=12, pb_hist=1.5)
+    assert pricey.items["pe_rel"] == (1.5, 0.0)                # đắt hơn lịch sử 50% -> 0 điểm
+    assert np.isnan(sc.fa_score(_fin(), cfg, pe=8).items["pe_rel"][0])   # thiếu mốc lịch sử
+
+
+def test_piotroski_issue_uses_parent_capital_net_of_stock_dividends():
+    # Chạy thật FPT: dòng tiền "thu phát hành, nhận vốn góp" 1.196 tỷ phần lớn là cổ đông thiểu
+    # số góp vào công ty con; vốn góp công ty mẹ chỉ tăng đúng bằng cổ phiếu thưởng 10%.
+    fin = _fin()
+    fin.loc[1, "equity_issued"] = 80 * B          # dòng tiền lớn (> 1% vốn chủ)
+    fin.loc[1, "paid_in_capital"] = 330 * B       # +10% = đúng tỷ lệ thưởng
+    assert sc.piotroski(fin).iloc[1]["f_no_issue"] == 0                     # luật cũ: phạt
+    assert sc.piotroski(fin, stock_ratio={2025: 0.10}).iloc[1]["f_no_issue"] == 1
+    fin.loc[1, "paid_in_capital"] = 360 * B       # +20%, thưởng chỉ 10% -> phát hành thêm ~9%
+    assert sc.piotroski(fin, stock_ratio={2025: 0.10}).iloc[1]["f_no_issue"] == 0
+    fin.loc[1, "paid_in_capital"] = 300 * B       # không đổi, không thưởng: không phát hành
+    assert sc.piotroski(fin, stock_ratio={}).iloc[1]["f_no_issue"] == 1

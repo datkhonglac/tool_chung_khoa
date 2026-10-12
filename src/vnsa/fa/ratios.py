@@ -52,6 +52,29 @@ FIELDS = [
     "equity_issued",      # tiền thu từ phát hành cổ phiếu, góp vốn (lưu chuyển tiền tài chính)
 ]
 
+# Khoản mục riêng của định chế tài chính (fa/sector.py). Doanh nghiệp thường để trống, không báo
+# thiếu. Chi phí/dự phòng lưu số DƯƠNG.
+SECTOR_FIELDS = [
+    # Ngân hàng
+    "nii",                    # thu nhập lãi thuần
+    "toi",                    # tổng thu nhập hoạt động
+    "bank_opex",              # chi phí hoạt động (quản lý)
+    "credit_provision",       # chi phí dự phòng rủi ro tín dụng
+    "loans_gross",            # cho vay khách hàng (trước dự phòng)
+    "loan_loss_reserve",      # dự phòng rủi ro cho vay khách hàng (số dư)
+    "customer_deposits",      # tiền gửi của khách hàng
+    "sbv_balances",           # tiền gửi tại NHNN
+    "interbank_placements",   # tiền gửi và cho vay các TCTD khác
+    "trading_securities",     # chứng khoán kinh doanh
+    "investment_securities",  # chứng khoán đầu tư
+    # Công ty chứng khoán
+    "margin_loans",           # các khoản cho vay (chủ yếu ký quỹ)
+    "fvtpl_assets",           # tài sản tài chính FVTPL (tự doanh)
+    "brokerage_revenue",      # doanh thu môi giới
+    "operating_revenue",      # doanh thu hoạt động
+]
+STORED_FIELDS = FIELDS + SECTOR_FIELDS
+
 RATIO_COLUMNS = [
     "roe", "roa", "gross_margin", "net_margin", "debt_to_equity",
     "liabilities_to_equity", "cfo_to_net_income", "eps_growth", "net_income_parent_growth",

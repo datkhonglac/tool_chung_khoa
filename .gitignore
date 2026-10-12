@@ -17,3 +17,6 @@ data/*.duckdb.wal
 !data/sample/
 .venv-vnstock/
 *.egg-info/
+
+# lịch sử xuất ra để đẩy lên nhánh signals (lệnh history export)
+history/

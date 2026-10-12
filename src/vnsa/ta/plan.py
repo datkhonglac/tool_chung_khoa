@@ -8,8 +8,10 @@ Quy tắc (tham số ở mục [plan] trong settings):
   động bình thường trong phiên quét mất. Làm tròn XUỐNG theo bước giá.
 - Rủi ro mỗi cp R = giá vào − cắt lỗ. Mục tiêu: các kháng cự phía trên có lãi/lỗ ≥ 1R (tối đa 2),
   thiếu thì bổ sung giá vào + k × R với k trong `reward_multiples`.
-- Khối lượng: rủi ro tối đa = vốn × `risk_per_trade`; số cp = rủi ro tối đa / R, làm tròn xuống
-  lô 100 cp, không vượt quá số vốn (không dùng margin).
+- Khối lượng: rủi ro tối đa = vốn × `risk_per_trade` × hệ số thị trường (thị trường chung giảm thì
+  nhỏ hơn); số cp = rủi ro tối đa / R, làm tròn xuống lô 100 cp, rồi chặn bởi: số vốn (không margin),
+  trần tỷ trọng `max_position_pct` × vốn, và `max_adv_pct` × giá trị giao dịch bình quân 20 phiên
+  (mua nhiều hơn thế thì khó khớp và khó thoát hàng).
 - Lưu ý T+2: cổ phiếu mua hôm nay chiều T+2 mới về tài khoản, trước đó không bán (cắt lỗ) được.
 """
 
@@ -77,7 +79,8 @@ class TradePlan:
 
 
 def trade_plan(close: float, atr: float, supports: list[Level], resistances: list[Level],
-               cfg: dict, ticks: list[list[float]] | None = None) -> TradePlan:
+               cfg: dict, ticks: list[list[float]] | None = None, adv_value: float = float("nan"),
+               risk_scale: float = 1.0) -> TradePlan:
     if pd.isna(atr) or atr <= 0:
         raise ValueError("chưa đủ dữ liệu để tính ATR")
     entry = round_tick(close, "nearest", ticks)
@@ -108,13 +111,24 @@ def trade_plan(close: float, atr: float, supports: list[Level], resistances: lis
                      f"{cfg.get('min_reward_risk', 2):g}R")
 
     capital = float(cfg["capital"])
-    budget = capital * cfg["risk_per_trade"]
+    budget = capital * cfg["risk_per_trade"] * risk_scale
+    if risk_scale < 1:
+        notes.append(f"thị trường chung đang giảm: rủi ro mỗi lệnh còn {risk_scale:.0%} mức thường")
     lot = int(cfg.get("lot_size", 100))
     shares = int(budget / risk // lot * lot)
-    max_by_cash = int(capital / entry // lot * lot)
-    if shares > max_by_cash:
-        shares = max_by_cash
-        notes.append("khối lượng bị giới hạn bởi số vốn (không dùng margin)")
+    caps = [(capital, "số vốn (không dùng margin)")]
+    if cfg.get("max_position_pct"):
+        caps.append((capital * cfg["max_position_pct"],
+                     f"trần tỷ trọng {cfg['max_position_pct']:.0%} vốn mỗi mã"))
+    if cfg.get("max_adv_pct") and not pd.isna(adv_value) and adv_value > 0:
+        caps.append((adv_value * cfg["max_adv_pct"],
+                     (f"thanh khoản ({cfg['max_adv_pct']:.0%} GTGD bình quân 20 phiên "
+                      f"{adv_value / 1e9:,.1f} tỷ)")))
+    for value, why in caps:
+        limit = int(value / entry // lot * lot)
+        if shares > limit:
+            shares = limit
+            notes.append(f"khối lượng bị giới hạn bởi {why}")
     if shares == 0:
         notes.append("vốn/rủi ro cho phép không đủ mua 1 lô 100 cp")
     notes.append("T+2: cổ phiếu mua hôm nay chiều T+2 mới về, trước đó chưa bán cắt lỗ được")

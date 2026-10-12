@@ -8,11 +8,14 @@ Piotroski F-Score (9 tiêu chí, mỗi tiêu chí đạt = 1 điểm), so năm t
              4. CFO > LNST (lợi nhuận có tiền về, ít "dồn tích")
   Đòn bẩy,   5. Vay dài hạn / tổng tài sản giảm (không có vay cả hai năm cũng tính đạt)
   thanh khoản 6. Tỷ số thanh toán hiện hành (TSNH / nợ ngắn hạn) tăng
-             7. Không phát hành cổ phiếu thu tiền đáng kể: "tiền thu từ phát hành cổ phiếu, nhận
-                vốn góp" trong lưu chuyển tiền ≤ `issue_materiality` (mặc định 1%) vốn chủ. Khoản
-                này gồm cả ESOP và vốn cổ đông thiểu số góp vào công ty con, nên bỏ qua số nhỏ.
-                Nguồn không có thì dùng vốn góp không tăng (khi đó cổ phiếu thưởng/cổ tức bằng cổ
-                phiếu cũng bị tính là phát hành — cách làm thận trọng).
+             7. Không phát hành cổ phiếu thu tiền đáng kể (pha loãng cổ đông công ty mẹ):
+                - có lịch sử cổ tức/thưởng bằng cổ phiếu (`stock_ratio`): vốn góp công ty mẹ năm
+                  t / năm t−1 / (1 + tỷ lệ cổ phiếu thưởng, cổ tức cổ phiếu trong năm t) − 1
+                  ≤ max(`issue_materiality`, 2%) (2%: chênh thời điểm đăng ký vốn so với ngày
+                  GDKHQ). Không dùng dòng tiền vì "tiền thu phát hành, nhận vốn góp" gồm cả vốn cổ
+                  đông thiểu số góp vào công ty con (chạy thật: FPT 1.196 tỷ năm 2025);
+                - không có: tiền thu phát hành trong lưu chuyển tiền ≤ `issue_materiality` (1%) vốn
+                  chủ; thiếu nữa thì vốn góp không tăng (thận trọng: thưởng cổ phiếu cũng bị tính).
   Hiệu quả   8. Biên lợi nhuận gộp tăng   9. Vòng quay tài sản (doanh thu / tổng tài sản) tăng
   ROA ở đây = LNST / tổng tài sản cuối kỳ (để có F-Score cho cả năm thứ 2 khi chỉ có 4 năm BCTC).
   8–9: mạnh, 0–2: yếu (Piotroski, 2000).
@@ -28,7 +31,8 @@ Altman Z (dùng tổng tài sản TA cuối kỳ):
       > 2,99 an toàn · 1,81–2,99 vùng xám · < 1,81 nguy cơ.
 
 Điểm FA (0–100): mỗi chỉ tiêu được quy về 0–100 tuyến tính giữa mức "xấu" và mức "tốt" trong
-mục [fa_score] của config/settings.toml, trung bình trong từng nhóm, rồi bình quân gia quyền
+mục [fa_score] của config/settings.toml (định giá chấm TƯƠNG ĐỐI: P/E, P/B hiện tại chia trung vị
+lịch sử của chính mã — P/E 15 là rẻ với FPT nhưng đắt với HPG, nên không dùng ngưỡng tuyệt đối), trung bình trong từng nhóm, rồi bình quân gia quyền
 theo trọng số nhóm. Chỉ tiêu thiếu số bị bỏ qua và trọng số được chia lại cho phần còn lại.
 """
 
@@ -69,8 +73,10 @@ def _flag(cond: pd.Series, *inputs: pd.Series) -> pd.Series:
     return cond.astype(float).where(ok)
 
 
-def piotroski(fin: pd.DataFrame, issue_materiality: float = 0.01) -> pd.DataFrame:
-    """Bảng: year, 9 cột tiêu chí (1/0/NaN) và f_score (tổng; NaN nếu thiếu tiêu chí nào)."""
+def piotroski(fin: pd.DataFrame, issue_materiality: float = 0.01,
+              stock_ratio: dict[int, float] | None = None) -> pd.DataFrame:
+    """Bảng: year, 9 cột tiêu chí (1/0/NaN) và f_score (tổng; NaN nếu thiếu tiêu chí nào).
+    stock_ratio: {năm: tổng tỷ lệ thưởng/cổ tức bằng cổ phiếu} (bảng dividends) — xem tiêu chí 7."""
     df, gap = _prepare(fin)
 
     def prev(s: pd.Series) -> pd.Series:
@@ -98,6 +104,11 @@ def piotroski(fin: pd.DataFrame, issue_materiality: float = 0.01) -> pd.DataFram
     cap_prev = prev(df["paid_in_capital"])
     by_capital = _flag(df["paid_in_capital"] <= cap_prev, df["paid_in_capital"], cap_prev)
     out["f_no_issue"] = by_cash.fillna(by_capital)
+    if stock_ratio is not None:
+        bonus = df["year"].map(lambda y: stock_ratio.get(int(y), 0.0)).astype(float)
+        net_new = df["paid_in_capital"] / cap_prev / (1 + bonus) - 1
+        by_parent = _flag(net_new <= max(issue_materiality, 0.02), df["paid_in_capital"], cap_prev)
+        out["f_no_issue"] = by_parent.fillna(out["f_no_issue"])
     out["f_dmargin"] = _flag(margin > prev(margin), margin, prev(margin))
     out["f_dturn"] = _flag(turn > prev(turn), turn, prev(turn))
     out["f_score"] = out[list(FSCORE_CRITERIA)].sum(axis=1, min_count=len(FSCORE_CRITERIA))
@@ -174,7 +185,7 @@ GROUPS = {
     "tang_truong": ["ni_cagr"],
     "suc_khoe": ["z_em", "debt_to_equity"],
     "chat_luong": ["f_score", "cfo_to_ni"],
-    "dinh_gia": ["pe", "pb", "dcf_upside"],
+    "dinh_gia": ["pe_rel", "pb_rel", "dcf_upside"],
 }
 
 
@@ -192,22 +203,26 @@ def _div_sum(a: pd.Series, b: pd.Series) -> float:
 
 
 def fa_score(fin: pd.DataFrame, cfg: dict, pe: float = np.nan, pb: float = np.nan,
-             dcf_upside: float = np.nan) -> FAScore:
-    """Điểm FA năm BCTC gần nhất. cfg = mục [fa_score] trong settings (trọng số + ngưỡng)."""
+             dcf_upside: float = np.nan, roe: float | None = None,
+             pe_hist: float = np.nan, pb_hist: float = np.nan,
+             stock_ratio: dict[int, float] | None = None) -> FAScore:
+    """Điểm FA năm BCTC gần nhất. cfg = mục [fa_score] trong settings (trọng số + ngưỡng).
+    roe: ROE hiện tại (TTM, fa/ttm.py) thay cho ROE năm gần nhất nếu có."""
     df = fin.sort_values("year").reset_index(drop=True)
     ratios = compute_ratios(df)
-    f = piotroski(df, cfg.get("issue_materiality", 0.01))
+    f = piotroski(df, cfg.get("issue_materiality", 0.01), stock_ratio)
     z = altman(df)
     span = int(df["year"].iloc[-1] - df["year"].iloc[0])
     values = {
-        "roe": ratios["roe"].iloc[-1],
+        "roe": ratios["roe"].iloc[-1] if roe is None or pd.isna(roe) else roe,
         "ni_cagr": cagr(df["net_income_parent"].iloc[0], df["net_income_parent"].iloc[-1], span),
         "z_em": z["z_em"].iloc[-1],
         "debt_to_equity": ratios["debt_to_equity"].iloc[-1],
         "f_score": f["f_score"].iloc[-1],
         "cfo_to_ni": _div_sum(df["cfo"].tail(3), df["net_income"].tail(3)),
-        "pe": pe if pe is None or pe > 0 else np.nan,   # P/E âm (lỗ) không chấm theo thang này
-        "pb": pb if pb is None or pb > 0 else np.nan,
+        # P/E âm (lỗ) không chấm; thiếu mốc lịch sử thì bỏ chỉ tiêu (chia lại trọng số)
+        "pe_rel": pe / pe_hist if pe > 0 and pe_hist > 0 else np.nan,
+        "pb_rel": pb / pb_hist if pb > 0 and pb_hist > 0 else np.nan,
         "dcf_upside": dcf_upside,
     }
     thresholds = cfg["thresholds"]
@@ -231,29 +246,52 @@ def fa_score(fin: pd.DataFrame, cfg: dict, pe: float = np.nan, pb: float = np.na
 FIN_GROUPS = {
     "sinh_loi": ["roe"],
     "tang_truong": ["ni_cagr"],
-    "an_toan": ["equity_to_assets"],
-    "dinh_gia": ["pb", "fair_upside"],
+    "an_toan": ["equity_to_assets", "car"],             # CAR: nhập tay (config/bank_manual.toml)
+    "hieu_qua": ["nim", "cir", "casa"],                 # ngân hàng (fa/sector.py); CASA nhập tay
+    "rui_ro": ["credit_cost", "margin_to_equity"],      # ngân hàng | công ty chứng khoán
+    "chat_luong_tai_san": ["npl", "npl_coverage"],      # ngân hàng, nhập tay
+    "dinh_gia": ["pb_rel", "fair_upside"],
 }
+PEER_RELATIVE = ("nim", "cir", "credit_cost")           # chấm so với trung vị ngân hàng trong kho
 
 
 def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan,
-                    fair_upside: float = np.nan) -> FAScore:
-    """Điểm FA 0–100 cho định chế tài chính. cfg = mục [fa_score.financials] trong settings."""
+                    fair_upside: float = np.nan, roe: float | None = None,
+                    pb_hist: float = np.nan, sector=None,
+                    peer: dict[str, float] | None = None) -> FAScore:
+    """Điểm FA 0–100 cho định chế tài chính. cfg = mục [fa_score.financials] trong settings.
+    sector = fa.sector.SectorMetrics (NIM, CIR, chi phí tín dụng, ký quỹ/vốn chủ; NPL, CASA, CAR
+    nếu nhập tay) nếu có; chỉ tiêu thiếu thì nhóm đó bị bỏ, trọng số chia lại cho nhóm còn lại.
+    peer = {chỉ tiêu: trung vị các ngân hàng trong kho} (analysis.bank_peers): NIM, CIR, chi phí tín
+    dụng chấm theo tỷ lệ so với trung vị ngành (`[fa_score.financials.relative]`) thay cho ngưỡng
+    tuyệt đối — NIM của tool là xấp xỉ nên so cùng cách tính giữa các ngân hàng mới công bằng."""
     df = fin.sort_values("year").reset_index(drop=True)
     ratios = compute_ratios(df)
     span = int(df["year"].iloc[-1] - df["year"].iloc[0])
     last = df.iloc[-1]
     values = {
-        "roe": ratios["roe"].iloc[-1],
+        "roe": ratios["roe"].iloc[-1] if roe is None or pd.isna(roe) else roe,
         "ni_cagr": cagr(df["net_income_parent"].iloc[0], df["net_income_parent"].iloc[-1], span),
         "equity_to_assets": (last["equity"] / last["total_assets"]
                              if last["total_assets"] > 0 else np.nan),
-        "pb": pb if pb > 0 else np.nan,
+        "pb_rel": pb / pb_hist if pb > 0 and pb_hist > 0 else np.nan,
         "fair_upside": fair_upside,
     }
+    sv = sector.values if sector is not None else {}
+    for k in ("nim", "cir", "credit_cost", "margin_to_equity", "npl", "npl_coverage", "casa",
+              "car"):
+        values[k] = sv.get(k, np.nan)
     thresholds = dict(cfg["thresholds"])
     thresholds["equity_to_assets"] = cfg["equity_to_assets"][model]
-    items = {k: (float(v), scale(v, *thresholds[k])) for k, v in values.items()}
+    items = {k: (float(v), scale(v, *thresholds[k]) if k in thresholds else np.nan)
+             for k, v in values.items()}
+    rel = cfg.get("relative", {})
+    used_peer = []
+    for k in PEER_RELATIVE:
+        base = (peer or {}).get(k, np.nan)
+        if k in rel and base > 0 and not pd.isna(values[k]):
+            items[k] = (float(values[k]), scale(values[k] / base, *rel[k]))
+            used_peer.append(k)
     groups = {}
     for g, keys in FIN_GROUPS.items():
         scores = [items[k][1] for k in keys if not pd.isna(items[k][1])]
@@ -261,6 +299,18 @@ def financial_score(fin: pd.DataFrame, cfg: dict, model: str, pb: float = np.nan
     weights = {g: w for g, w in cfg["weights"].items() if not pd.isna(groups.get(g, np.nan))}
     total = (sum(groups[g] * w for g, w in weights.items()) / sum(weights.values())
              if weights else float("nan"))
-    notes = [("chưa có nợ xấu (NPL), NIM, CASA trong dữ liệu nguồn: điểm chỉ dựa vào ROE, tăng "
-              "trưởng, đệm vốn và định giá")] if model == "bank" else []
+    notes = []
+    if model == "bank":
+        missing = sector.missing if sector else ["NPL", "CASA", "CAR"]
+        if missing:
+            notes.append(f"nguồn miễn phí không có {', '.join(missing)}: chưa chấm — nhập tay từ "
+                         "BCTC vào config/bank_manual.toml")
+        if sector is not None and sector.manual:
+            notes.append(f"NPL/CASA/CAR nhập tay kỳ {sector.manual} (config/bank_manual.toml)")
+        if used_peer:
+            notes.append(f"NIM, CIR, chi phí tín dụng chấm so với trung vị {int(peer['n'])} ngân "
+                         "hàng trong kho")
+        if sector is None:
+            notes.append("chưa có khoản mục ngân hàng (NIM, CIR, chi phí tín dụng): chạy lại "
+                         "fetch-bctc để tải")
     return FAScore(total=total, groups=groups, items=items, notes=notes)

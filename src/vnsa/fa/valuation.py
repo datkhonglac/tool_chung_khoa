@@ -174,11 +174,15 @@ def value(
     beta_weeks: int = 0,
     g1: float | None = None,
     wacc_override: float | None = None,
+    current=None,
 ) -> Valuation:
+    """current = fa.ttm.Current: số cp lưu hành hiện tại, vay/tiền quý gần nhất, EPS TTM cho P/E;
+    FCFF và tăng trưởng vẫn theo BCTC năm (dòng tiền năm ổn định hơn từng quý)."""
     fin = fin.sort_values("year").reset_index(drop=True)
-    last = fin.iloc[-1]
+    last = fin.iloc[-1] if current is None else current.row
     notes: list[str] = []
-    shares = last.get("paid_in_capital", np.nan) / a.par_value
+    shares = (current.shares if current is not None
+              else last.get("paid_in_capital", np.nan) / a.par_value)
     if not shares or pd.isna(shares) or shares <= 0:
         raise ValueError(f"{symbol}: thiếu vốn góp chủ sở hữu, không tính được số cổ phiếu")
 
@@ -215,7 +219,7 @@ def value(
     eq = equity_from_ev(result["ev"], br)
 
     parent_equity = last["equity"] - (0 if pd.isna(last.get("minority_interest")) else last["minority_interest"])
-    eps = last["net_income_parent"] / shares
+    eps = current.eps if current is not None else last["net_income_parent"] / shares
     bvps = parent_equity / shares
     return Valuation(
         symbol=symbol.upper(), price=price, shares=shares, beta=b, beta_weeks=beta_weeks,

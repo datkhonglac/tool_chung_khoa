@@ -8,7 +8,10 @@ Thứ tự cho mỗi mã (tham số ở mục [auto] trong settings):
    (phiên cuối − `overlap_days`). Nếu giá đóng cửa các phiên chồng lấn lệch hơn `adjust_tolerance`
    thì nguồn đã điều chỉnh lại lịch sử (cổ tức/chia tách), nên tải lại toàn bộ cho khớp.
 3. Chỉ số thị trường (VNINDEX, để tính beta): như bước 2.
-4. BCTC năm (vnstock/VCI): chưa có hoặc cũ hơn `bctc_max_age_days` thì tải lại.
+4. BCTC năm và BCTC quý (vnstock/VCI; bản miễn phí 4 quý gần nhất, dùng tính TTM): chưa có hoặc
+   cũ hơn `bctc_max_age_days` thì tải lại.
+5. Hồ sơ doanh nghiệp (số cổ phiếu lưu hành, sở hữu nước ngoài, free float, GTGD bình quân) và
+   lịch sử cổ tức: cũ hơn `profile_max_age_days` thì tải lại.
 
 Lỗi ở bước 1, 3, 4 không chặn phân tích (ghi chú lại); thiếu giá thì không phân tích được.
 Phiên "đã có giá" tính theo giờ Việt Nam: trước `market_close_hour` giờ chưa có giá phiên hôm nay.
@@ -213,6 +216,74 @@ class Updater:
         return Step("BCTC", "ok", f"năm {years[0]}–{years[-1]}"
                     + (f", thiếu {len(missing)} khoản mục" if missing else ""))
 
+    def _quarterly(self, store: Store, sym: str, refresh: bool) -> Step:
+        loaded = store.quarterly_loaded_at(sym)
+        age = (pd.Timestamp.now() - loaded).days if loaded is not None else None
+        if age is not None and age < self.cfg["bctc_max_age_days"] and not refresh:
+            return Step("BCTC quý", "skip", f"đã có (tải {age} ngày trước)")
+        try:
+            df = self.vn.quarterly(sym)
+            if df.empty or df.drop(columns=["symbol", "year", "quarter"]).isna().all().all():
+                raise ValueError("nguồn không trả số liệu")
+        except Exception as e:  # noqa: BLE001 - thiếu BCTC quý thì dùng BCTC năm
+            return Step("BCTC quý", "error", f"{e}; dùng BCTC năm")
+        store.write_quarterly(df, source=self.vn.name)
+        first, last = df.iloc[0], df.iloc[-1]
+        return Step("BCTC quý", "ok", f"Q{int(first['quarter'])}/{int(first['year'])} → "
+                    f"Q{int(last['quarter'])}/{int(last['year'])} ({len(df)} quý)")
+
+    def _profile(self, store: Store, sym: str, refresh: bool) -> Step:
+        prof = store.company(sym) or {}
+        at = prof.get("profile_at")
+        age = (pd.Timestamp.now() - pd.Timestamp(at)).days if at is not None else None
+        if age is not None and age < self.cfg.get("profile_max_age_days", 7) and not refresh:
+            return Step("hồ sơ", "skip", f"đã có (tải {age} ngày trước)")
+        try:
+            p = self.vn.profile(sym)
+            if not p or pd.isna(p.get("shares_out", float("nan"))):
+                raise ValueError("nguồn không trả số cổ phiếu lưu hành")
+            store.write_profile(sym, p)
+            n_div = store.write_dividends(self.vn.dividends(sym), sym)
+        except Exception as e:  # noqa: BLE001 - thiếu hồ sơ thì dùng vốn góp / mệnh giá
+            return Step("hồ sơ", "error", f"{e}; số cổ phiếu tạm tính = vốn góp / mệnh giá")
+        return Step("hồ sơ", "ok", f"{p['shares_out'] / 1e6:,.1f} triệu cp lưu hành, "
+                    f"{n_div} lần chia cổ tức")
+
+    def _flows(self, store: Store, sym: str) -> Step | None:
+        """Khối ngoại + tự doanh (CafeF). Nguồn giá không có hàm flows (test) thì bỏ qua."""
+        get = getattr(self.cafef, "flows", None)
+        if get is None:
+            return None
+        have = store.flows(sym)
+        last_px = store.last_price_date(sym)
+        if len(have) and last_px is not None and have["date"].max() >= pd.Timestamp(last_px):
+            return Step("khối ngoại", "skip", "đã mới")
+        try:
+            n = store.write_flows(get(sym, self.cfg.get("flow_sessions", 60)))
+        except Exception as e:  # noqa: BLE001 - không có dòng tiền vẫn phân tích được
+            return Step("khối ngoại", "error", f"{e}; bỏ qua dòng tiền khối ngoại/tự doanh")
+        if not n:
+            return Step("khối ngoại", "error", "CafeF không có dữ liệu mã này")
+        return Step("khối ngoại", "ok", f"{n} phiên (khối ngoại, tự doanh — CafeF)")
+
+    def long_prices(self, symbols: list[str], years: int) -> list[Step]:
+        """Chỉ tải GIÁ (kèm VNINDEX và danh sách sàn để biết biên độ) đủ `years` năm cho kiểm định
+        nhiều mã (lệnh study-timing); mã đã có đủ thì chỉ tải phần mới."""
+        steps = []
+        cfg_years = self.cfg.get("years")
+        self.cfg = {**self.cfg, "years": years}
+        want = pd.Timestamp(self.now().date()) - pd.Timedelta(days=round(365.25 * years) - 30)
+        try:
+            with Store(path("warehouse")) as store:
+                steps.append(self._listing(store, False))
+                for sym in [*symbols, self.index]:
+                    have = store.prices(sym)
+                    short = have.empty or have["date"].min() > want
+                    steps.append(self._prices(store, sym, sym, full=short))
+        finally:
+            self.cfg = {**self.cfg, "years": cfg_years}
+        return steps
+
     # ---- điểm vào ----------------------------------------------------------------------------
     def ensure(self, symbol: str, refresh: bool = False, full: bool = False) -> UpdateReport:
         """Bảo đảm kho có dữ liệu mới cho `symbol`. refresh: tải lại BCTC và danh sách dù chưa cũ;
@@ -236,6 +307,11 @@ class Updater:
             rep.has_prices = store.last_price_date(sym) is not None
             if rep.has_prices and sym != self.index:
                 rep.steps.append(self._fundamentals(store, sym, refresh))
+                rep.steps.append(self._quarterly(store, sym, refresh))
+                rep.steps.append(self._profile(store, sym, refresh))
+                flow = self._flows(store, sym)
+                if flow is not None:
+                    rep.steps.append(flow)
         return rep
 
 

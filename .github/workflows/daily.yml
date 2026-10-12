@@ -1,0 +1,86 @@
+name: Khuyến nghị hằng ngày
+
+# Mỗi ngày giao dịch: phân tích các mã ở [signals] daily (config/settings.toml), lưu khuyến nghị và
+# BCTC năm/quý tích luỹ vào nhánh `signals` (thư mục history/), chấm lại khuyến nghị cũ.
+# Đây là cách kiểm chứng trung thực trục xếp hạng: sau 5/20/60 phiên, review-signals so lãi/lỗ
+# thật với VNINDEX. Lịch chạy chỉ có hiệu lực ở nhánh mặc định của repo (sau khi gộp PR).
+# Trên Codespaces, nạp lịch sử về kho: python -m vnsa.cli history import --git origin/signals
+on:
+  schedule:
+    - cron: "40 9 * * 1-5"      # 16:40 giờ Việt Nam (UTC+7), sau khi CafeF cập nhật phiên
+  push:                         # chạy thử một lần khi chính file này thay đổi
+    paths:
+      - ".github/workflows/daily.yml"
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Các mã (bỏ trống = [signals] daily trong settings)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-signals
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PYTHONUNBUFFERED: "1"
+      VNSTOCK_TELEMETRY: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+      - name: Lấy kho của lần chạy trước (giá đã tải, cho nhanh)
+        uses: actions/cache/restore@v4
+        with:
+          path: data/warehouse.duckdb
+          key: warehouse-${{ github.run_id }}
+          restore-keys: warehouse-
+      - name: Nạp lịch sử từ nhánh signals
+        run: python -m vnsa.cli history import --git origin/signals
+      - name: Phân tích và lưu khuyến nghị
+        run: |
+          SYMS="${{ inputs.symbols }}"
+          if [ -z "$SYMS" ]; then
+            SYMS=$(python -c "from vnsa.config import settings; print(' '.join(settings()['signals']['daily']))")
+          fi
+          python -m vnsa.cli analyze $SYMS || true
+      - name: Chấm lại khuyến nghị cũ
+        run: python -m vnsa.cli review-signals | tee review.txt
+      - name: Ghi lịch sử vào nhánh signals
+        run: |
+          python -m vnsa.cli history export history
+          cp review.txt history/review.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin signals > /dev/null; then
+            git fetch -q origin signals
+            git worktree add -q -B signals store origin/signals
+          else
+            git worktree add -q --orphan -b signals store
+          fi
+          mkdir -p store/history
+          cp history/*.csv history/review.txt store/history/
+          cd store
+          git add history
+          if git diff --cached --quiet; then
+            echo "Không có gì mới"
+          else
+            git commit -q -m "Khuyến nghị và BCTC ngày $(TZ=Asia/Ho_Chi_Minh date +%d/%m/%Y)"
+            git push -q origin signals
+          fi
+      - name: Lưu kho cho lần chạy sau
+        if: always() && hashFiles('data/warehouse.duckdb') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/warehouse.duckdb
+          key: warehouse-${{ github.run_id }}

@@ -34,6 +34,7 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "low": ["low", "gia thap nhat", "thap nhat"],
     "close": ["close", "gia dong cua", "dong cua"],
     "adj_close": ["adj close", "adjusted close", "gia dieu chinh", "dieu chinh"],
+    "close_raw": ["close raw", "gia dong cua chua dieu chinh"],   # file do tool tự ghi ra
     "volume": [
         "volume", "vol", "khoi luong", "khoi luong khop lenh", "kl khop lenh",
         "tong khoi luong", "kl",
@@ -96,6 +97,10 @@ def normalize_prices(
     out["date"] = dates.dt.normalize()
     for col in ["open", "high", "low", "close", "volume"]:
         out[col] = _to_number(df[col])
+    # Giá đóng cửa CHƯA điều chỉnh (giá khớp thật hôm đó): cần để tính P/E, P/B lịch sử đúng (giá đã
+    # điều chỉnh cổ tức tiền mặt kéo giá quá khứ xuống, làm P/E lịch sử thấp hơn thực tế).
+    out["close_raw"] = (_to_number(df["close_raw"]) if "close_raw" in df else
+                        out["close"] if "adj_close" in df else float("nan"))
     if adjust and "adj_close" in df:
         adj = _to_number(df["adj_close"])
         factor = (adj / out["close"]).where((adj > 0) & (out["close"] > 0), 1.0)
@@ -104,14 +109,15 @@ def normalize_prices(
         )
     out["symbol"] = symbol.upper()
 
+    prices = ["open", "high", "low", "close", "close_raw"]
     if price_unit == "nghin" or (price_unit == "auto" and out["close"].median() < 1000):
-        out[["open", "high", "low", "close"]] *= 1000
-    out[["open", "high", "low", "close"]] = out[["open", "high", "low", "close"]].round(0)
+        out[prices] *= 1000
+    out[prices] = out[prices].round(0)
 
     out = out.dropna(subset=["date", "close"]).sort_values("date")
     out = out.drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
     out["volume"] = out["volume"].fillna(0).round().astype("int64")
-    return out[PRICE_COLUMNS]
+    return out[[*PRICE_COLUMNS, "close_raw"]]
 
 
 class CSVProvider(DataProvider):

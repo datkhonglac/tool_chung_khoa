@@ -37,7 +37,7 @@ def test_tools_return_json_safe_results(warehouse):
         assert "error" not in out, (name, out)
     assert len(srv.get_prices("DEMO_A", 5)["prices"]) == 5
     rec = srv.get_recommendations(["DEMO_A", "NOPE"])
-    assert rec["recommendations"][0]["action"] in {"MUA", "THEO DÕI", "TRÁNH"}
+    assert rec["recommendations"][0]["action"] in {"MUA", "KHẢ QUAN", "NẮM GIỮ", "KÉM KHẢ QUAN", "BÁN", "KHÔNG XẾP HẠNG"}
     assert rec["errors"] and "NOPE" in rec["errors"][0]
 
 
@@ -63,8 +63,9 @@ def test_analyze_symbol_updates_first_and_keeps_stdout_clean(warehouse, monkeypa
     monkeypatch.setattr(analysis, "update", fake_update)
     out = srv.analyze_symbol("demo_a")
     json.dumps(out, allow_nan=False)
-    assert out["action"] in {"MUA", "THEO DÕI", "TRÁNH"} and out["profile"]["exchange"] == "HOSE"
+    assert out["action"] in {"MUA", "KHẢ QUAN", "NẮM GIỮ", "KÉM KHẢ QUAN", "BÁN", "KHÔNG XẾP HẠNG"} and out["profile"]["exchange"] == "HOSE"
     assert out["data_update"] == ["✓ giá: thêm 1 phiên"]
+    assert "ĐỊNH GIÁ" in out["report"] and out["confidence"] in {"Cao", "Trung bình", "Thấp"}
     up = srv.update_symbol("DEMO_A")
     assert up["ready"] and up["steps"][0]["status"] == "ok"
     captured = capsys.readouterr()

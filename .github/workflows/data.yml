@@ -22,6 +22,10 @@ on:
         description: "Mã bất kỳ để thử lệnh analyze (tự tải giá, BCTC, sàn/ngành)"
         required: false
         default: "SHS VCB ACV"
+      probe:
+        description: "Mã để dò cấu trúc dữ liệu vnstock (scripts/probe_vnstock.py); bỏ trống = không dò"
+        required: false
+        default: ""
 
 jobs:
   test:
@@ -38,7 +42,7 @@ jobs:
     needs: test
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     env:
       PYTHONUNBUFFERED: "1"
     steps:
@@ -61,6 +65,10 @@ jobs:
       - name: Kiểm tra chất lượng từng mã
         if: ${{ !inputs.skip_prices }}
         run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli check $s; echo; done
+      - name: Dò cấu trúc dữ liệu vnstock
+        if: ${{ inputs.probe != '' }}
+        continue-on-error: true
+        run: python scripts/probe_vnstock.py ${{ inputs.probe }}
       - name: Tải BCTC năm (vnstock/VCI)
         run: python -m vnsa.cli fetch-bctc ${{ inputs.symbols }}
       - name: Chỉ số tài chính từng mã
@@ -90,6 +98,11 @@ jobs:
       - name: Phân tích mã bất kỳ (tự tải dữ liệu)
         if: ${{ inputs.analyze != '' }}
         run: python -m vnsa.cli analyze ${{ inputs.analyze }}
+      - name: Backtest và chỉ số ngành cho các mã vừa phân tích
+        if: ${{ inputs.analyze != '' }}
+        run: |
+          for s in ${{ inputs.analyze }}; do python -m vnsa.cli backtest $s --last 3; echo; done
+          for s in ${{ inputs.analyze }}; do python -m vnsa.cli fa-score $s 2>/dev/null | tail -25; echo; done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

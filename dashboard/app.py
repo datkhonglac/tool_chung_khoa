@@ -38,10 +38,18 @@ def recommendations(symbols: tuple[str, ...], _stamp: float):
         zone = ("—" if z is None else f"≤ {z.high:,.0f} (chờ)" if z.status == "CHỜ GIÁ"
                 else f"{z.low:,.0f} – {z.high:,.0f}")
         rows.append({"Mã": rec.symbol, "Giá": x.price, "Vùng mua": zone, "Điểm FA": x.fa_score,
-                     "Điểm TA": x.ta_score, "Điểm tổng": rec.score, "Hợp lý": x.fair_upside,
+                     "Điểm TA": x.ta_score, "LN kỳ vọng": rec.expected_return,
+                     "Thời điểm": rec.timing,
                      "P/E": x.pe, "P/B": x.pb, "Biến động/năm": x.vol_annual,
                      "Khuyến nghị": rec.action, "Lý do": "; ".join(rec.reasons)})
     return pd.DataFrame(rows), errors
+
+
+@st.cache_data(show_spinner=False)
+def report_text(symbol: str, _stamp: float) -> str:
+    from vnsa.report.card import build_card, format_card
+
+    return format_card(build_card(analysis.assess(symbol)))
 
 
 @st.cache_data(show_spinner=False)
@@ -101,6 +109,12 @@ tab_all, tab_ta, tab_fa, tab_val, tab_risk, tab_bt, tab_hist = st.tabs(
      "Lịch sử khuyến nghị"])
 
 with tab_all:
+    st.subheader(f"Báo cáo nhanh {symbol}")
+    try:
+        with st.spinner("Đang phân tích..."):
+            st.code(report_text(symbol, stamp), language=None)
+    except (analysis.DataMissing, ValueError) as e:
+        st.warning(str(e))
     st.subheader("Khuyến nghị danh sách theo dõi")
     with st.spinner("Đang tính..."):
         table, errors = recommendations(tuple(watch), stamp)
@@ -111,9 +125,8 @@ with tab_all:
                 "Giá": st.column_config.NumberColumn(format="localized"),
                 "Điểm FA": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f"),
                 "Điểm TA": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f"),
-                "Điểm tổng": st.column_config.NumberColumn(format="%.0f"),
-                "Hợp lý": st.column_config.NumberColumn(format="percent",
-                                                        help="Giá trị hợp lý so với giá hiện tại"),
+                "LN kỳ vọng": st.column_config.NumberColumn(
+                    format="percent", help="Upside so với giá trị hợp lý + tỷ suất cổ tức 12 tháng"),
                 "P/E": st.column_config.NumberColumn(format="%.1f"),
                 "P/B": st.column_config.NumberColumn(format="%.2f"),
                 "Biến động/năm": st.column_config.NumberColumn(format="percent"),
@@ -246,7 +259,8 @@ with tab_val:
             c[2].metric("P/B hợp lý theo ROE", fmt_num(ri.justified_pb, 2))
             c[3].metric("Chi phí vốn chủ k_e", fmt_pct(ri.cost_of_equity))
             st.write(f"B0 = {ri.book0:,.0f} đ/cp · ROE bình quân {fmt_pct(ri.roe0)} → dài hạn "
-                     f"{fmt_pct(ri.roe_terminal)} · P/B lịch sử {fmt_num(fair.pb_target, 2)}")
+                     f"{fmt_pct(ri.roe_terminal)} · P/B lịch sử: trung vị "
+                     f"{fmt_num(fair.pb_median, 2)}, mục tiêu {fmt_num(fair.pb_target, 2)}")
             st.dataframe(pd.DataFrame([{"Phương pháp": METHOD_NAMES[k], "Giá trị/cp": v}
                                        for k, v in fair.methods.items()]), hide_index=True,
                          column_config={"Giá trị/cp": st.column_config.NumberColumn(
@@ -274,17 +288,16 @@ with tab_val:
             c[4].metric("P/B", fmt_num(v.pb, 2))
             for n in v.notes:
                 st.warning(n)
-            from vnsa.fa import fair_value as fvm
-
-            fair = fvm.combine(v.price, data.fin, data.prices, settings()["valuation"]["par_value"],
-                               dcf=v.value_per_share)
-            st.subheader("Giá trị hợp lý (trung vị DCF, P/E lịch sử, P/B lịch sử)")
+            fair = analysis.general_fair_value(data, v)
+            st.subheader("Giá trị hợp lý (bình quân có trọng số DCF, P/E lịch sử, P/B lịch sử)")
             c = st.columns(4)
             c[0].metric("Giá trị hợp lý", fmt_num(fair.value), fmt_pct(fair.upside))
             c[1].metric("DCF", fmt_num(fair.methods["dcf"]))
-            c[2].metric(f"P/E lịch sử ({fmt_num(fair.pe_target, 1)}x)",
+            c[2].metric(f"P/E mục tiêu ({fmt_num(fair.pe_target, 1)}x, "
+                        f"trung vị {fmt_num(fair.pe_median, 1)}x)",
                         fmt_num(fair.methods["pe_hist"]))
-            c[3].metric(f"P/B lịch sử ({fmt_num(fair.pb_target, 2)}x)",
+            c[3].metric(f"P/B mục tiêu ({fmt_num(fair.pb_target, 2)}x, "
+                        f"trung vị {fmt_num(fair.pb_median, 2)}x)",
                         fmt_num(fair.methods["pb_hist"]))
             for n in fair.notes:
                 st.caption(f"! {n}")
@@ -320,19 +333,31 @@ with tab_risk:
         st.caption("Mô phỏng dựa trên biến động quá khứ, không dự báo được sự kiện bất thường.")
 
 with tab_bt:
-    from vnsa.recommend.backtest import backtest
-    from vnsa.ta.score import ta_score_series
-
     cfg = analysis.backtest_config(symbol)
     c = st.columns(2)
-    cfg["entry_score"] = c[0].slider("Mua khi điểm TA ≥", 40, 90, int(cfg["entry_score"]))
-    cfg["exit_score"] = c[1].slider("Bán khi điểm TA <", 10, 70, int(cfg["exit_score"]))
+    entry = c[0].slider("Mua khi điểm TA ≥", 40, 90, int(cfg["entry_score"]))
+    exit_ = c[1].slider("Bán khi điểm TA <", 10, 70, int(cfg["exit_score"]))
     try:
-        res = backtest(ind, ta_score_series(ind, settings()["ta_score"]["weights"],
-                                            require_all=True), cfg)
+        results = analysis.backtests(analysis.load(symbol, need_fin=False), entry, exit_)
     except ValueError as e:
         st.error(str(e))
     else:
+        hold = next(iter(results.values())).benchmark_stats
+        st.dataframe(pd.DataFrame(
+            [{"Công thức": k, "Lợi nhuận/năm": r.stats["cagr"],
+              "Sụt giảm tối đa": r.stats["max_drawdown"], "Sharpe": r.stats["sharpe"],
+              "Số lệnh": r.stats["trades"], "Thời gian cầm cp": r.stats["exposure"]}
+             for k, r in results.items()]
+            + [{"Công thức": "Mua & giữ",
+                "Lợi nhuận/năm": hold["cagr"], "Sụt giảm tối đa": hold["max_drawdown"],
+                "Sharpe": hold["sharpe"]}]),
+            hide_index=True,
+            column_config={c: st.column_config.NumberColumn(format="percent")
+                           for c in ("Lợi nhuận/năm", "Sụt giảm tối đa", "Thời gian cầm cp")})
+        rule = settings()["recommend"].get("timing_rule", "ta")
+        st.caption("Khớp mở cửa phiên sau, không mua ở giá trần / không bán khi nằm sàn, T+2, phí + "
+                   f"thuế. Trục thời điểm đang dùng: {rule}. Bên dưới: {list(results)[-1]}.")
+        res = list(results.values())[-1]
         s, b = res.stats, res.benchmark_stats
         c = st.columns(4)
         c[0].metric(f"Lợi nhuận/năm (mua & giữ {fmt_pct(b['cagr'])})", fmt_pct(s["cagr"]))

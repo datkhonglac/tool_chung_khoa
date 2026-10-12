@@ -20,10 +20,37 @@ streamlit run dashboard/app.py                              # mở dashboard (c�
 ## Phân tích một mã bất kỳ (tự lấy dữ liệu)
 
 ```bash
-python -m vnsa.cli analyze SHS VCB ACV        # đầy đủ: khuyến nghị, kỹ thuật, kế hoạch, rủi ro, FA, định giá
-python -m vnsa.cli analyze HPG --brief        # chỉ khuyến nghị
+python -m vnsa.cli analyze HPG                # thẻ báo cáo một màn hình (xem mẫu dưới)
+python -m vnsa.cli analyze SHS VCB --detail   # thêm chi tiết: chỉ báo, kế hoạch, rủi ro, BCTC, định giá
 python -m vnsa.cli recommend SHS VCB --update # bảng khuyến nghị, cập nhật dữ liệu trước
 ```
+
+Thẻ báo cáo (`src/vnsa/report/card.py`, cũng hiện ở dashboard và Claude Desktop):
+
+```text
+HPG — Khuyến nghị: THEO DÕI (Trung lập) · Độ tin cậy: Trung bình · Khung: trung hạn
+Ngày phân tích: … · Giá hiện tại: …đ
+ĐỊNH GIÁ      Giá trị nội tại (P10 / P50 / P90) · Giá mục tiêu 12 tháng → Upside · Phương pháp + trọng số
+ĐIỂM SỐ       FA · TA · Quant → Tổng hợp (50% / 30% / 20%)
+CƠ BẢN        ROE (so với ngành) · Tăng trưởng EPS 3 năm · D/E · CFO/LNST · F-Score · cờ đỏ
+KỸ THUẬT      Xu hướng (giá/MA50/MA200), RSI · Hỗ trợ · Kháng cự
+DỰ BÁO 20 PHIÊN  Dải giá P10–P50–P90 · Xác suất tăng · VaR 95% 1 ngày
+KẾ HOẠCH      Vùng mua · Cắt lỗ · Chốt lời · Tỷ trọng gợi ý % NAV
+```
+
+**Khuyến nghị hai trục** (như các công ty chứng khoán): **xếp hạng** theo lợi nhuận kỳ vọng 12
+tháng = upside so với giá trị hợp lý + tỷ suất cổ tức (MUA ≥ 15% · KHẢ QUAN ≥ 5% · NẮM GIỮ ≥ −5% ·
+KÉM KHẢ QUAN ≥ −15% · BÁN), có rào chắn: VNINDEX xu hướng giảm thì cần thêm 5% và giảm khối lượng
+một nửa, FA yếu hạ một bậc, nguy cơ tài chính tối đa NẮM GIỮ. **Thời điểm** chỉ quản trị rủi ro
+("Trong vùng mua — giữ kỷ luật cắt lỗ" hoặc "Chờ giá về vùng mua"): kiểm định 10 năm × 45 mã cho
+thấy không quy tắc kỹ thuật nào (kể cả điểm TA cũ) thắng mua & giữ ở cả hai giai đoạn — chi tiết và
+cách đổi quy tắc ở [docs/kiem_dinh_thoi_diem.md](docs/kiem_dinh_thoi_diem.md). Khối lượng không quá 15% vốn mỗi mã và 10%
+GTGD bình quân 20 phiên. Điểm FA chấm P/E, P/B so với lịch sử của chính mã (không dùng ngưỡng chung).
+
+Độ tin cậy = số điều kiện đạt trong 6 (có BCTC, ≥ 2 phương pháp định giá, kịch bản định giá hẹp,
+giá trị hợp lý không lệch quá ±60% so với giá, FA và TA cùng chiều, đủ ~2 năm giá): ≥ 5 Cao,
+≥ 3 Trung bình. Điểm Quant = xác suất tăng (Monte Carlo), biến động năm, lãi/lỗ mục tiêu 1.
+Ngưỡng ở `[report]`, `[recommend.quant]`; trọng số phương pháp định giá ở `[valuation.weights]`.
 
 Với mỗi mã, tool tự kiểm tra kho và chỉ tải phần còn thiếu (tham số ở `[auto]` trong settings):
 - **Sàn, ngành, loại doanh nghiệp** của mọi cổ phiếu (vnstock/VCI), tải lại sau 30 ngày. Sàn quyết
@@ -31,11 +58,24 @@ Với mỗi mã, tool tự kiểm tra kho và chỉ tải phần còn thiếu (t
 - **Giá**: lần đầu tải 5 năm từ CafeF; lần sau chỉ tải phiên mới. Mã CafeF không có dữ liệu
   (đã gặp với SHS, ACV trên HNX/UPCoM) thì tự lấy từ vnstock/VCI và lần sau dùng lại nguồn đó. Nếu CafeF đã điều chỉnh lại giá cũ
   (cổ tức, chia tách) thì tự tải lại toàn bộ cho khớp. Trước 15h chưa tính phiên hôm nay.
-- **BCTC năm** (vnstock/VCI), tải lại sau 30 ngày. Lỗi BCTC không chặn phần kỹ thuật.
+- **BCTC năm và BCTC quý** (vnstock/VCI; bản miễn phí 4 quý gần nhất), tải lại sau 30 ngày. Từ 4 quý
+  tool tính **TTM** (12 tháng gần nhất): P/E, P/B, ROE và giá trị hợp lý dùng TTM thay cho năm tài
+  chính đã cũ. Lỗi BCTC không chặn phần kỹ thuật.
+- **Hồ sơ doanh nghiệp và cổ tức** (tải lại sau 7 ngày): số cổ phiếu lưu hành hiện tại (đã tính cổ
+  phiếu thưởng mới, trừ cổ phiếu quỹ), sở hữu nước ngoài / room, GTGD bình quân, lịch sử cổ tức.
+- Giá lưu cả **giá chưa điều chỉnh** (giá khớp thật) để P/E, P/B lịch sử tính theo vốn hoá thật
+  (giá điều chỉnh đã trừ cổ tức tiền nên làm P/E quá khứ thấp đi).
 
 `--refresh` tải lại BCTC và danh sách sàn ngay; `--full` tải lại toàn bộ giá; `--offline` không tải gì.
-**Ngân hàng, chứng khoán, bảo hiểm**: DCF-FCFF, Altman Z và điểm FA không áp dụng (thiết kế cho doanh
-nghiệp thường), tool chỉ dùng kỹ thuật cùng P/E, P/B và ghi rõ lý do.
+**Ngân hàng, chứng khoán, bảo hiểm**: không dùng DCF-FCFF và Altman Z (thiết kế cho doanh nghiệp
+thường); định giá bằng thu nhập thặng dư + P/B theo ROE, điểm FA bằng bộ chỉ tiêu riêng có chỉ số
+ngành tính từ BCTC (`fa/sector.py`): ngân hàng — NIM (xấp xỉ), CIR, chi phí tín dụng, dự phòng/dư
+nợ, cho vay/tiền gửi, tăng trưởng tín dụng; công ty chứng khoán — cho vay ký quỹ/vốn chủ, tự doanh
+FVTPL/vốn chủ, tỷ trọng môi giới. Nguồn miễn phí **không có nợ xấu (NPL), CASA, CAR**: tool ghi rõ
+là thiếu chứ không tự ước lượng. Bạn có thể **nhập tay** mỗi quý từ BCTC/thuyết minh vào
+`config/bank_manual.toml` (có ví dụ trong file) — khi có, tool hiển thị và chấm thêm nhóm "Chất lượng
+tài sản" (nợ xấu, bao phủ nợ xấu), CASA, CAR. Khi kho có ≥ 5 ngân hàng (đã phân tích), NIM, CIR, chi
+phí tín dụng được chấm **so với trung vị các ngân hàng** thay cho ngưỡng cố định.
 
 Trên dashboard: gõ mã vào ô **Mã bất kỳ** ở thanh bên rồi bấm **Lấy dữ liệu & phân tích**.
 
@@ -54,6 +94,15 @@ T+2). Thay vào đó (`src/vnsa/ta/entry.py`, tham số `[entry]`):
 **Giá trị hợp lý** (`src/vnsa/fa/fair_value.py`) = trung vị các phương pháp ra số dương:
 - Doanh nghiệp thường: DCF-FCFF, **P/E lịch sử** và **P/B lịch sử** của chính mã (giá bình quân năm
   chia EPS/BVPS theo số cổ phiếu hiện tại) — vì DCF không ra số khi FCFF âm (HPG, ACV...).
+  Bội số **mục tiêu 12 tháng** không giả định quay hẳn về trung vị lịch sử (thị trường có thể đã
+  định giá lại mã): mục tiêu = hiện tại + 50% × (trung vị − hiện tại), chỉnh ở
+  `[valuation] multiple_reversion` (1 = quay hẳn về trung vị).
+- **P/E, P/B ngành**: khi kho có ≥ 3 mã cùng ngành (đã phân tích), thêm trung vị bội số ngành làm
+  phương pháp độc lập (`pe_peer`, `pb_peer`). Thẻ báo cáo in thêm **giá mục tiêu CTCK** (VCI tổng
+  hợp) và độ lệch; lệch > 30% hoặc chỉ có bội số quá khứ của chính mã thì không xếp độ tin cậy "Cao".
+- Cổ tức 12 tháng > 10% giá (thường do hai đợt dồn vào 12 tháng) chỉ tính bình quân 3 năm, tối đa 10%.
+- F-Score "không phát hành cổ phiếu" so vốn góp công ty mẹ sau khi trừ cổ phiếu thưởng/cổ tức cổ
+  phiếu (dòng tiền "nhận vốn góp" gồm cả cổ đông thiểu số góp vào công ty con).
 - **Ngân hàng / chứng khoán / bảo hiểm**: ½ × trung bình của **thu nhập thặng dư** (ROE giảm dần về
   chi phí vốn chủ) và **P/B hợp lý = (ROE − g) / (k_e − g)**, cộng ½ × **P/B lịch sử**; ROE xuất phát
   là bình quân 3 năm có trọng số (năm gần nhất nặng nhất); điểm FA riêng (ROE, tăng trưởng, vốn chủ /
@@ -70,8 +119,18 @@ python -m vnsa.cli review-signals                 # chấm lại sau 5/20/60 phi
 python -m vnsa.cli review-signals --update FPT HPG --detail
 ```
 
-Bảng kết quả theo từng loại MUA/THEO DÕI/TRÁNH: lãi/lỗ bình quân, **vượt trội so với VNINDEX**,
+Bảng kết quả theo từng xếp hạng (MUA … BÁN): lãi/lỗ bình quân, **vượt trội so với VNINDEX**,
 tỷ lệ thắng, tỷ lệ chạm mục tiêu trước cắt lỗ, tỷ lệ khớp vùng mua. MUA tốt khi vượt trội dương.
+
+**Tự động mỗi ngày:** workflow `.github/workflows/daily.yml` chạy 16:40 (giờ VN) các ngày giao dịch,
+phân tích các mã ở `[signals] daily`, lưu khuyến nghị + BCTC năm/quý tích luỹ + kết quả chấm vào
+nhánh **`signals`** (thư mục `history/`). Lịch chạy có hiệu lực khi workflow nằm ở nhánh mặc định.
+Lấy về Codespaces:
+
+```bash
+python -m vnsa.cli history import --git origin/signals   # nạp lịch sử vào kho của bạn
+python -m vnsa.cli review-signals
+```
 Cần vài tháng và vài chục mẫu mới có ý nghĩa.
 Trên Claude Desktop: hỏi "phân tích mã SHS" — Claude gọi công cụ `analyze_symbol`, tự tải dữ liệu.
 
@@ -208,14 +267,22 @@ Kế hoạch giao dịch là kết quả tính theo quy tắc, không phải khu
 ```bash
 python -m vnsa.cli recommend                  # MUA / THEO DÕI / TRÁNH kèm lý do, cho danh sách theo dõi
 python -m vnsa.cli recommend FPT MWG
-python -m vnsa.cli backtest FPT               # chiến lược theo điểm TA so với mua và nắm giữ
+python -m vnsa.cli backtest FPT               # điểm TA vs phá nền 55 phiên vs mua & giữ
 python -m vnsa.cli backtest FPT --entry 70 --exit 40
 ```
 
-Điểm tổng = 60% điểm FA + 40% điểm TA. MUA cần điểm tổng ≥ 65, điểm TA ≥ 45 và giá không cao hơn
-giá trị DCF quá 10%; TRÁNH khi điểm tổng < 40 hoặc Altman Z'' ở vùng nguy cơ (mục `[recommend]`).
-Backtest chỉ dùng điểm TA (BCTC miễn phí quá ngắn để kiểm tra FA không "nhìn trước"); lệnh khớp ở
-giá mở cửa phiên sau tín hiệu, có cắt lỗ ATR, T+2, phí 0,15%/chiều và thuế bán 0,1% (`[backtest]`).
+Xếp hạng theo lợi nhuận kỳ vọng, thời điểm theo kỹ thuật (xem mục "Khuyến nghị hai trục" ở trên).
+Backtest kiểm tra trục **thời điểm** (BCTC miễn phí quá ngắn để kiểm tra giá trị hợp lý không "nhìn
+trước" — trục xếp hạng theo dõi bằng `review-signals`): khớp giá mở cửa phiên sau tín hiệu, không
+mua ở giá trần / không bán khi nằm sàn, T+2, phí 0,15%/chiều, thuế bán 0,1% (`[backtest]`). So sánh
+**điểm TA** (cách cũ), **phá nền 55 phiên** và quy tắc đang dùng, cùng mua & giữ.
+
+Kiểm định nhiều mã, nhiều năm (chọn tham số 2016–2021, kiểm tra độc lập 2022 → nay):
+
+```bash
+python -m vnsa.cli study-timing                 # 45 mã [study] universe, tự tải 10 năm giá
+python -m vnsa.cli study-timing FPT HPG VCB     # rổ tuỳ chọn
+```
 
 ## 8. Hỏi Claude Desktop qua MCP server (ngày 8)
 

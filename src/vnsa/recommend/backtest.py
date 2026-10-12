@@ -13,6 +13,14 @@ Quy tắc (tham số ở mục [backtest] trong settings), không nhìn trước
 - T+2: chỉ được bán từ phiên thứ 2 sau ngày mua (cổ phiếu về chiều T+2).
 - Phí: `fee` mỗi chiều mua/bán (môi giới), thêm `sell_tax` khi bán (thuế 0,1% giá trị bán).
 Kết quả so với mua và nắm giữ trong cùng giai đoạn (tính từ phiên đầu có điểm TA).
+
+Công thức mới (đợt 2) — truyền `regime` (ta/regime.regime_series, chỉ dùng VNINDEX đến phiên tín
+hiệu) và/hoặc `capital` trong cfg:
+- VNINDEX "giảm" ở phiên tín hiệu: cần điểm TA ≥ entry_score + `bear_entry_extra` và chỉ dùng
+  `bear_position` phần vốn (như kế hoạch giao dịch giảm rủi ro/lệnh 50%).
+- Thanh khoản: giá trị lệnh ≤ `max_adv_pct` × GTGD bình quân 20 phiên; với vốn `capital` đồng,
+  phần vốn dùng = min(…, max_adv_pct × ADV20 / capital); dưới `min_position` thì bỏ lệnh.
+Phần vốn không dùng giữ tiền mặt (lãi 0).
 """
 
 from __future__ import annotations
@@ -46,6 +54,7 @@ class BacktestResult:
     benchmark: pd.Series      # mua và nắm giữ (= 1 ở phiên đầu)
     trades: list[Trade] = field(default_factory=list)
     exposure: float = 0.0     # tỷ lệ số phiên đang giữ cổ phiếu
+    open_stop: float = float("nan")   # cắt lỗ hiện tại nếu cuối kỳ vẫn đang giữ (strategies.simulate)
 
     @staticmethod
     def _stats(curve: pd.Series) -> dict:
@@ -73,9 +82,20 @@ class BacktestResult:
         return self._stats(self.benchmark)
 
 
-def backtest(ind: pd.DataFrame, score: pd.Series, cfg: dict) -> BacktestResult:
-    """ind: bảng giá + chỉ báo (cần open, low, close, atr); score: điểm TA từng phiên."""
+def backtest(ind: pd.DataFrame, score: pd.Series, cfg: dict,
+             regime: pd.Series | None = None) -> BacktestResult:
+    """ind: bảng giá + chỉ báo (cần open, low, close, atr; volume nếu chặn thanh khoản);
+    score: điểm TA từng phiên; regime: trạng thái VNINDEX theo ngày (tuỳ chọn)."""
     df = ind.assign(score=score.values).reset_index(drop=True)
+    if regime is not None and len(regime):
+        r = regime.copy()
+        r.index = pd.to_datetime(r.index)
+        df["regime"] = r.reindex(pd.to_datetime(df["date"]), method="ffill").to_numpy()
+    else:
+        df["regime"] = None
+    capital = cfg.get("capital")
+    df["adv"] = ((df["close"] * df["volume"]).rolling(20).mean()
+                 if capital and "volume" in df else np.nan)
     start = (df["score"].notna() & df["atr"].notna()).idxmax() if df["score"].notna().any() \
         else None
     if start is None or len(df) - start < 30:
@@ -87,17 +107,32 @@ def backtest(ind: pd.DataFrame, score: pd.Series, cfg: dict) -> BacktestResult:
     trades: list[Trade] = []
     equity = np.empty(len(df))
     pending: str | None = None        # lệnh chờ khớp ở giá mở cửa phiên này
+    frac = 1.0                        # phần vốn dùng cho lệnh mua đang chờ
+
+    def size(i: int) -> tuple[bool, float]:
+        """(có mua không, phần vốn) theo điểm TA, trạng thái VNINDEX và thanh khoản phiên i."""
+        need, f = cfg["entry_score"], 1.0
+        if df.at[i, "regime"] == "giảm":
+            need += cfg.get("bear_entry_extra", 0)
+            f = cfg.get("bear_position", 1.0)
+        if not df.at[i, "score"] >= need:          # NaN = chưa đủ dữ liệu
+            return False, 0.0
+        if capital and not pd.isna(df.at[i, "adv"]):
+            nav = cash + shares * df.at[i, "close"]
+            f = min(f, cfg.get("max_adv_pct", 0.1) * df.at[i, "adv"] / (capital * nav))
+        return f >= cfg.get("min_position", 0.0), f
 
     def sell(i: int, px: float, reason: str) -> None:
         nonlocal cash, shares
-        cash = shares * px * (1 - fee - tax)
+        cash += shares * px * (1 - fee - tax)
         trades.append(Trade(df.at[entry_i, "date"], entry_px, df.at[i, "date"], px, reason))
         shares = 0.0
 
     for i in range(len(df)):
         o, lo, c = df.at[i, "open"], df.at[i, "low"], df.at[i, "close"]
         if pending == "buy" and shares == 0:
-            shares, cash = cash * (1 - fee) / o, 0.0
+            spend = cash * frac
+            shares, cash = spend * (1 - fee) / o, cash - spend
             entry_i, entry_px = i, o
             stop = round_tick(o - cfg["atr_stop"] * df.at[i - 1, "atr"], "down", cfg.get("ticks"))
         elif pending == "sell" and shares > 0:
@@ -106,8 +141,9 @@ def backtest(ind: pd.DataFrame, score: pd.Series, cfg: dict) -> BacktestResult:
         if shares > 0 and i - entry_i >= 2 and lo <= stop:      # T+2 mới bán được
             sell(i, min(o, stop), "cắt lỗ")
         s = df.at[i, "score"]
-        if shares == 0 and s >= cfg["entry_score"] and i + 1 < len(df):
-            pending = "buy"
+        if shares == 0 and i + 1 < len(df):
+            ok, frac = size(i)
+            pending = "buy" if ok else None
         elif shares > 0 and s < cfg["exit_score"] and i + 1 - entry_i >= 2:
             pending = "sell"
         equity[i] = cash + shares * c

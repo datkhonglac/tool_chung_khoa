@@ -94,17 +94,25 @@ def update_symbol(symbol: str, refresh: bool = False) -> dict:
 @mcp.tool()
 @_guard
 def analyze_symbol(symbol: str) -> dict:
-    """Phân tích nhanh MỘT MÃ BẤT KỲ: tự cập nhật dữ liệu nếu thiếu/cũ, rồi trả khuyến nghị
-    (MUA/THEO DÕI/TRÁNH, lý do), điểm FA/TA, định giá, rủi ro, kế hoạch giao dịch và sàn/ngành.
-    Xem chi tiết hơn bằng get_valuation, get_technical, get_risk..."""
+    """Phân tích nhanh MỘT MÃ BẤT KỲ: tự cập nhật dữ liệu nếu thiếu/cũ, rồi trả `report` — thẻ báo
+    cáo đã định dạng (khuyến nghị, độ tin cậy, giá trị nội tại P10/P50/P90, điểm FA/TA/Quant, cơ bản,
+    cờ đỏ, kỹ thuật, dự báo 20 phiên, vùng mua, cắt lỗ, chốt lời, tỷ trọng). Hãy trình bày nguyên
+    văn `report` cho người dùng rồi mới diễn giải. Chi tiết hơn: get_valuation, get_technical..."""
     from vnsa import market
+    from vnsa.report.card import build_card, format_card
 
     rep = _update(symbol)
     if not rep.ok:
         return {"symbol": rep.symbol, "error": "không có giá để phân tích: " + "; ".join(rep.errors)}
-    rec, plan = analysis.recommendation(rep.symbol)
+    a = analysis.assess(rep.symbol)
+    rec, plan = a.rec, a.plan
     analysis.record_signals([(rec, plan)])
-    return {"symbol": rec.symbol, "profile": market.profile(rec.symbol),
+    card = build_card(a)
+    return {"symbol": rec.symbol, "report": format_card(card),
+            "confidence": card.confidence, "confidence_checks": card.confidence_checks,
+            "intrinsic_value": {"p10": card.p10, "p50": card.p50, "p90": card.p90},
+            "scores": {"fa": card.fa, "ta": card.ta, "quant": card.quant, "total": card.total},
+            "red_flags": card.red_flags, "profile": market.profile(rec.symbol),
             "band": market.band(rec.symbol), "action": rec.action, "score": rec.score,
             "reasons": rec.reasons, "inputs": rec.inputs, "plan": plan,
             "data_update": [str(s).strip() for s in rep.steps],
@@ -152,7 +160,6 @@ def get_valuation(symbol: str, growth: float | None = None, wacc: float | None =
     WACC, cột tăng trưởng dài hạn), P/E, P/B; growth/wacc ghi đè giả định. Ngân hàng/chứng khoán/
     bảo hiểm: thu nhập thặng dư, P/B hợp lý theo ROE, P/B lịch sử. Mọi mã đều có fair_value = trung
     vị các phương pháp (kể cả P/E, P/B lịch sử của chính mã)."""
-    from vnsa.fa import fair_value as fv
     from vnsa.fa import valuation as val
     from vnsa.market import financial_note
 
@@ -163,10 +170,10 @@ def get_valuation(symbol: str, growth: float | None = None, wacc: float | None =
         return {"symbol": d.symbol, "model": "residual_income", "price": fair.price,
                 "cost_of_equity": ke, "beta": b, "raw_beta": raw, "residual_income": fair.ri,
                 "fair_value": fair.value, "upside": fair.upside, "methods": fair.methods,
-                "pb_hist_target": fair.pb_target, "notes": fair.notes + [financial_note(d.symbol)]}
+                "pb_hist_target": fair.pb_target, "pb_hist_median": fair.pb_median,
+                "notes": fair.notes + [financial_note(d.symbol)]}
     a, v, raw_beta = analysis.valuation(d, growth, wacc)
-    fair = fv.combine(v.price, d.fin, d.prices, settings()["valuation"]["par_value"],
-                      dcf=v.value_per_share)
+    fair = analysis.general_fair_value(d, v)
     table = val.sensitivity(v, a)
     return {
         "symbol": d.symbol, "price": v.price, "shares": v.shares, "pe": v.pe, "pb": v.pb,
@@ -180,6 +187,7 @@ def get_valuation(symbol: str, growth: float | None = None, wacc: float | None =
         "value_per_share": v.value_per_share, "upside": v.upside, "notes": v.notes + fair.notes,
         "fair_value": fair.value, "fair_upside": fair.upside, "fair_methods": fair.methods,
         "pe_hist_target": fair.pe_target, "pb_hist_target": fair.pb_target,
+        "pe_hist_median": fair.pe_median, "pb_hist_median": fair.pb_median,
         "sensitivity": {f"wacc={w:.4f}": {f"g={g:.3f}": table.at[w, g] for g in table.columns}
                         for w in table.index},
         "assumptions": asdict(a),
@@ -264,7 +272,9 @@ def get_risk(symbol: str, sessions: int | None = None) -> dict:
 @mcp.tool()
 @_guard
 def get_recommendations(symbols: list[str] | None = None) -> dict:
-    """Khuyến nghị MUA / THEO DÕI / TRÁNH theo quy tắc (điểm FA, TA, định giá, rủi ro) kèm lý do.
+    """Khuyến nghị hai trục kèm lý do: xếp hạng MUA / KHẢ QUAN / NẮM GIỮ / KÉM KHẢ QUAN / BÁN theo lợi
+    nhuận kỳ vọng (upside so với giá trị hợp lý + cổ tức, có rào chắn chất lượng và thị trường
+    chung), và thời điểm mua (kỹ thuật + vùng mua).
     Bỏ trống symbols = danh sách theo dõi."""
     out, errors, recorded = [], [], []
     for sym in symbols or settings()["watchlist"]["symbols"]:
@@ -273,7 +283,8 @@ def get_recommendations(symbols: list[str] | None = None) -> dict:
         except (analysis.DataMissing, ValueError) as e:
             errors.append(str(e))
             continue
-        out.append({"symbol": rec.symbol, "action": rec.action, "score": rec.score,
+        out.append({"symbol": rec.symbol, "action": rec.action, "timing": rec.timing,
+                    "expected_return": rec.expected_return, "score": rec.score,
                     "reasons": rec.reasons, "inputs": rec.inputs,
                     "buy_zone": plan.zone if plan is not None else None})
         recorded.append((rec, plan))
@@ -286,22 +297,18 @@ def get_recommendations(symbols: list[str] | None = None) -> dict:
 @_guard
 def run_backtest(symbol: str, entry_score: float | None = None,
                  exit_score: float | None = None) -> dict:
-    """Backtest chiến lược theo điểm TA (mua khi điểm ≥ entry_score, bán khi < exit_score, cắt lỗ
-    ATR, T+2, phí và thuế), so với mua và nắm giữ."""
-    from vnsa.recommend.backtest import backtest
-    from vnsa.ta.score import ta_score_series
-
+    """Backtest các quy tắc thời điểm (điểm TA ≥ entry_score mua / < exit_score bán; + lọc
+    VNINDEX; quy tắc đang dùng cho trục thời điểm) với khớp lệnh sát thực tế VN (mở cửa phiên sau,
+    trần/sàn, T+2, phí và thuế), so với mua và nắm giữ."""
     d = analysis.load(symbol, need_fin=False)
-    cfg = analysis.backtest_config(d.symbol)
-    if entry_score is not None:
-        cfg["entry_score"] = entry_score
-    if exit_score is not None:
-        cfg["exit_score"] = exit_score
-    ind = analysis.indicators(d.prices)
-    res = backtest(ind, ta_score_series(ind, settings()["ta_score"]["weights"], require_all=True), cfg)
-    return {"symbol": d.symbol, "rules": cfg, "strategy": res.stats,
-            "buy_and_hold": res.benchmark_stats,
-            "trades": [dict(asdict(t), ret=t.ret) for t in res.trades]}
+    results = analysis.backtests(d, entry_score, exit_score)
+    first = next(iter(results.values()))
+    last = list(results.values())[-1]
+    return {"symbol": d.symbol, "rules": analysis.backtest_config(d.symbol),
+            "timing_rule": settings()["recommend"].get("timing_rule", "ta"),
+            "strategies": {k: r.stats for k, r in results.items()},
+            "buy_and_hold": first.benchmark_stats,
+            "trades": [dict(asdict(t), ret=t.ret) for t in last.trades]}
 
 
 @mcp.tool()
@@ -309,7 +316,7 @@ def run_backtest(symbol: str, entry_score: float | None = None,
 def review_signals(horizons: list[int] | None = None) -> dict:
     """Chấm lại các khuyến nghị đã lưu (mỗi lần recommend/analyze tự lưu) sau N phiên (mặc định 5,
     20, 60): lãi/lỗ bình quân, vượt trội so với VNINDEX, tỷ lệ thắng, tỷ lệ chạm mục tiêu trước cắt
-    lỗ, tỷ lệ khớp vùng mua — theo từng loại MUA/THEO DÕI/TRÁNH. MUA tốt khi vượt trội dương."""
+    lỗ, tỷ lệ khớp vùng mua — theo từng xếp hạng. MUA/KHẢ QUAN tốt khi vượt trội dương."""
     ev, summary, n = analysis.review(horizons)
     return {"recorded_signals": n, "summary": summary, "evaluated": ev.tail(200),
             "note": "Dưới ~30 mẫu mỗi nhóm chỉ để tham khảo."}

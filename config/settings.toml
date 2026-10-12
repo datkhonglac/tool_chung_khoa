@@ -8,6 +8,7 @@ sample_prices_dir = "data/sample/prices"
 warehouse = "data/warehouse.duckdb"
 charts_dir = "data/charts"
 signals_csv = "data/signals.csv"       # bản sao lịch sử khuyến nghị (không bị .gitignore, commit để giữ lại)
+bank_manual = "config/bank_manual.toml"   # NPL, CASA, CAR ngân hàng nhập tay (nguồn miễn phí không có)
 
 # Đơn vị giá trong file CSV: "auto" | "dong" | "nghin"
 # auto: nếu trung vị giá đóng cửa < 1000 thì coi là nghìn đồng và nhân 1000.
@@ -34,7 +35,13 @@ adjust_tolerance = 0.005    # giá cũ lệch > 0,5% so với lần tải mới 
 market_close_hour = 15      # trước 15h (giờ Việt Nam) chưa có giá phiên hôm nay
 bctc_max_age_days = 30      # BCTC trong kho cũ hơn số ngày này thì tải lại
 listing_max_age_days = 30   # danh sách niêm yết (sàn, ngành) cũ hơn số ngày này thì tải lại
+profile_max_age_days = 7    # hồ sơ (số cp lưu hành, sở hữu NN) và cổ tức cũ hơn số ngày này thì tải lại
 pause = 0.3                 # giây nghỉ giữa các lần gọi CafeF
+flow_sessions = 60          # số phiên giao dịch khối ngoại / tự doanh tải từ CafeF
+
+[flows]
+# Dòng tiền khối ngoại / tự doanh: chỉ để THAM KHẢO trên thẻ báo cáo, không vào điểm số
+windows = [5, 20]           # cộng dồn mua/bán ròng 5 và 20 phiên
 
 [watchlist]
 symbols = ["FPT", "HPG", "MWG", "VNM", "DGC"]
@@ -53,6 +60,16 @@ default_beta = 1.0
 beta_years = 3
 adjust_beta = true             # beta Blume = 0,67 × beta thô + 0,33
 par_value = 10000              # mệnh giá cổ phiếu (đồng)
+multiple_reversion = 0.5       # P/E, P/B mục tiêu 12 tháng thu hẹp 50% khoảng cách hiện tại → trung vị lịch sử (1 = quay hẳn về)
+min_peers = 3                  # số mã cùng ngành (đã có trong kho) tối thiểu để dùng P/E, P/B ngành
+max_peer_pe = 60               # bỏ mã cùng ngành có P/E ≤ 0 hoặc > 60 (lợi nhuận bất thường)
+
+[valuation.weights]
+# Trọng số các phương pháp tính giá trị hợp lý (fa/fair_value.py); thiếu phương pháp nào thì chia lại
+# pe_peer, pb_peer: bội số trung vị NGÀNH (chỉ khi kho có ≥ min_peers mã cùng ngành; không có thì
+# chia lại cho các phương pháp còn lại như trước)
+general = { dcf = 0.4, pe_hist = 0.3, pb_hist = 0.3, pe_peer = 0.15, pb_peer = 0.15 }
+financial = { ri = 0.25, pb_roe = 0.25, pb_hist = 0.5, pb_peer = 0.25 }
 
 [valuation.financials]
 # Ngân hàng / chứng khoán / bảo hiểm: thu nhập thặng dư + P/B hợp lý theo ROE (fa/fair_value.py)
@@ -78,22 +95,39 @@ z_em = [1.1, 2.6]
 debt_to_equity = [1.5, 0.3]   # số nhỏ là tốt
 f_score = [2, 8]
 cfo_to_ni = [0.5, 1.0]        # CFO / LNST cộng dồn 3 năm
-pe = [25, 8]
-pb = [4.0, 1.0]
+pe_rel = [1.3, 0.7]           # P/E hiện tại / trung vị lịch sử của mã: cao hơn 30% = 0 điểm, thấp hơn 30% = 100
+pb_rel = [1.3, 0.7]
 dcf_upside = [-0.2, 0.3]
 
 [fa_score.financials]
 # Điểm FA cho định chế tài chính (scores.financial_score)
 [fa_score.financials.weights]
-sinh_loi = 35        # ROE
-tang_truong = 20     # tăng trưởng kép LNST cty mẹ
-an_toan = 15         # vốn chủ / tổng tài sản
-dinh_gia = 30        # P/B, chênh lệch so với giá trị hợp lý
+sinh_loi = 30        # ROE
+tang_truong = 15     # tăng trưởng kép LNST cty mẹ
+an_toan = 10         # vốn chủ / tổng tài sản
+hieu_qua = 10        # ngân hàng: NIM, CIR (fa/sector.py), CASA (nhập tay)
+rui_ro = 10          # ngân hàng: chi phí tín dụng · chứng khoán: cho vay ký quỹ / vốn chủ
+chat_luong_tai_san = 10   # ngân hàng: nợ xấu, bao phủ nợ xấu (nhập tay config/bank_manual.toml)
+dinh_gia = 25        # P/B, chênh lệch so với giá trị hợp lý
 [fa_score.financials.thresholds]
 roe = [0.08, 0.20]
 ni_cagr = [0.0, 0.20]
-pb = [3.0, 0.8]
+pb_rel = [1.3, 0.7]
 fair_upside = [-0.2, 0.3]
+nim = [0.025, 0.045]
+cir = [0.50, 0.30]             # số nhỏ là tốt
+credit_cost = [0.025, 0.005]   # dự phòng / dư nợ bình quân; số nhỏ là tốt
+margin_to_equity = [1.8, 0.8]  # luật cho phép tối đa 2 lần vốn chủ
+npl = [0.03, 0.01]             # nợ xấu / dư nợ (nhập tay); số nhỏ là tốt
+npl_coverage = [0.5, 1.5]      # dự phòng / nợ xấu (lần)
+casa = [0.10, 0.40]
+car = [0.09, 0.13]             # tối thiểu theo NHNN 8%
+min_bank_peers = 4             # số ngân hàng KHÁC trong kho tối thiểu để chấm NIM/CIR/chi phí tín dụng theo ngành
+[fa_score.financials.relative]
+# Khi kho có ≥ min_bank_peers ngân hàng: chấm theo tỷ lệ so với trung vị ngành [mức xấu, mức tốt]
+nim = [0.8, 1.2]               # NIM bằng 80% trung vị = 0 điểm, 120% = 100 điểm
+cir = [1.2, 0.8]
+credit_cost = [1.5, 0.5]
 [fa_score.financials.equity_to_assets]   # [mức xấu, mức tốt] theo loại doanh nghiệp
 bank = [0.05, 0.11]
 securities = [0.25, 0.60]
@@ -130,6 +164,8 @@ support_buffer_atr = 0.5    # đặt cắt lỗ dưới hỗ trợ 0,5 ATR
 reward_multiples = [2.0, 3.0]
 min_reward_risk = 2.0
 lot_size = 100
+max_position_pct = 0.15     # trần tỷ trọng mỗi mã: 15% vốn
+max_adv_pct = 0.10          # vị thế không quá 10% giá trị giao dịch bình quân 20 phiên (thanh khoản)
 # Bước giá theo sàn nằm ở [market.ticks]
 
 [entry]
@@ -145,6 +181,19 @@ weak_fa_extra = 0.10        # điểm FA < 50: biên an toàn thêm 10%
 # Lịch sử khuyến nghị: mỗi lần recommend/analyze ghi vào bảng signals và file CSV (đưa lên Git được)
 record = true
 horizons = [5, 20, 60]      # số phiên để chấm lại khuyến nghị (lệnh review-signals)
+# Mã workflow hằng ngày (.github/workflows/daily.yml) phân tích và lưu khuyến nghị vào nhánh `signals`
+daily = ["FPT", "HPG", "MWG", "VNM", "DGC", "VCB", "TCB", "MBB", "SSI", "ACV", "TNG", "GMD"]
+
+[study]
+# Kiểm định quy tắc thời điểm (lệnh study-timing, recommend/study.py): VN30 + một số mã vừa
+universe = ["ACB", "BID", "BVH", "CTG", "FPT", "GAS", "HDB", "HPG", "MBB", "MSN", "MWG", "PLX",
+            "POW", "SAB", "SSI", "STB", "TCB", "TPB", "VCB", "VHM", "VIC", "VJC", "VNM", "VPB",
+            "VRE", "SHB", "DGC", "PNJ", "REE", "GMD", "DPM", "DCM", "KDH", "NLG", "HSG", "PVD",
+            "PVS", "VND", "HCM", "KBC", "DIG", "DXG", "NKG", "FRT", "CTD"]
+years = 10                  # số năm giá tải cho kiểm định
+start = "2016-01-01"        # giai đoạn chọn tham số: từ ngày này đến trước `split`
+split = "2022-01-01"        # giai đoạn kiểm tra độc lập: từ ngày này đến nay
+atr_grid = [2.5, 3.0, 4.0]  # hệ số cắt lỗ động thử ở giai đoạn chọn tham số
 
 [risk]
 garch_window = 1000         # số phiên gần nhất dùng ước lượng GARCH
@@ -156,14 +205,50 @@ bootstrap = true            # rút phần dư thật (true) hay phân phối chu
 seed = 42
 
 [recommend]
-weight_fa = 0.6             # điểm tổng = 60% FA + 40% TA
+# Khuyến nghị hai trục (recommend/engine.py)
+# Trục 1 — xếp hạng theo lợi nhuận kỳ vọng 12 tháng = upside so với giá trị hợp lý + tỷ suất cổ tức:
+rating_thresholds = [0.15, 0.05, -0.05, -0.15]   # ≥ MUA · ≥ KHẢ QUAN · ≥ NẮM GIỮ · ≥ KÉM KHẢ QUAN · dưới: BÁN
+# Trục THỜI ĐIỂM: "none" (chỉ vùng mua + cắt lỗ) | "ta" (điểm TA, cách cũ) | tên quy tắc trong
+# recommend/strategies.py ("trend", "breakout", ...). Kiểm định 10 năm × 45 mã (docs/kiem_dinh_thoi_diem.md):
+# không quy tắc nào thắng mua & giữ ở cả hai giai đoạn → "none". "breakout" (phá nền 55 phiên) gần
+# đạt nhất: Sharpe 0,37 so 0,31 và sụt giảm −8% so −46% ở giai đoạn 2022–2026, nhưng lợi nhuận thấp
+# hơn nhiều (chỉ cầm cổ phiếu ~20% thời gian) — chọn nếu bạn ưu tiên tránh sụt giảm lớn.
+# timing_atr_k: hệ số cắt lỗ động của quy tắc xu hướng/phá nền (k = 4 chọn ở giai đoạn 2016–2021).
+timing_rule = "none"
+timing_atr_k = 4.0
+max_dividend_yield = 0.10   # cổ tức 12 tháng > 10% giá: dùng bình quân 3 năm, tối đa 10% (thường là 2 đợt dồn vào 12 tháng)
+bear_market_extra = 0.05    # VNINDEX xu hướng giảm: mọi ngưỡng cao thêm 5%
+min_fa_quality = 50         # điểm FA dưới mức này: hạ một bậc xếp hạng
+# Trục 2 — thời điểm (điểm TA):
+timing_wait = 40            # TA < 40: chờ xu hướng cải thiện
+timing_go = 55              # TA ≥ 55: vào được trong vùng mua
+# Điểm sắp xếp (không quyết định xếp hạng) = 60% FA + 40% TA
+weight_fa = 0.6
 weight_ta = 0.4
-buy_above = 65              # MUA khi điểm tổng ≥ 65 ...
-min_ta_buy = 45             # ... và điểm TA ≥ 45 (xu hướng không xấu)
-min_upside_buy = -0.10      # ... và giá không cao hơn giá trị DCF quá 10%
-sell_below = 40             # TRÁNH khi điểm tổng < 40 (hoặc Altman Z'' vùng nguy cơ)
 min_reward_risk = 2.0
 high_vol = 0.40             # biến động năm trên 40% thì nhắc giảm khối lượng
+
+[recommend.quant]
+# Điểm Quant 0–100 — CHỈ THAM KHẢO, không vào xếp hạng: [mức xấu, mức tốt], quy tuyến tính như FA
+prob_up = [0.40, 0.60]      # xác suất giá cao hơn hiện tại sau 60 phiên (Monte Carlo)
+vol_annual = [0.60, 0.20]   # biến động năm (GARCH) — thấp là tốt
+reward_risk = [1.0, 3.0]    # lãi/lỗ của mục tiêu 1 trong kế hoạch
+
+[regime]
+# Trạng thái thị trường chung theo VNINDEX (ta/regime.py)
+sma_long = 200
+sma_short = 50
+slope_sessions = 20         # MA50 đi lên/xuống so với 20 phiên trước
+bear_risk_factor = 0.5      # thị trường giảm: rủi ro mỗi lệnh còn 50% (khối lượng nhỏ lại)
+
+[report]
+# Độ tin cậy của khuyến nghị (report/card.py): đếm số điều kiện đạt
+high_confidence = 5         # ≥ 5/6 điều kiện: Cao; ≥ 3: Trung bình; còn lại: Thấp
+medium_confidence = 3
+max_abs_upside = 0.6        # giá trị hợp lý lệch quá ±60% so với giá -> nghi mô hình không hợp với mã
+max_value_spread = 1.6      # dải P90 / P10 giá trị nội tại hẹp hơn mức này thì tính là "định giá đồng thuận"
+min_sessions = 500          # có ít nhất ~2 năm giá
+max_consensus_gap = 0.3     # giá trị hợp lý lệch > 30% so với giá mục tiêu CTCK (VCI tổng hợp): không xếp "Cao", cảnh báo
 
 [backtest]
 entry_score = 65            # mua khi điểm TA ≥ 65
@@ -171,3 +256,7 @@ exit_score = 45             # bán khi điểm TA < 45
 atr_stop = 2.0              # cắt lỗ cố định = giá mua − 2 × ATR14
 fee = 0.0015                # phí môi giới mỗi chiều 0,15%
 sell_tax = 0.001            # thuế bán 0,1%
+# Công thức mới (so sánh trong lệnh backtest): lọc VNINDEX + thanh khoản
+bear_entry_extra = 10       # VNINDEX "giảm": cần điểm TA cao thêm 10
+bear_position = 0.5         # VNINDEX "giảm": chỉ dùng 50% vốn của mã
+min_position = 0.1          # thanh khoản chỉ cho dùng dưới 10% vốn của mã thì bỏ lệnh

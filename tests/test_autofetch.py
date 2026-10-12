@@ -70,6 +70,35 @@ class FakeVnstock:
             raise RuntimeError("hết lượt gọi")
         return _fundamentals(symbol)
 
+    def quarterly(self, symbol):
+        if self.fin_error:
+            raise RuntimeError("hết lượt gọi")
+        return _quarters(symbol)
+
+    def profile(self, symbol):
+        if self.fin_error:
+            raise RuntimeError("hết lượt gọi")
+        return {"shares_out": 33e6, "foreign_pct": 0.2, "foreign_max_pct": 0.49,
+                "avg_value_1m": 5e9, "analyst_rating": None}
+
+    def dividends(self, symbol):
+        return pd.DataFrame({"symbol": [symbol], "exright_date": [pd.Timestamp("2026-06-01")],
+                             "cash_per_share": [1500.0], "stock_ratio": [None], "title": ["Cổ tức"]})
+
+
+def _quarters(symbol):
+    """4 quý 2025-Q3 → 2026-Q2: mỗi quý = 1/4 số năm 2025 (× 1,1 cho các khoản dòng chảy)."""
+    last = _fundamentals(symbol).iloc[-1]
+    rows = []
+    for y, q in [(2025, 3), (2025, 4), (2026, 1), (2026, 2)]:
+        r = last.copy()
+        for f in ("revenue", "gross_profit", "net_income", "net_income_parent", "cfo", "pbt",
+                  "tax_expense", "interest_expense", "capex", "equity_issued"):
+            r[f] = last[f] * 1.1 / 4
+        r["year"], r["quarter"] = y, q
+        rows.append(r)
+    return pd.DataFrame(rows).reset_index(drop=True)
+
 
 @pytest.fixture
 def empty_db(tmp_path, monkeypatch):
@@ -99,6 +128,9 @@ def test_first_time_downloads_everything(empty_db, tmp_path):
         assert store.last_price_date("VNINDEX") == pd.Timestamp("2026-10-09")
         assert len(store.fundamentals("DEMO_A")) == 4
         assert store.company("DEMO_B")["exchange"] == "HNX"
+        assert len(store.quarterly("DEMO_A")) == 4
+        assert store.company("DEMO_A")["shares_out"] == 33e6
+        assert store.dividends("DEMO_A")["cash_per_share"].iloc[0] == 1500
     assert (tmp_path / "prices" / "DEMO_A.csv").exists()
     assert (tmp_path / "bctc" / "DEMO_A.csv").exists()
 
@@ -144,7 +176,8 @@ def test_unknown_symbol_reports_error(empty_db):
 def test_missing_sources_do_not_block_price_analysis(empty_db):
     rep = updater(vn=FakeVnstock(listing_error=True, fin_error=True)).ensure("DEMO_A")
     assert rep.ok
-    assert [s.what for s in rep.steps if s.status == "error"] == ["niêm yết", "BCTC"]
+    assert [s.what for s in rep.steps if s.status == "error"] == ["niêm yết", "BCTC", "BCTC quý",
+                                                                   "hồ sơ"]
     assert "chỉ phân tích kỹ thuật" in str(rep)
 
 
@@ -210,9 +243,13 @@ def test_cli_analyze(warehouse, monkeypatch, capsys):
     assert cli.main(["analyze", "demo_a"]) == 0
     out = capsys.readouterr().out
     assert calls == ["DEMO_A"]
-    for title in ("KHUYẾN NGHỊ", "KỸ THUẬT", "KẾ HOẠCH GIAO DỊCH", "RỦI RO", "ĐỊNH GIÁ"):
+    for title in ("Xếp hạng:", "Thời điểm:", "Độ tin cậy:", "ĐỊNH GIÁ", "ĐIỂM SỐ", "CƠ BẢN", "KỸ THUẬT",
+                  "DỰ BÁO 20 PHIÊN", "KẾ HOẠCH GIAO DỊCH"):
         assert title in out
-    assert "chưa rõ sàn" in out
+    assert "chưa rõ sàn" in out and "── RỦI RO" not in out          # chi tiết chỉ khi --detail
+    assert cli.main(["analyze", "demo_a", "--detail"]) == 0
+    out = capsys.readouterr().out
+    assert "── RỦI RO" in out and "── ĐỊNH GIÁ" in out
 
     monkeypatch.setattr(analysis, "update", lambda sym, *a, **k: UpdateReport(
         sym, [Step("giá", "error", "Mã có đúng không?")]))

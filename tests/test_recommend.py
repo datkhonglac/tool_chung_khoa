@@ -5,37 +5,51 @@ import pytest
 from vnsa.recommend.backtest import backtest
 from vnsa.recommend.engine import Inputs, recommend
 
-CFG = {"weight_fa": 0.6, "weight_ta": 0.4, "buy_above": 65, "min_ta_buy": 45,
-       "min_upside_buy": -0.10, "sell_below": 40, "min_reward_risk": 2.0, "high_vol": 0.40}
+CFG = {"rating_thresholds": [0.15, 0.05, -0.05, -0.15], "bear_market_extra": 0.05,
+       "min_fa_quality": 50, "timing_wait": 40, "timing_go": 55, "weight_fa": 0.6,
+       "weight_ta": 0.4, "min_reward_risk": 2.0, "high_vol": 0.40}
 NAN = float("nan")
 
 
 def _inputs(**kw):
     base = {"symbol": "X", "price": 50_000, "date": pd.Timestamp("2026-10-09"), "fa_score": 80,
             "ta_score": 70, "z_em": 3.0, "dcf_upside": 0.2, "pe": 10, "pb": 1.5,
-            "vol_annual": 0.3, "prob_up": 0.55, "first_target_rr": 2.5}
+            "vol_annual": 0.3, "prob_up": 0.55, "first_target_rr": 2.5,
+            "fair_value": 60_000, "fair_upside": 0.20, "dividend_yield": 0.0,
+            "zone_status": "MUA TRONG VÙNG"}
     return Inputs(**{**base, **kw})
 
 
-def test_buy_when_fa_and_ta_agree():
-    r = recommend(_inputs(), CFG)
-    assert r.action == "MUA"
-    assert r.score == pytest.approx(0.6 * 80 + 0.4 * 70)
+@pytest.mark.parametrize("upside, expected", [(0.20, "MUA"), (0.10, "KHẢ QUAN"), (0.0, "NẮM GIỮ"),
+                                              (-0.10, "KÉM KHẢ QUAN"), (-0.30, "BÁN")])
+def test_rating_by_expected_return(upside, expected):
+    assert recommend(_inputs(fair_upside=upside), CFG).action == expected
 
 
-def test_strong_fa_but_weak_trend_is_watch_with_reason():
-    r = recommend(_inputs(fa_score=95, ta_score=30), CFG)     # tổng 69 nhưng TA < 45
-    assert r.action == "THEO DÕI"
-    assert any("xu hướng" in s for s in r.reasons)
-    r = recommend(_inputs(dcf_upside=-0.3), CFG)              # giá cao hơn DCF 30%
-    assert r.action == "THEO DÕI"
+def test_dividend_adds_to_expected_return_and_bear_market_raises_bar():
+    r = recommend(_inputs(fair_upside=0.12, dividend_yield=0.04), CFG)
+    assert r.action == "MUA" and r.expected_return == pytest.approx(0.16)
+    bear = recommend(_inputs(fair_upside=0.12, dividend_yield=0.04, regime="giảm"), CFG)
+    assert bear.action == "KHẢ QUAN"                            # cần ≥ 20% khi thị trường giảm
+    assert any("thị trường chung đang giảm" in s for s in bear.reasons)
 
 
-def test_avoid_on_low_score_or_distress_and_ta_only_fallback():
-    assert recommend(_inputs(fa_score=30, ta_score=30), CFG).action == "TRÁNH"
-    assert recommend(_inputs(z_em=0.9), CFG).action == "TRÁNH"
-    r = recommend(_inputs(fa_score=NAN, ta_score=70), CFG)
-    assert r.score == 70 and r.action == "MUA"
+def test_quality_gates_and_score_is_only_for_sorting():
+    weak = recommend(_inputs(fa_score=40), CFG)
+    assert weak.action == "KHẢ QUAN" and any("hạ một bậc" in s for s in weak.reasons)
+    trap = recommend(_inputs(fair_upside=0.5, z_em=0.9), CFG)
+    assert trap.action == "NẮM GIỮ"                             # rẻ nhưng nguy cơ tài chính
+    r = recommend(_inputs(fa_score=80, ta_score=10), CFG)       # FA tốt, TA xấu: vẫn MUA ...
+    assert r.action == "MUA" and r.timing == "Chờ xu hướng cải thiện"   # ... nhưng chờ thời điểm
+    assert r.score == pytest.approx(0.6 * 80 + 0.4 * 10)
+
+
+def test_timing_axis_and_not_rated_without_fair_value():
+    assert recommend(_inputs(ta_score=70), CFG).timing == "Vào được trong vùng mua"
+    assert recommend(_inputs(ta_score=50), CFG).timing == "Mua dần trong vùng mua"
+    assert recommend(_inputs(zone_status="CHỜ GIÁ"), CFG).timing == "Chờ giá về vùng mua"
+    r = recommend(_inputs(fair_upside=NAN, fa_score=NAN), CFG)
+    assert r.action == "KHÔNG XẾP HẠNG" and r.score == 70
     r = recommend(_inputs(first_target_rr=1.2, vol_annual=0.5), CFG)
     assert any("1.2R" in s for s in r.reasons) and any("biến động cao" in s for s in r.reasons)
 
@@ -77,3 +91,62 @@ def test_backtest_stop_waits_for_t2_and_includes_fees():
     assert res.stats["total"] == pytest.approx(expected)
     with pytest.raises(ValueError):
         backtest(df.head(10), score.head(10), BT)
+
+
+def test_backtest_regime_filter_and_liquidity_cap():
+    df = _frame([10_000] * 3 + [12_000] * 33).assign(volume=1_000)
+    score = pd.Series([70] * 36)                           # luôn đủ điểm mua, không bán
+    bear = pd.Series("giảm", index=df["date"])
+    # VNINDEX giảm: cần điểm ≥ 75 -> không mua
+    assert backtest(df, score, {**BT, "bear_entry_extra": 10}, bear).trades == []
+    # VNINDEX giảm, điểm đủ: chỉ dùng 50% vốn -> lãi 20% × 50%
+    res = backtest(df, score, {**BT, "bear_entry_extra": 0, "bear_position": 0.5}, bear)
+    assert res.stats["total"] == pytest.approx(0.5 * 0.2)
+    # Thanh khoản: GTGD 20 phiên ~10-12 triệu, vốn mỗi mã 50 triệu, lệnh ≤ 10% GTGD -> ~2% vốn < 10%
+    df = _frame([10_000] * 23 + [12_000] * 40).assign(volume=1_000)
+    score = pd.Series([np.nan] * 20 + [70] * 43)           # điểm TA có sau khi đủ 20 phiên GTGD
+    liq = {**BT, "capital": 50_000_000, "max_adv_pct": 0.1, "min_position": 0.1}
+    assert backtest(df, score, liq).trades == []
+    loose = backtest(df, score, {**liq, "min_position": 0.0})
+    assert loose.stats["total"] == pytest.approx(0.1 * 10_000_000 / 50_000_000 * 0.2)
+
+
+def test_backtests_compares_two_formulas(warehouse):
+    from vnsa import analysis
+
+    d = analysis.load("DEMO_A", need_fin=False)
+    res = analysis.backtests(d)
+    assert set(res) == {"Điểm TA (hiện tại)", "Phá nền 55 phiên"}
+    a, b = res.values()
+    assert len(a.equity) == len(b.equity) and a.equity.index[0] == b.equity.index[0]
+
+
+def test_timing_rule_modes():
+    from vnsa.recommend.engine import timing
+
+    x = _inputs(zone_status="MUA TRONG VÙNG")
+    assert timing(x, {**CFG, "timing_rule": "none"}).startswith("Trong vùng mua")
+    x.rule_state = {"holding": True, "stop": 52_300.0, "since": None, "signal_today": False,
+                    "rule": "trend"}
+    assert timing(x, {**CFG, "timing_rule": "trend"}) == ("Vào được — xu hướng tăng xác nhận, "
+                                                         "cắt lỗ động 52,300")
+    x.rule_state = {**x.rule_state, "holding": False}
+    assert timing(x, {**CFG, "timing_rule": "trend"}) == "Chờ tín hiệu xu hướng"
+    x.zone_status = "CHỜ GIÁ"                                    # định giá vẫn chặn trước
+    assert timing(x, {**CFG, "timing_rule": "trend"}) == "Chờ giá về vùng mua"
+
+
+def test_rule_state_reports_open_position():
+    from vnsa.recommend.strategies import rule_state
+
+    n = 400
+    close = pd.Series(np.linspace(10_000, 20_000, n))            # xu hướng tăng đều
+    ind = pd.DataFrame({"date": pd.bdate_range("2024-01-01", periods=n), "open": close,
+                        "high": close + 50, "low": close - 50, "close": close,
+                        "volume": 1_000.0, "atr": 100.0})
+    ind["sma50"] = ind["close"].rolling(50).mean()
+    ind["sma200"] = ind["close"].rolling(200).mean()
+    ind["vol_ma20"] = 1_000.0
+    st = rule_state(ind, pd.Series(np.nan, index=ind.index), None, "trend", 3.0,
+                    {**BT, "fee": 0, "sell_tax": 0}, 0.07)
+    assert st["holding"] and st["stop"] == pytest.approx(20_000 - 300)

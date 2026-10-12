@@ -22,7 +22,7 @@ import pandas as pd
 from vnsa.data.cleaning import repair_ohlc
 from vnsa.data.providers.base import DataProvider
 from vnsa.data.providers.csv_provider import normalize_prices
-from vnsa.fa.ratios import FIELDS
+from vnsa.fa.ratios import FIELDS, SECTOR_FIELDS
 
 # Khoản mục chuẩn -> (báo cáo, các item_id có thể gặp, mẫu tên tiếng Anh dự phòng).
 # Lấy dòng đầu tiên khớp và có số liệu.
@@ -71,21 +71,47 @@ MAPPING: dict[str, tuple[str, list[str], str]] = {
                       (r"^proceeds from (?:the )?issu\w* (?:of )?(?:shares|stocks|equity)"
                        r"|capital contribution")),
 }
+# Khoản mục ngân hàng / công ty chứng khoán: chỉ khớp item_id (đã dò thật VCB, SSI qua
+# scripts/probe_vnstock.py --items). Không có trong nguồn miễn phí: nợ xấu (NPL), CASA, CAR.
+SECTOR_MAPPING: dict[str, tuple[str, list[str]]] = {
+    "nii": ("income_statement", ["net_interest_income"]),
+    "toi": ("income_statement", ["total_operating_income"]),
+    "bank_opex": ("income_statement", ["general_and_admin_expenses"]),
+    "credit_provision": ("income_statement", ["provision_for_credit_losses"]),
+    "loans_gross": ("balance_sheet", ["loans_and_advances_to_customers"]),
+    "loan_loss_reserve": ("balance_sheet",
+                          ["less_provision_for_losses_on_loans_and_advances_to_customers"]),
+    "customer_deposits": ("balance_sheet", ["deposits_from_customers"]),
+    "sbv_balances": ("balance_sheet", ["balances_with_the_sbv"]),
+    "interbank_placements": ("balance_sheet",
+                             ["placements_with_and_loans_to_other_credit_institutions"]),
+    "trading_securities": ("balance_sheet", ["trading_securities"]),
+    "investment_securities": ("balance_sheet", ["investment_securities"]),
+    "margin_loans": ("balance_sheet", ["loans"]),
+    "fvtpl_assets": ("balance_sheet",
+                     ["financial_assets_at_fair_value_through_profit_or_loss_fvtpl"]),
+    "brokerage_revenue": ("income_statement", ["revenue_in_brokerage_services"]),
+    "operating_revenue": ("income_statement", ["operating_sales"]),
+}
 # VCI ghi chi phí/khoản chi bằng số âm; lưu số dương cho dễ dùng.
-POSITIVE = {"tax_expense", "interest_expense", "capex", "equity_issued"}
+POSITIVE = {"tax_expense", "interest_expense", "capex", "equity_issued", "bank_opex",
+            "credit_provision", "loan_loss_reserve"}
 STATEMENTS = ["income_statement", "balance_sheet", "cash_flow"]
 
 
-def _year_columns(df: pd.DataFrame) -> list[str]:
-    return [c for c in df.columns if re.fullmatch(r"\d{4}", str(c))]
+def _year_columns(df: pd.DataFrame, quarterly: bool = False) -> list[str]:
+    """Cột kỳ báo cáo: năm "2025" hoặc quý "2026-Q2" (định dạng VCI, đã dò thật)."""
+    pattern = r"\d{4}-Q[1-4]" if quarterly else r"\d{4}"
+    return [c for c in df.columns if re.fullmatch(pattern, str(c))]
 
 
-def _pick(df: pd.DataFrame, ids: list[str], pattern: str) -> pd.Series | None:
+def _pick(df: pd.DataFrame, ids: list[str], pattern: str | None,
+          quarterly: bool = False) -> pd.Series | None:
     """Dòng khớp item_id (theo thứ tự ưu tiên) hoặc tên tiếng Anh. Ưu tiên dòng có số khác 0
     (VCI có các dòng cũ "trước 2015" toàn số 0), sau đó mới đến dòng có số liệu bất kỳ."""
-    years = _year_columns(df)
+    years = _year_columns(df, quarterly)
     candidates = [df[df["item_id"] == i] for i in ids]
-    if "item_en" in df:
+    if pattern and "item_en" in df:
         en = df["item_en"].astype(str).str.strip()
         candidates.append(df[en.str.contains(pattern, case=False, regex=True)])
     rows = [pd.to_numeric(r[years], errors="coerce") for c in candidates for _, r in c.iterrows()]
@@ -98,24 +124,92 @@ def _pick(df: pd.DataFrame, ids: list[str], pattern: str) -> pd.Series | None:
     return None
 
 
-def standardize(statements: dict[str, pd.DataFrame], symbol: str) -> tuple[pd.DataFrame, list[str]]:
-    """Ba báo cáo dạng vnstock (dòng = khoản mục, cột = năm) -> bảng year + FIELDS (đồng).
-
-    Trả về (bảng, danh sách khoản mục không tìm thấy)."""
-    years = sorted({int(y) for df in statements.values() for y in _year_columns(df)})
-    out = pd.DataFrame({"year": years})
+def standardize(statements: dict[str, pd.DataFrame], symbol: str,
+                quarterly: bool = False) -> tuple[pd.DataFrame, list[str]]:
+    """Ba báo cáo dạng vnstock (dòng = khoản mục, cột = kỳ) -> bảng year (+ quarter) + FIELDS
+    (đồng). Trả về (bảng, danh sách khoản mục không tìm thấy)."""
+    periods = sorted({c for df in statements.values() for c in _year_columns(df, quarterly)})
+    out = pd.DataFrame({"period": periods})
+    out["year"] = out["period"].str[:4].astype(int)
+    if quarterly:
+        out["quarter"] = out["period"].str[-1].astype(int)
     missing = []
     for field in FIELDS:
         stmt, ids, pattern = MAPPING[field]
-        values = _pick(statements[stmt], ids, pattern) if stmt in statements else None
+        values = _pick(statements[stmt], ids, pattern, quarterly) if stmt in statements else None
         if values is None:
             missing.append(field)
             out[field] = np.nan
             continue
-        values.index = values.index.astype(int)
-        out[field] = out["year"].map(values.abs() if field in POSITIVE else values)
+        values.index = values.index.astype(str)
+        out[field] = out["period"].map(values.abs() if field in POSITIVE else values)
+    for field in SECTOR_FIELDS:                     # không báo thiếu (doanh nghiệp thường không có)
+        stmt, ids = SECTOR_MAPPING[field]
+        values = _pick(statements[stmt], ids, None, quarterly) if stmt in statements else None
+        if values is None:
+            out[field] = np.nan
+            continue
+        values.index = values.index.astype(str)
+        out[field] = out["period"].map(values.abs() if field in POSITIVE else values)
+    out = out.drop(columns="period")
     out.insert(0, "symbol", symbol.upper())
     return out, missing
+
+
+def standardize_profile(overview: pd.DataFrame) -> dict:
+    """Hồ sơ doanh nghiệp (Company.overview của VCI) -> các số dùng cho phân tích.
+    Số cổ phiếu lưu hành = vốn hoá / giá hiện tại (VCI trả cột issue_share trùng tên, có cả số trước
+    và sau khi phát hành thêm; vốn hoá luôn theo số cổ phiếu hiện tại)."""
+    if overview is None or len(overview) == 0:
+        return {}
+    row = overview.loc[:, ~overview.columns.duplicated()].iloc[0]
+
+    def num(key):
+        v = pd.to_numeric(row.get(key), errors="coerce")
+        return float(v) if not pd.isna(v) else float("nan")
+
+    cap, price = num("market_cap"), num("current_price")
+    shares = cap / price if cap > 0 and price > 0 else float("nan")
+    if pd.isna(shares):
+        dup = pd.to_numeric(overview.filter(like="issue_share").iloc[0], errors="coerce")
+        shares = float(dup.max()) if dup.notna().any() else float("nan")
+    return {
+        "shares_out": shares,
+        "foreign_pct": num("foreigner_percentage"),
+        "foreign_max_pct": num("maximum_foreign_percentage"),
+        "state_pct": num("state_percentage"),
+        "free_float_pct": num("free_float_percentage"),
+        "avg_value_1m": num("average_match_value1_month"),
+        "analyst_target": num("target_price"),
+        "analyst_rating": row.get("rating") if isinstance(row.get("rating"), str) else None,
+    }
+
+
+def standardize_dividends(events: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Sự kiện quyền (Company.events của VCI, category DIVIDEND) -> symbol, exright_date,
+    cash_per_share (đồng/cp, cổ tức tiền), stock_ratio (tỷ lệ cổ tức/thưởng cổ phiếu), title."""
+    cols = ["symbol", "exright_date", "cash_per_share", "stock_ratio", "title"]
+    if events is None or len(events) == 0 or "category" not in events:
+        return pd.DataFrame(columns=cols)
+    ev = events[events["category"].astype(str).str.upper() == "DIVIDEND"].copy()
+    date = pd.to_datetime(ev.get("exright_date"), errors="coerce")
+    cash = pd.to_numeric(ev.get("value_per_share"), errors="coerce")
+    ratio = pd.to_numeric(ev.get("exercise_ratio"), errors="coerce")
+    out = pd.DataFrame({"symbol": symbol.upper(), "exright_date": date,
+                        "cash_per_share": cash.where(cash > 0),
+                        "stock_ratio": ratio.where(cash.isna() | (cash <= 0)),
+                        "title": ev.get("event_title_vi")})
+    out = out.dropna(subset=["exright_date"])
+    # nguồn có thể trả cùng một đợt chia nhiều lần (thông báo, điều chỉnh): bỏ dòng trùng
+    out = out.drop_duplicates(subset=["exright_date", "cash_per_share", "stock_ratio"])
+    return out.sort_values("exright_date").reset_index(drop=True)
+
+
+def _vnstock_company(symbol: str, method: str) -> pd.DataFrame:
+    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
+    from vnstock import Company
+
+    return getattr(Company(source="VCI", symbol=symbol.upper()), method)()
 
 
 def _vnstock_statements(symbol: str, period: str = "year") -> dict[str, pd.DataFrame]:
@@ -218,10 +312,14 @@ class VnstockProvider(DataProvider):
 
     def __init__(self, get_statements: Callable[[str], dict[str, pd.DataFrame]] = _vnstock_statements,
                  get_listing: Callable[[], pd.DataFrame] = _vnstock_listing,
-                 get_history: Callable[[str, str, str], pd.DataFrame] = _vnstock_history):
+                 get_history: Callable[[str, str, str], pd.DataFrame] = _vnstock_history,
+                 get_quarterly: Callable[[str], dict[str, pd.DataFrame]] | None = None,
+                 get_company: Callable[[str, str], pd.DataFrame] = _vnstock_company):
         self.get_statements = get_statements   # thay được trong test, không cần mạng
         self.get_listing = get_listing
         self.get_history = get_history
+        self.get_quarterly = get_quarterly or (lambda s: _vnstock_statements(s, "quarter"))
+        self.get_company = get_company
         self.repaired: list[str] = []
         self.missing: list[str] = []
 
@@ -253,3 +351,15 @@ class VnstockProvider(DataProvider):
         """BCTC năm chuẩn hoá: symbol, year + FIELDS. Khoản không có thì NaN (xem self.missing)."""
         df, self.missing = standardize(self.get_statements(symbol), symbol)
         return df
+
+    def quarterly(self, symbol: str) -> pd.DataFrame:
+        """BCTC quý chuẩn hoá: symbol, year, quarter + FIELDS (bản miễn phí: 4 quý gần nhất)."""
+        df, self.missing = standardize(self.get_quarterly(symbol), symbol, quarterly=True)
+        return df
+
+    def profile(self, symbol: str) -> dict:
+        """Số cổ phiếu lưu hành, sở hữu nước ngoài/nhà nước, free float, GTGD bình quân 1 tháng."""
+        return standardize_profile(self.get_company(symbol, "overview"))
+
+    def dividends(self, symbol: str) -> pd.DataFrame:
+        return standardize_dividends(self.get_company(symbol, "events"), symbol)
