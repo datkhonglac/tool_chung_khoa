@@ -134,7 +134,8 @@ PROFILE_COLUMNS = ["shares_out", "foreign_pct", "foreign_max_pct", "state_pct", 
                    "avg_value_1m", "analyst_target", "analyst_rating"]
 PROFILE_TYPES = {c: "VARCHAR" if c == "analyst_rating" else "DOUBLE" for c in PROFILE_COLUMNS}
 SIGNAL_COLUMNS = ["as_of", "symbol", "action", "score", "fa_score", "ta_score", "price",
-                  "fair_value", "zone_status", "buy_low", "buy_high", "stop", "target", "params"]
+                  "fair_value", "zone_status", "buy_low", "buy_high", "stop", "target", "params",
+                  "macro_industry", "macro_market"]
 
 
 class Store:
@@ -148,6 +149,9 @@ class Store:
                 self.con.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {f} DOUBLE")
         # giá đóng cửa chưa điều chỉnh (NULL nếu nguồn không có)
         self.con.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS close_raw DOUBLE")
+        # điểm vĩ mô lúc khuyến nghị (lớp vĩ mô, để review-signals chấm xem vĩ mô có ích không)
+        for c in ("macro_industry", "macro_market"):
+            self.con.execute(f"ALTER TABLE signals ADD COLUMN IF NOT EXISTS {c} DOUBLE")
         for c, t in [("industry3", "VARCHAR"), ("industry4", "VARCHAR"), *PROFILE_TYPES.items(),
                      ("profile_at", "TIMESTAMP")]:
             self.con.execute(f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {c} {t}")

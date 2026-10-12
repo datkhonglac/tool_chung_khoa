@@ -385,3 +385,49 @@ def test_macro_guard_lowers_confidence_only_when_clearly_adverse():
     assert macro_guard(mv(-0.4, 0.8), cfg) is None                    # chưa đủ bất lợi
     assert macro_guard(mv(-0.9, 0.5), cfg) is None                    # độ phủ thấp
     assert macro_guard(None, cfg) is None
+
+
+def test_sensitivity_detects_sign_and_conflict():
+    from vnsa.macro.sensitivity import sensitivity, verdict
+
+    rng = np.random.default_rng(7)
+    n = 96
+    months = pd.date_range("2018-01-31", periods=n, freq="ME")
+    oil = 60 * np.exp(np.cumsum(rng.normal(0, 0.08, n)))
+    mkt = np.exp(np.cumsum(rng.normal(0.005, 0.05, n)))
+    oil_ch = np.r_[0, np.diff(oil) / oil[:-1]]
+    mkt_ch = np.r_[0, np.diff(mkt) / mkt[:-1]]
+    stock_ret = 0.8 * mkt_ch + 0.6 * oil_ch + rng.normal(0, 0.02, n)   # dầu tăng -> mã tăng
+    stock = 100 * np.cumprod(1 + stock_ret)
+    prices = pd.DataFrame({"date": months, "close": stock})
+    index = pd.DataFrame({"date": months, "close": 1000 * mkt})
+    data = pd.DataFrame({"series": "brent", "date": months, "value": oil})
+    cat = {"brent": Series("brent", "Dầu Brent", "yahoo", "BZ=F", freq="D", kind="change"),
+           "x": Series("x", "Thiếu", "manual", freq="M", kind="level", neutral=0, scale=1)}
+    res = {r.series: r for r in sensitivity(prices, index, [
+        {"series": "brent", "sign": 1}, {"series": "x", "sign": 1}], data, cat)}
+    assert res["brent"].verdict == "đúng dấu" and res["brent"].beta_sd > 0 and res["brent"].t > 2
+    assert res["brent"].n == n - 1 and res["x"].verdict == "thiếu lịch sử"
+    flipped = sensitivity(prices, index, [{"series": "brent", "sign": -1}], data, cat)[0]
+    assert flipped.conflict
+    assert verdict(1, 0.3, 1.5) == "yếu" and verdict(1, 0.1, 0.4) == "chưa thấy liên hệ"
+
+
+def test_signals_store_macro_scores_and_review_groups(warehouse):
+    from vnsa import analysis
+    from vnsa.recommend.review import macro_label, summarize_macro
+
+    with Store(warehouse) as store:
+        store.write_macro(_monthly("usd_vnd", list(np.linspace(23000, 26000, 72)), daily=True))
+    a = analysis.assess("DEMO_A")
+    a.rec.inputs.macro_industry = -0.45
+    analysis.record_signals([(a.rec, a.plan)])
+    with Store(warehouse) as store:
+        sig = store.signals("DEMO_A")
+    assert sig["macro_industry"].iloc[-1] == pytest.approx(-0.45)
+    assert not pd.isna(sig["macro_market"].iloc[-1])                 # nhóm tỷ giá có số
+    assert macro_label(0.31) == "Thuận lợi" and macro_label(float("nan")) == "chưa có điểm"
+    ev = pd.DataFrame({"horizon": [20, 20, 20], "macro_industry": [0.5, -0.5, -0.6],
+                       "excess": [0.05, -0.02, -0.04], "ret": [0.06, -0.01, -0.03]})
+    by = summarize_macro(ev).set_index("macro")
+    assert by.loc["Thuận lợi", "n"] == 1 and by.loc["Bất lợi", "avg_excess"] == pytest.approx(-0.03)

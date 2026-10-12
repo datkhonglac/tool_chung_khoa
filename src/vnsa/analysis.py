@@ -608,6 +608,7 @@ class MacroView:
     readings: dict               # chuỗi -> macro.signals.Reading
     risk_free: float
     rf_source: str
+    sensitivity: list = field(default_factory=list)   # macro.sensitivity.Sensitivity theo yếu tố
 
 
 def macro_mapping() -> dict:
@@ -642,6 +643,25 @@ def macro_view(symbol: str) -> MacroView | None:
     ind = industry_score(symbol, company, rs, mapping, cfg)
     rf, src = risk_free()
     return MacroView(market, groups, ind, rs, rf, src)
+
+
+def macro_sensitivity(d: Data) -> list:
+    """Độ nhạy thực nghiệm của mã với từng yếu tố vĩ mô của ngành (macro/sensitivity.py), trên
+    lịch sử giá trong kho; [] nếu ngành chưa có ánh xạ hoặc kho chưa có số vĩ mô."""
+    from vnsa.data.store import Store
+    from vnsa.macro.catalog import catalog
+    from vnsa.macro.score import drivers_for
+    from vnsa.macro.sensitivity import sensitivity
+
+    with Store(path("warehouse")) as store:
+        data = store.macro()
+        company = store.company(d.symbol)
+    found = drivers_for(d.symbol, company, macro_mapping())
+    if data.empty or found is None or d.prices.empty:
+        return []
+    mc = settings().get("macro", {})
+    return sensitivity(d.prices, d.index, found[1], data, catalog(),
+                       mc.get("sensitivity_min_months", 36))
 
 
 @dataclass
@@ -717,6 +737,10 @@ def assess(symbol: str) -> Assessment:
     rec = recommend(inputs, settings()["recommend"], notes)
     try:
         mv = macro_view(d.symbol)
+        if mv is not None:
+            mv.sensitivity = macro_sensitivity(d)
+            inputs.macro_market = mv.market.score
+            inputs.macro_industry = mv.industry.score if mv.industry is not None else nan
     except Exception as e:  # noqa: BLE001 - lớp vĩ mô chỉ tham khảo, lỗi không chặn phân tích
         mv = None
         rec.reasons.append(f"không đọc được số vĩ mô ({e})")
@@ -783,6 +807,7 @@ def record_signals(items) -> int:
             "buy_low": zn.low if zn else nan, "buy_high": zn.high if zn else nan,
             "stop": p.stop if p else nan,
             "target": p.targets[0].price if p and p.targets else nan, "params": params,
+            "macro_industry": x.macro_industry, "macro_market": x.macro_market,
         })
     with Store(path("warehouse")) as store:
         n = store.write_signals(pd.DataFrame(rows))

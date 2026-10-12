@@ -58,6 +58,8 @@ class Inputs:
     regime: str = "trung tính"          # trạng thái VNINDEX: tăng | trung tính | giảm
     zone_status: str = ""               # MUA TRONG VÙNG | CHỜ GIÁ (ta/entry.py)
     rule_state: dict | None = None      # trạng thái quy tắc thời điểm đã kiểm định (strategies)
+    macro_industry: float = float("nan")  # điểm vĩ mô ngành −1..+1 (chỉ lưu và chấm lại, chưa vào điểm)
+    macro_market: float = float("nan")    # điểm bối cảnh Việt Nam −1..+1
 
 
 @dataclass

@@ -221,6 +221,13 @@ def macro_lines(mv, top: int = 4) -> list[str]:
                 + [f"{d.reading.name} (số cũ {fmt_period(d.reading)})" for d in ind.stale])
         if gaps:
             lines.append("  ? Thiếu: " + ", ".join(gaps))
+    sens = [x for x in getattr(mv, "sensitivity", []) if x.verdict != "thiếu lịch sử"]
+    if sens:
+        ok = sum(x.verdict == "đúng dấu" for x in sens)
+        bad = [f"{x.name} (t {_signed(x.t, 1)})" for x in sens if x.conflict]
+        lines.append(f"Kiểm chứng bằng {max(x.n for x in sens)} tháng giá: {ok}/{len(sens)} yếu tố "
+                     "đúng dấu rõ" + (f"; NGƯỢC dấu: {', '.join(bad)} — xem lại macro_map.toml"
+                                      if bad else ""))
     lines.append(f"Lãi suất phi rủi ro trong WACC: {vn_pct(mv.risk_free)} ({mv.rf_source})")
     return lines
 

@@ -233,6 +233,11 @@ def _macro_symbols(symbols: list[str]) -> int:
             code = 1
             continue
         print(f"{sym} — {ind.scope}: {_score_txt(ind)}, độ phủ {ind.coverage:.0%}")
+        sens = {}
+        try:
+            sens = {x.series: x for x in analysis.macro_sensitivity(analysis.load(sym, need_fin=False))}
+        except analysis.DataMissing:
+            pass
         for d in sorted(ind.drivers, key=lambda d: -abs(d.contribution) if d.used else 1):
             r = d.reading
             if r is None or r.date is None:
@@ -243,13 +248,18 @@ def _macro_symbols(symbols: list[str]) -> int:
             state = (f"đóng góp {_signed(d.contribution)}" if d.used
                      else "số cũ, không tính" if r.stale else r.basis)
             z = "" if not r.ok else f", z {_signed(r.z, 1)}"
+            x = sens.get(d.series)
+            check = ("" if x is None or x.verdict == "thiếu lịch sử" else
+                     f" · {x.n} tháng: {_signed(x.beta_sd, 1)}%/1 độ lệch, t {_signed(x.t, 1)} → "
+                     f"{x.verdict}")
             print(f"  {mark} {r.name[:30]:<30} {fmt_change(r).replace('-', '−'):>13} "
-                  f"({fmt_period(r)}{z}) {state} · {d.why}")
+                  f"({fmt_period(r)}{z}) {state} · {d.why}{check}")
         guard = macro_guard(mv)
         if guard:
             print(f"  ! {guard}")
         print()
-    print("Dấu + / −: yếu tố đang thuận / nghịch cho ngành. Chỉ THAM KHẢO, chưa vào điểm xếp hạng.")
+    print("Dấu + / −: yếu tố đang thuận / nghịch cho ngành. Chỉ THAM KHẢO, chưa vào điểm xếp hạng.\n"
+          "Kiểm chứng: hồi quy lợi nhuận tháng của mã theo VNINDEX và biến động yếu tố (|t| ≥ 2 là rõ).")
     return code
 
 
@@ -884,6 +894,17 @@ def cmd_review_signals(args) -> int:
               f"{_pct(r.avg_ret_from_zone):>13}")
     print("\nMUA/KHẢ QUAN tốt khi 'Vượt VNI' dương, KÉM KHẢ QUAN/BÁN tốt khi âm. Dưới ~30 mẫu chỉ "
           "để tham khảo.")
+    from vnsa.recommend.review import summarize_macro
+
+    mc = settings().get("macro", {})
+    by_macro = summarize_macro(ev, mc.get("favorable", 0.3), mc.get("unfavorable", -0.3))
+    if not by_macro.empty and (by_macro["macro"] != "chưa có điểm").any():
+        print(f"\nTheo vĩ mô ngành lúc khuyến nghị:\n{'Kỳ':>4} {'Vĩ mô':<14}{'Mẫu':>5}"
+              f"{'Vượt VNI':>10}{'Thắng':>7}")
+        for r in by_macro.itertuples():
+            print(f"{r.horizon:>4} {r.macro:<14}{r.n:>5}{_pct(r.avg_excess):>10}"
+                  f"{_pct(r.win_rate, 0):>7}")
+        print("Vĩ mô có ích khi nhóm Thuận lợi vượt VNI cao hơn rõ nhóm Bất lợi (đủ mẫu, nhiều kỳ).")
     if args.detail:
         print("\n" + ev.to_string(index=False))
     return 0
