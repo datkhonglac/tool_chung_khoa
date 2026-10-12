@@ -53,8 +53,9 @@ def report_text(symbol: str, _stamp: float) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def macro(symbol: str, _stamp: float):
-    """(MacroView | None, độ nhạy, bảng mọi chuỗi vĩ mô trong kho)."""
+def macro(symbol: str, stamp: float, warehouse: str):
+    """(MacroView | None, độ nhạy, bảng mọi chuỗi vĩ mô trong kho). Khoá đệm gồm thời điểm sửa kho
+    và đường dẫn kho (tham số không có dấu _ nên Streamlit đưa vào khoá) — tải số vĩ mô mới là thấy."""
     from vnsa.data.store import Store
 
     mv = analysis.macro_view(symbol)
@@ -328,7 +329,7 @@ with tab_macro:
     from vnsa.macro.catalog import catalog
     from vnsa.macro.signals import fmt_change, fmt_period, fmt_value
 
-    mv, sens, mdata = macro(symbol, stamp)
+    mv, sens, mdata = macro(symbol, stamp, str(path("warehouse")))
     if mv is None:
         st.info("Kho chưa có số vĩ mô. Chạy `python -m vnsa.cli fetch-macro` (số Việt Nam nhập tay "
                 "ở config/macro_manual.toml) rồi tải lại trang.")
