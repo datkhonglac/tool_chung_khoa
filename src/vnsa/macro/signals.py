@@ -132,7 +132,7 @@ def fmt_change(r: Reading) -> str:
     """Biến động kèm đơn vị: % với change; điểm % với diff/ytd; so ngưỡng với level."""
     if np.isnan(r.change):
         return "—"
-    x = f"{r.change:+.1f}".replace(".", ",")
+    x = f"{r.change:+.1f}".replace(".", ",").replace("-", "−")
     if r.kind == "change":
         return f"{x}%"
     if r.kind == "level":

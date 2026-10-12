@@ -36,7 +36,7 @@ PINK_PAGE = "https://www.worldbank.org/en/research/commodity-markets"
 COLUMNS = ["series", "date", "value", "source"]
 
 
-def _http_get(url: str, timeout: float = 60) -> bytes:
+def _http_get(url: str, timeout: float = 30) -> bytes:
     req = urllib.request.Request(url, headers=FRED_HEADERS if "stlouisfed" in url else HEADERS)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()

@@ -199,7 +199,7 @@ def cmd_macro(args) -> int:
         note = "CŨ" if r.stale else ""
         note += ("" if r.basis.startswith("z") else (" " if note else "") + r.basis)
         print(f"{sid:<21}{r.name[:32]:<33}{fmt_period(r):>11}{fmt_value(r):>12}"
-              f"{fmt_change(r).replace('-', '−'):>15}{z:>6}  {note}")
+              f"{fmt_change(r):>15}{z:>6}  {note}")
     empty = [sid for sid, r in rs.items() if r.date is None]
     if empty:
         print(f"\nChưa có số ({len(empty)}): {', '.join(empty)}")
@@ -252,7 +252,7 @@ def _macro_symbols(symbols: list[str]) -> int:
             check = ("" if x is None or x.verdict == "thiếu lịch sử" else
                      f" · {x.n} tháng: {_signed(x.beta_sd, 1)}%/1 độ lệch, t {_signed(x.t, 1)} → "
                      f"{x.verdict}")
-            print(f"  {mark} {r.name[:30]:<30} {fmt_change(r).replace('-', '−'):>13} "
+            print(f"  {mark} {r.name[:30]:<30} {fmt_change(r):>13} "
                   f"({fmt_period(r)}{z}) {state} · {d.why}{check}")
         guard = macro_guard(mv)
         if guard:

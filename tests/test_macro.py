@@ -298,13 +298,10 @@ def test_refresh_fetches_when_stale_and_loads_manual(warehouse, tmp_path, monkey
     with Store(warehouse) as store:
         data = store.macro()
     assert set(data["series"]) == {"us_10y", "rubber", "usd_jpy", "usd_vnd", "jpy_vnd", "vn_cpi"}
-    status, _ = refresh(20, provider=fake)              # urea chưa có -> vẫn coi là cũ, tải lại
+    status, detail = refresh(20, provider=fake)    # urea lỗi: không bắt mọi lượt tải lại ngay
+    assert status == "skip" and fake.calls == 5 and "1 số nhập tay" in detail
+    status, _ = refresh(0, provider=fake)              # đến hạn làm mới: thử lại cả urea
     assert status == "ok" and fake.calls == 10
-    with Store(warehouse) as store:
-        store.write_macro(pd.DataFrame({"series": "urea", "date": [pd.Timestamp("2026-09-01")],
-                                        "value": [400.0], "source": "x"}))
-    status, detail = refresh(20, provider=fake)
-    assert status == "skip" and fake.calls == 10 and "1 số nhập tay" in detail
 
 
 def _monthly(sid: str, values, daily: bool = False) -> pd.DataFrame:

@@ -175,12 +175,17 @@ class Updater:
         return Step(label, "ok", note)
 
     def _download(self, sym: str, start, end) -> pd.DataFrame:
-        """Thử lần lượt các nguồn giá trong self._order; ghi nhận nguồn đã dùng vào self._used."""
+        """Thử lần lượt các nguồn giá trong self._order; ghi nhận nguồn đã dùng vào self._used.
+        Bỏ phiên chưa đóng cửa (sau phiên đã đóng gần nhất): trong giờ giao dịch nguồn có thể trả
+        dòng của phiên hôm nay với giá 0 hoặc giá tạm — không được làm hỏng cả lần cập nhật."""
         errors = []
         self._fallback_reason = None
+        closed = last_session(self.now(), self.cfg["market_close_hour"])
         for prov in self._order:
             try:
                 df = prov.ohlcv(sym, start, end)
+                if not df.empty:
+                    df = df[pd.to_datetime(df["date"]) <= closed].reset_index(drop=True)
                 if df.empty:
                     raise ValueError(f"không có giá {sym} từ {start} đến {end}")
             except Exception as e:  # noqa: BLE001 - thử nguồn kế tiếp

@@ -85,8 +85,10 @@ def refresh(max_age_hours: float = 20, years: int = 10, provider=None,
             return "error", f"số nhập tay: {e}"
         auto = [sid for sid, s in cat.items() if s.auto]
         loaded = store.macro_loaded_at()
+        # tuổi = lần tải cũ nhất trong các chuỗi ĐÃ có; chuỗi lỗi (nguồn hỏng) được thử lại ở lần
+        # làm mới kế tiếp, không làm mọi lượt phân tích phải chờ nguồn đó
         times = [loaded[s] for s in auto if s in loaded]
-        oldest = min(times) if len(times) == len(auto) else None
+        oldest = min(times) if times else None
         age = (pd.Timestamp.now() - oldest).total_seconds() / 3600 if oldest is not None else None
         if age is not None and age < max_age_hours:
             return "skip", f"số vĩ mô tải {age:.0f} giờ trước; {n_manual} số nhập tay"
