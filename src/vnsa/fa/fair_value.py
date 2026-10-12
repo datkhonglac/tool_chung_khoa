@@ -216,20 +216,34 @@ def weighted_value(methods: dict[str, float], weights: dict[str, float]
     return float(sum(ok[k] * w for k, w in used.items())), used, notes
 
 
-def eps_trend(fin: pd.DataFrame, current=None, years: int = 3) -> float:
-    """Tăng trưởng lợi nhuận (năm): CAGR LNST công ty mẹ tối đa `years` năm BCTC gần nhất; nếu số
+def _vn(x: float, spec: str) -> str:
+    """Số trong ghi chú hiện trên thẻ báo cáo theo kiểu Việt Nam: 13,6% · 52.100 · −28,8%."""
+    return (f"{x:{spec}}".replace(",", "_").replace(".", ",").replace("_", ".")
+            .replace("-", "−"))
+
+
+def eps_trend_detail(fin: pd.DataFrame, current=None, years: int = 3) -> tuple[float, str]:
+    """(tăng trưởng, mô tả cơ sở). CAGR LNST công ty mẹ tối đa `years` năm BCTC gần nhất; nếu số
     TTM (current) thấp hơn năm gần nhất thì lấy mức giảm đó nếu tệ hơn. NaN nếu thiếu/âm."""
-    ni = fin.sort_values("year")["net_income_parent"].dropna()
+    data = fin.sort_values("year")[["year", "net_income_parent"]].dropna()
+    ni, yr = data["net_income_parent"], data["year"]
     span = min(years, len(ni) - 1)
-    g = float("nan")
+    g, basis = float("nan"), ""
     if span >= 1 and ni.iloc[-1 - span] > 0 and ni.iloc[-1] > 0:
         g = (ni.iloc[-1] / ni.iloc[-1 - span]) ** (1 / span) - 1
+        basis = f"{_vn(g, '+.1%')}/năm {int(yr.iloc[-1 - span])}–{int(yr.iloc[-1])}"
     is_ttm = current is not None and str(getattr(current, "basis", "")).startswith("TTM")
     ttm = current.net_income_parent if is_ttm else None
     if ttm is not None and not pd.isna(ttm) and len(ni) and ni.iloc[-1] > 0:
         g_ttm = ttm / ni.iloc[-1] - 1
-        g = g_ttm if pd.isna(g) else min(g, g_ttm)
-    return float(g)
+        if pd.isna(g) or g_ttm < g:
+            g, basis = g_ttm, f"{current.basis} {_vn(g_ttm, '+.1%')} so với năm {int(yr.iloc[-1])}"
+    return float(g), basis
+
+
+def eps_trend(fin: pd.DataFrame, current=None, years: int = 3) -> float:
+    """Tăng trưởng lợi nhuận dùng để chặn P/E mục tiêu (xem eps_trend_detail)."""
+    return eps_trend_detail(fin, current, years)[0]
 
 
 def roe_factor(hist: pd.DataFrame, roe_now: float) -> tuple[float, float]:
@@ -330,16 +344,16 @@ def quality_adjust(hist: pd.DataFrame, fin: pd.DataFrame, current, cfg: dict) ->
         f, roe_med = roe_factor(hist, roe_now)
         out["roe_factor"] = f
         if f < 0.95:
-            out["notes"].append(f"ROE hiện tại {roe_now:.1%} thấp hơn trung vị lịch sử {roe_med:.1%}"
-                                f": P/B lịch sử nhân {f:.2f}")
+            out["notes"].append(f"ROE hiện tại {_vn(roe_now, '.1%')} thấp hơn trung vị lịch sử "
+                                f"{_vn(roe_med, '.1%')}: P/B lịch sử nhân {_vn(f, '.2f')}")
     floor = cfg.get("no_rerate_below")
     if floor is not None:
-        g = eps_trend(fin, current)
+        g, basis = eps_trend_detail(fin, current)
         out["growth"] = g
         if not pd.isna(g) and g < floor:
             out["no_rerate"] = True
-            out["notes"].append(f"lợi nhuận đang giảm ({g:+.1%}/năm): không kỳ vọng P/E tăng lại "
-                                "về trung vị quá khứ/ngành")
+            out["notes"].append(f"lợi nhuận đang giảm ({basis}): không kỳ vọng P/E tăng lại về "
+                                "trung vị quá khứ/ngành")
     return out
 
 
@@ -353,6 +367,7 @@ def cap_by_consensus(fair: FairValue, target: float, gap: float) -> FairValue:
     fair.value = target * (1 + gap)
     if not pd.isna(fair.p10):
         fair.p10 = min(fair.p10, fair.value)
-    fair.notes.append(f"giá trị mô hình {fair.uncapped:,.0f} cao hơn {gap:.0%} so với giá mục tiêu "
-                      f"CTCK {target:,.0f}: dùng {fair.value:,.0f} để xếp hạng")
+    fair.notes.append(f"giá trị mô hình {_vn(fair.uncapped, ',.0f')}đ cao hơn {gap:.0%} so với giá "
+                      f"mục tiêu CTCK {_vn(target, ',.0f')}đ: dùng {_vn(fair.value, ',.0f')}đ để "
+                      "xếp hạng")
     return fair

@@ -255,6 +255,9 @@ def test_eps_trend_and_roe_factor():
     assert fv.eps_trend(fin, ttm) == pytest.approx(min(g, 120 / 150 - 1))
     year = SimpleNamespace(basis="năm 2025", net_income_parent=150 * B)
     assert fv.eps_trend(fin, year) == pytest.approx(g)                  # số năm không tính là TTM
+    assert fv.eps_trend_detail(fin, ttm)[1] == "−27,9%/năm 2022–2025"     # 3 năm tệ hơn TTM
+    worse = SimpleNamespace(basis="TTM Q2/2026", net_income_parent=90 * B)
+    assert fv.eps_trend_detail(fin, worse)[1] == "TTM Q2/2026 −40,0% so với năm 2025"
     hist = pd.DataFrame({"roe": [0.44, 0.25, 0.16, 0.125]})
     f, med = fv.roe_factor(hist, 0.125)
     assert med == pytest.approx(0.205) and f == pytest.approx(0.125 / 0.205)
@@ -274,6 +277,8 @@ def test_quality_adjust_lowers_pb_and_blocks_pe_rerating():
     assert q.value < plain.value
     assert any("ROE hiện tại" in n for n in q.notes)
     assert any("lợi nhuận đang giảm" in n for n in q.notes)
+    roe_note = next(n for n in q.notes if "ROE hiện tại" in n)
+    assert "," in roe_note and "." not in roe_note                       # 12,5% chứ không 12.5%
     growing = fv.combine(price, _fundamentals("X"), px, reversion=0.5,
                          quality={"roe_adjust": True, "no_rerate_below": -0.05})
     plain_g = fv.combine(price, _fundamentals("X"), px, reversion=0.5)
@@ -284,7 +289,7 @@ def test_cap_by_consensus():
     fair = fv.FairValue(price=33_800, methods={}, value=77_353, p10=70_000, p90=130_000)
     fv.cap_by_consensus(fair, 52_100, 0.3)
     assert fair.value == pytest.approx(52_100 * 1.3) and fair.uncapped == 77_353
-    assert fair.p10 <= fair.value and "giá mục tiêu CTCK" in fair.notes[-1]
+    assert fair.p10 <= fair.value and "giá mục tiêu CTCK 52.100đ" in fair.notes[-1]
     ok = fv.FairValue(price=33_800, methods={}, value=60_000)
     fv.cap_by_consensus(ok, 52_100, 0.3)                                # trong biên: giữ nguyên
     assert ok.value == 60_000 and np.isnan(ok.uncapped)
