@@ -422,3 +422,49 @@ def test_study_picks_strong_groups_without_lookahead():
     assert ("Toàn bộ", "Bộ lọc (phần giá)") in p.index and ("từ 06/2021", "VNINDEX") in p.index
     assert p.loc[("Toàn bộ", "Bộ lọc (phần giá)"), "cagr"] > p.loc[("Toàn bộ", "Rổ chia đều mọi mã"), "cagr"]
     assert "KIỂM ĐỊNH SÀNG LỌC" in format_study(res)
+
+
+@pytest.mark.parametrize(("icb2", "icb3", "icb4", "group"), [
+    # tên ngành ICB thật (bảng --groups, chạy trên GitHub 12/10/2026)
+    ("Hóa chất", "Hóa chất", "Sản phẩm hóa dầu, Nông dược & Hóa chất khác", "Hoá chất, phân bón"),
+    ("Hóa chất", "Hóa chất", "Nhựa, cao su & sợi", "Cao su, nhựa"),
+    ("Điện, nước & xăng dầu khí đốt", "Nước & Khí đốt", "Nước", "Điện, nước"),
+    ("Điện, nước & xăng dầu khí đốt", "Nước & Khí đốt", "Phân phối xăng dầu & khí đốt", "Dầu khí"),
+    ("Điện, nước & xăng dầu khí đốt", "Sản xuất & Phân phối Điện", "Sản xuất & Phân phối Điện",
+     "Điện, nước"),
+    ("Hàng & Dịch vụ Công nghiệp", "Điện tử & Thiết bị điện", "Thiết bị điện",
+     "Hàng & Dịch vụ Công nghiệp"),
+    ("Bất động sản", "Bất động sản", "Tư Vấn, Định giá, Môi giới Bất động sản", "Bất động sản"),
+    ("Dịch vụ tài chính", "Dịch vụ tài chính", "Môi giới chứng khoán", "Chứng khoán"),
+    ("Y tế", "Dược phẩm", "Dược phẩm", "Dược phẩm, y tế"),
+    ("Y tế", "Dược phẩm", "Công nghệ sinh học", "Dược phẩm, y tế"),
+    ("Hàng cá nhân & Gia dụng", "Hàng cá nhân", "Hàng May mặc", "Dệt may"),
+    ("Xây dựng và Vật liệu", "Xây dựng và Vật liệu", "Vật liệu xây dựng & Nội thất",
+     "Vật liệu xây dựng"),
+    ("Xây dựng và Vật liệu", "Xây dựng và Vật liệu", "Xây dựng", "Xây dựng"),
+    ("Thực phẩm và đồ uống", "Sản xuất thực phẩm", "Nuôi trồng nông & hải sản",
+     "Nông nghiệp, thuỷ sản"),
+    ("Du lịch và Giải trí", "Du lịch & Giải trí", "Hàng không", "Hàng không, sân bay"),
+    ("Tài nguyên Cơ bản", "Kim loại", "Thép và sản phẩm thép", "Thép"),
+])
+def test_real_icb_names_map_to_expected_groups(icb2, icb3, icb4, group):
+    from vnsa.analysis import macro_mapping
+    from vnsa.screen.groups import industry_group
+
+    company = {"industry": icb2, "industry3": icb3, "industry4": icb4, "model": "general"}
+    assert industry_group(company, macro_mapping()) == group
+
+
+def test_full_run_report_lists_buys_outside_top_groups(market_db, monkeypatch):
+    from vnsa.screen import run as screen_run
+    from vnsa.screen.report import format_picks
+
+    cfg = {**screen_run.screen_cfg(), "min_members": 1, "top_industries": 1, "min_fa": 0}
+    monkeypatch.setattr(screen_run, "screen_cfg", lambda: cfg)
+    monkeypatch.setattr("vnsa.screen.report.screen_cfg", lambda: cfg)
+    res = screen_run.run("pick", updater=_updater(), log=None)
+    assert "symbol" in res.outside.columns
+    text = format_picks(res)
+    if len(res.outside):
+        assert "MÃ MUA NGOÀI CÁC NHÓM DẪN ĐẦU" in text
+        assert res.outside["symbol"].iloc[0] in text

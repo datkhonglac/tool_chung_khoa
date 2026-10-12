@@ -36,7 +36,9 @@ def format_liquidity(res: ScreenResult, top: int = 20) -> str:
     if res.fetch:
         names = {"ok": "tải mới", "skip": "đã mới", "error": "lỗi"}
         lines.append("Tải giá: " + " · ".join(f"{names[k]} {vn_num(res.fetch.get(k, 0))}"
-                                             for k in ("ok", "skip", "error") if res.fetch.get(k)))
+                                             for k in ("ok", "skip", "error") if res.fetch.get(k))
+                     + (f" · {vn_num(len(res.fallbacks))} mã lấy từ vnstock vì CafeF lỗi "
+                        f"(vd. {next(iter(res.fallbacks.values()))[:80]})" if res.fallbacks else ""))
     lines += [
         f"Vũ trụ {vn_num(len(t))} mã ({_by_exchange(t)}) → qua tầng 1: {vn_num(len(ok))} mã"
         + (f" ({_by_exchange(ok)})" if len(ok) else ""),

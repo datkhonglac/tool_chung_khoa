@@ -131,7 +131,23 @@ def fetch_all(symbols: list[str], updater=None, log: Callable[[str], None] | Non
         except Exception as e:  # noqa: BLE001 - một mã lỗi không dừng cả lượt
             errors[sym] = f"{type(e).__name__}: {e}"
         tick(i, len(errors))
+    if log and errors:
+        log(error_summary(errors))
     return errors
+
+
+def error_summary(errors: dict[str, str]) -> str:
+    """Đếm lỗi tải theo bước (giá, BCTC, hồ sơ...) kèm một ví dụ mỗi bước."""
+    from collections import Counter
+
+    count, example = Counter(), {}
+    for sym, msg in errors.items():
+        for part in msg.split("; "):
+            step = part.split(":", 1)[0].strip()[:30]
+            count[step] += 1
+            example.setdefault(step, f"{sym}: {part[:140]}")
+    return "  Lỗi tải tầng 2 theo bước:\n" + "\n".join(
+        f"    {step} — {n} mã (vd. {example[step]})" for step, n in count.most_common())
 
 
 def assess_all(symbols: list[str], log: Callable[[str], None] | None = print

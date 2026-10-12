@@ -19,6 +19,7 @@ Phiên "đã có giá" tính theo giờ Việt Nam: trước `market_close_hour`
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -97,6 +98,9 @@ class Updater:
         self._macro_step: Step | None = None       # số vĩ mô dùng chung mọi mã: kiểm tra một lần
         self.macro_provider = macro_provider
         self._prefetched: dict = {}                # (mã, từ, đến) -> (giá, ngày sửa) | lỗi
+        self._prefer_cafef = False                 # tải hàng loạt: luôn thử CafeF trước
+        self.prefetch_backoff = 3.0                # giây chờ trước khi luồng tải trước thử lại
+        self.fallbacks: dict[str, str] = {}        # mã đã phải dùng vnstock -> lỗi CafeF
 
     # ---- các bước ----------------------------------------------------------------------------
     def _listing(self, store: Store, refresh: bool) -> Step:
@@ -133,7 +137,7 @@ class Updater:
         band = 1.0 if sym == self.index else market.band(exchange=exchange or settings()["market"]
                                                          .get("default_exchange", "HOSE"))
         self._order = [self.cafef, self.vn]
-        if store.price_source(sym) == self.vn.name and not full:
+        if store.price_source(sym) == self.vn.name and not full and not self._prefer_cafef:
             self._order.reverse()                       # mã này lần trước lấy được từ vnstock
         depth = None                                    # ngày bắt đầu nếu tải toàn bộ
         try:
@@ -223,6 +227,8 @@ class Updater:
                     self._fallback_reason = "không có dữ liệu mã này"
                 continue
             self._used = prov
+            if prov is not self.cafef and errors:
+                self.fallbacks[sym] = errors[0][:160]
             return df
         raise ValueError("; ".join(errors) + ". Mã có đúng không?")
 
@@ -347,6 +353,7 @@ class Updater:
         steps = []
         cfg_years = self.cfg.get("years")
         self.cfg = {**self.cfg, "years": years}
+        self._prefer_cafef = True
         try:
             with Store(path("warehouse")) as store:
                 steps.append(self._listing(store, False))
@@ -358,6 +365,7 @@ class Updater:
         finally:
             self.cfg = {**self.cfg, "years": cfg_years}
             self._prefetched.clear()
+            self._prefer_cafef = False
         return steps
 
     def listing(self, refresh: bool = False) -> Step:
@@ -379,8 +387,7 @@ class Updater:
         for sym in symbols:
             last = store.last_price_date(sym)
             short = full_if_short and self._short(store, sym)
-            if ((last is not None and last >= end_ts and not short)
-                    or store.price_source(sym) == self.vn.name):
+            if last is not None and last >= end_ts and not short:
                 continue
             full = last is None or (full_if_short and self._short(store, sym))
             start = (self._full_start(store, sym, today) if full
@@ -390,10 +397,17 @@ class Updater:
         def fetch(job):
             sym, start, end = job
             prov = copy.copy(self.cafef)                # mỗi luồng một bản: `repaired` riêng
-            try:
-                return job, (prov.ohlcv(sym, start, end), list(getattr(prov, "repaired", [])))
-            except Exception as e:  # noqa: BLE001 - lỗi để _prices xử lý (thử nguồn khác)
-                return job, e
+            err: Exception | None = None
+            for attempt in range(3):                    # CafeF chặn tạm khi gọi dồn: chờ rồi thử lại
+                try:
+                    return job, (prov.ohlcv(sym, start, end),
+                                 list(getattr(prov, "repaired", [])))
+                except Exception as e:  # noqa: BLE001 - lỗi để _prices xử lý (thử nguồn khác)
+                    err = e
+                    if "Mã có đúng không" in str(e) or "không có dữ liệu" in str(e).lower():
+                        break                           # CafeF không có mã này: khỏi thử lại
+                    time.sleep(self.prefetch_backoff * (attempt + 1))
+            return job, err
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for (sym, start, end), res in pool.map(fetch, jobs):
@@ -409,6 +423,7 @@ class Updater:
         out: dict[str, Step] = {}
         cfg_years = self.cfg.get("years")
         self.cfg = {**self.cfg, "years": years}
+        self._prefer_cafef = True
         todo = [self.index, *[s for s in dict.fromkeys(x.upper() for x in symbols)
                               if s != self.index]]
         try:
@@ -423,6 +438,7 @@ class Updater:
         finally:
             self.cfg = {**self.cfg, "years": cfg_years}
             self._prefetched.clear()
+            self._prefer_cafef = False
         return out
 
     # ---- điểm vào ----------------------------------------------------------------------------

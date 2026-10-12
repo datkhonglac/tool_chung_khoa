@@ -33,6 +33,7 @@ class ScreenResult:
     outside: pd.DataFrame | None = None                  # mã MUA ngoài nhóm dẫn đầu (tầng 4)
     regime: str = ""                                     # xu hướng VNINDEX lúc sàng lọc
     deep_fetch_errors: dict[str, str] = field(default_factory=dict)
+    fallbacks: dict[str, str] = field(default_factory=dict)   # mã phải lấy giá vnstock (CafeF lỗi)
     stage: str = "liquidity"
 
     def passed(self, stage: int) -> pd.DataFrame:
@@ -82,7 +83,7 @@ def liquidity(update: bool = True, exchanges: list[str] | None = None, limit: in
     if limit:
         uni = uni.head(limit)
     uni = uni.assign(group_name=assign_groups(uni, macro_mapping()))
-    res_fetch, errors = Counter(), []
+    res_fetch, errors, fallbacks = Counter(), [], {}
     if update:
         if log:
             log(f"Tầng 1: tải giá {len(uni)} mã ({cfg.get('workers', 4)} luồng)")
@@ -90,6 +91,7 @@ def liquidity(update: bool = True, exchanges: list[str] | None = None, limit: in
                                      progress=_progress(log), workers=cfg.get("workers", 4))
         res_fetch = Counter(s.status for s in steps.values())
         errors = [f"{sym}: {s.detail}" for sym, s in steps.items() if s.status == "error"]
+        fallbacks = dict(updater.fallbacks)
     with Store(path("warehouse")) as store:
         last_idx = store.last_price_date(index)
         recent = store.recent_prices(
@@ -110,7 +112,8 @@ def liquidity(update: bool = True, exchanges: list[str] | None = None, limit: in
                      "industry": c.industry, "group_name": c.group_name, "model": c.model,
                      "stage": 0 if reason else 1, "reason": reason, **st})
     table = pd.DataFrame(rows).reindex(columns=SCREEN_COLUMNS)
-    res = ScreenResult(pd.Timestamp(as_of), table, res_fetch, errors, listing)
+    res = ScreenResult(pd.Timestamp(as_of), table, res_fetch, errors, listing,
+                       fallbacks=fallbacks)
     if save_result:
         res.csv = save(res)
     return res
@@ -172,7 +175,8 @@ def run(stage: str = "pick", update: bool = True, exchanges: list[str] | None = 
     if stage == "pick":
         from vnsa.screen.pick import pick
 
-        t, res.outside = pick(t, cfg)
+        t, outside = pick(t, cfg)
+        res.outside = outside.reset_index()          # pick() giữ mã ở chỉ mục
     res.table = t.reset_index().reindex(columns=SCREEN_COLUMNS)
     res.industry = ind.reindex(columns=INDUSTRY_COLUMNS) if not ind.empty else ind
     res.csv = save(res)

@@ -217,8 +217,8 @@ daily = ["FPT", "HPG", "MWG", "VNM", "DGC", "VCB", "TCB", "MBB", "SSI", "ACV", "
 # Hạn mức lượt gọi vnstock (thư viện vnai; vượt thì vnai THOÁT chương trình). Chế độ Khách: 20/phút,
 # 1.200/giờ, 5.000/ngày — để dư một chút. Có khoá API miễn phí (biến môi trường VNSTOCK_API_KEY,
 # đăng ký ở vnstocks.com/login) thì dùng hạn mức vnai báo (Cộng đồng 60/phút), dự phòng key_*.
-per_minute = 18
-per_hour = 1100
+per_minute = 15             # chạy thật: 18/phút vẫn bị vnai báo vượt (vnai đếm cả lượt gọi phụ)
+per_hour = 1000
 key_per_minute = 55
 key_per_hour = 3000
 
@@ -226,7 +226,7 @@ key_per_hour = 3000
 # Sàng lọc toàn thị trường (lệnh screen, src/vnsa/screen/). Tầng 1 chỉ cần giá 1 năm mỗi mã.
 exchanges = ["HOSE", "HNX", "UPCOM"]
 liquidity_years = 1         # số năm giá tải cho mã chưa có trong kho (CafeF: 1 lần gọi mỗi mã)
-workers = 4                 # số luồng tải giá CafeF song song ở tầng 1
+workers = 3                 # số luồng tải giá CafeF song song (nhiều hơn dễ bị CafeF chặn tạm)
 min_value_bn = 3.0          # GTGD bình quân 20 phiên tối thiểu (tỷ đồng, giá khớp thật × KL khớp lệnh)
 min_price = 5000            # giá tối thiểu (đồng)
 min_sessions = 200          # số phiên có giao dịch trong 365 ngày gần nhất
