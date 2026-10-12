@@ -139,7 +139,7 @@ name = "Thép"
 match = "thép|kim loại"
 drivers = [
   { series = "steel_hrc", sign = 1, why = "giá thép tăng (giá Mỹ, đại diện)" },
-  { series = "iron_ore", sign = -1, why = "quặng sắt tăng: chi phí đầu vào (giá thép hay tăng cùng — xem độ nhạy)" },
+  { series = "iron_ore", sign = 1, why = "quặng sắt tăng cùng chu kỳ giá thép (kiểm chứng 60 tháng HPG: t +3,0)" },
   { series = "coal", sign = -1, weight = 0.5, why = "than tăng: chi phí luyện cốc" },
   { series = "vn_credit_ytd", sign = 1, why = "tín dụng xây dựng, bất động sản" },
   { series = "vn_public_invest_yoy", sign = 1, why = "giải ngân đầu tư công" },

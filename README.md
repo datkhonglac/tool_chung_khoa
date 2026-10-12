@@ -166,7 +166,8 @@ python -m vnsa.cli macro HPG FPT        # yếu tố vĩ mô của ngành từng
 - **Kiểm chứng độ nhạy:** hồi quy lợi nhuận tháng của mã theo VNINDEX và biến động từng yếu tố, cần
   ≥ 36 tháng.
   - Báo yếu tố "NGƯỢC dấu cấu hình" để bạn xem lại.
-  - Ví dụ: quặng sắt là chi phí của HPG nhưng giá quặng hay tăng cùng giá thép.
+  - Ví dụ: quặng sắt là chi phí của HPG, nhưng 60 tháng giá cho thấy HPG tăng khi quặng tăng
+    (t +3,0, cùng chu kỳ giá thép) nên cấu hình đã đổi sang dấu +.
 - **Tác động lên khuyến nghị:** vĩ mô chưa vào điểm xếp hạng.
   - Ngành bất lợi rõ (≤ −0,5, độ phủ ≥ 60%) chỉ làm **độ tin cậy giảm một bậc**.
   - Điểm vĩ mô lúc khuyến nghị được lưu vào `signals`. `review-signals` chia kết quả theo

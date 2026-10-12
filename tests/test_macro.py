@@ -360,7 +360,7 @@ def test_macro_view_and_card_section(warehouse):
     ind = mv.industry
     assert ind.scope.startswith("Thép (ICB cấp 4: Thép và sản phẩm thép)")
     ore_driver = next(d for d in ind.drivers if d.series == "iron_ore")
-    assert ore_driver.reading.z == 2.0 and ore_driver.contribution < 0  # quặng tăng mạnh: bất lợi
+    assert ore_driver.reading.z == 2.0 and ore_driver.contribution > 0  # quặng tăng cùng giá thép
     assert {d.series for d in ind.missing} == {"coal", "vn_credit_ytd", "vn_public_invest_yoy"}
     assert mv.groups["ty_gia"].label != "Chưa đủ số liệu" and mv.risk_free == 0.035
     text = format_card(analysis.report_card("DEMO_A"))
