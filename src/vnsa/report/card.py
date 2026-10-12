@@ -153,7 +153,10 @@ def consensus(a) -> tuple[float, str, float]:
     target = float(target) if target is not None and not pd.isna(target) and target > 0 else nan
     rating = str(pr.get("analyst_rating") or "")
     rating = "" if rating in ("None", "nan") else rating
-    gap = (a.fair.value / target - 1) if a.fair is not None and target > 0 else nan
+    model = nan
+    if a.fair is not None:
+        model = a.fair.value if pd.isna(getattr(a.fair, "uncapped", nan)) else a.fair.uncapped
+    gap = (model / target - 1) if target > 0 and not pd.isna(model) else nan
     return target, rating, gap
 
 
@@ -405,15 +408,19 @@ def build_card(a) -> Card:
         "thị trường chung đang giảm"))]
     if p is not None:
         notes += [n for n in p.notes if "giới hạn bởi" in n]
-    notes += [n for n in (fair.notes if fair else []) if n.startswith("bỏ ")]
+    notes += [n for n in (fair.notes if fair else [])
+              if n.startswith("bỏ ") or any(k in n for k in (
+                  "giá mục tiêu CTCK", "ROE hiện tại", "lợi nhuận đang giảm"))]
     target, rating, gap = consensus(a)
     cons_line = ""
     if not pd.isna(target):
         cons_line = (f"Giá mục tiêu CTCK (VCI tổng hợp): {vn_num(target)}đ"
                      + (f" · {rating}" if rating else "")
-                     + (f" · giá trị hợp lý của tool lệch {vn_pct(gap, 0, sign=True)}"
+                     + (f" · giá trị mô hình của tool lệch {vn_pct(gap, 0, sign=True)}"
                         if not pd.isna(gap) else ""))
-        if not pd.isna(gap) and abs(gap) > settings()["report"].get("max_consensus_gap", 0.3):
+        capped = fair is not None and not pd.isna(getattr(fair, "uncapped", float("nan")))
+        if (not capped and not pd.isna(gap)
+                and abs(gap) > settings()["report"].get("max_consensus_gap", 0.3)):
             notes.append(f"giá trị hợp lý lệch {vn_pct(gap, 0, sign=True)} so với giá mục tiêu "
                          "CTCK: kiểm tra lại giả định (độ tin cậy không xếp Cao)")
     if fair is not None and not fair.independent:

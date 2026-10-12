@@ -77,6 +77,11 @@ equity_risk_premium = 0.08     # phần bù rủi ro thị trường cổ phiế
 terminal_growth = 0.03         # tăng trưởng dài hạn của FCFF (không nên vượt tăng trưởng GDP danh nghĩa)
 forecast_years = 5
 max_stage1_growth = 0.15       # g1 lấy từ CAGR LNST công ty mẹ, chặn trên ở mức này
+# Chất lượng lợi nhuận (tránh "rẻ so với chính nó" khi lợi nhuận đã đi xuống):
+roe_adjust = true              # P/B lịch sử × (ROE hiện tại / ROE trung vị lịch sử), tối đa 1
+no_rerate_below = -0.05        # LNST giảm nhanh hơn 5%/năm: P/E mục tiêu ≤ P/E hiện tại, DCF lấy
+declining_base = true          #   FCFF gốc = min(bình quân 3 năm, năm gần nhất)
+consensus_cap = 0.3            # giá trị hợp lý tối đa = giá mục tiêu CTCK × 1,3 (0 = tắt)
 fade_growth = true             # g1 giảm dần về terminal_growth trong 5 năm dự phóng
 default_tax_rate = 0.20
 default_beta = 1.0

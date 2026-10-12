@@ -237,3 +237,62 @@ def test_peer_multiples_add_independent_method():
     pe_now = 40_000 / eps
     assert half.methods["pe_peer"] == pytest.approx((pe_now + 0.5 * (12.0 - pe_now)) * eps)
     assert any("4 mã cùng ngành" in n for n in peer.notes)
+
+
+def _declining(fin: pd.DataFrame) -> pd.DataFrame:
+    """Lợi nhuận đỉnh rồi giảm (kiểu DGC sau chu kỳ giá hàng hoá): ROE 44% -> 12,5%."""
+    return fin.assign(net_income_parent=[400 * B, 250 * B, 180 * B, 150 * B],
+                      equity=[900 * B, 1000 * B, 1100 * B, 1230 * B], minority_interest=0.0)
+
+
+def test_eps_trend_and_roe_factor():
+    from types import SimpleNamespace
+
+    fin = _declining(_fundamentals("X"))
+    g = fv.eps_trend(fin)
+    assert g == pytest.approx((150 / 400) ** (1 / 3) - 1)               # −27%/năm
+    ttm = SimpleNamespace(basis="TTM Q2/2026", net_income_parent=120 * B)
+    assert fv.eps_trend(fin, ttm) == pytest.approx(min(g, 120 / 150 - 1))
+    year = SimpleNamespace(basis="năm 2025", net_income_parent=150 * B)
+    assert fv.eps_trend(fin, year) == pytest.approx(g)                  # số năm không tính là TTM
+    assert fv.eps_trend_detail(fin, ttm)[1] == "−27,9%/năm 2022–2025"     # 3 năm tệ hơn TTM
+    worse = SimpleNamespace(basis="TTM Q2/2026", net_income_parent=90 * B)
+    assert fv.eps_trend_detail(fin, worse)[1] == "TTM Q2/2026 −40,0% so với năm 2025"
+    hist = pd.DataFrame({"roe": [0.44, 0.25, 0.16, 0.125]})
+    f, med = fv.roe_factor(hist, 0.125)
+    assert med == pytest.approx(0.205) and f == pytest.approx(0.125 / 0.205)
+    assert fv.roe_factor(hist, 0.30)[0] == 1.0                           # ROE cao hơn: không lạc quan thêm
+
+
+def test_quality_adjust_lowers_pb_and_blocks_pe_rerating():
+    fin, px = _declining(_fundamentals("X")), _prices(price=60_000)
+    price = 20_000.0                                                     # "rẻ" so với lịch sử
+    plain = fv.combine(price, fin, px, reversion=0.5)
+    q = fv.combine(price, fin, px, reversion=0.5,
+                   quality={"roe_adjust": True, "no_rerate_below": -0.05})
+    assert q.no_rerate and q.roe_factor < 0.7
+    eps = plain.methods["pe_hist"] / plain.pe_target
+    assert q.pe_target == pytest.approx(price / eps)                    # P/E giữ ở mức hiện tại
+    assert q.methods["pb_hist"] < plain.methods["pb_hist"]
+    assert q.value < plain.value
+    assert any("ROE hiện tại" in n for n in q.notes)
+    assert any("lợi nhuận đang giảm" in n for n in q.notes)
+    roe_note = next(n for n in q.notes if "ROE hiện tại" in n)
+    assert "," in roe_note and "." not in roe_note                       # 12,5% chứ không 12.5%
+    growing = fv.combine(price, _fundamentals("X"), px, reversion=0.5,
+                         quality={"roe_adjust": True, "no_rerate_below": -0.05})
+    plain_g = fv.combine(price, _fundamentals("X"), px, reversion=0.5)
+    assert growing.value == pytest.approx(plain_g.value)                 # DN tốt: không đổi
+
+
+def test_cap_by_consensus():
+    fair = fv.FairValue(price=33_800, methods={}, value=77_353, p10=70_000, p90=130_000)
+    fv.cap_by_consensus(fair, 52_100, 0.3)
+    assert fair.value == pytest.approx(52_100 * 1.3) and fair.uncapped == 77_353
+    assert fair.p10 <= fair.value and "giá mục tiêu CTCK 52.100đ" in fair.notes[-1]
+    ok = fv.FairValue(price=33_800, methods={}, value=60_000)
+    fv.cap_by_consensus(ok, 52_100, 0.3)                                # trong biên: giữ nguyên
+    assert ok.value == 60_000 and np.isnan(ok.uncapped)
+    off = fv.FairValue(price=33_800, methods={}, value=77_353)
+    fv.cap_by_consensus(off, float("nan"), 0.3)                          # không có giá CTCK
+    assert off.value == 77_353

@@ -87,6 +87,7 @@ def historical_multiples(fin: pd.DataFrame, prices: pd.DataFrame,
             basis = "giá điều chỉnh"
         rows.append({"year": year, "market_cap": mcap, "basis": basis,
                      "eps": ni / shares_now, "bvps": eq / shares_now,
+                     "roe": ni / eq if eq > 0 else np.nan,
                      "pe": mcap / ni if ni > 0 else np.nan,
                      "pb": mcap / eq if eq > 0 else np.nan})
     return pd.DataFrame(rows)
@@ -175,6 +176,9 @@ class FairValue:
     pe_median: float = float("nan")    # trung vị P/E, P/B lịch sử của mã
     pb_median: float = float("nan")
     peers: tuple[float, float, int] | None = None   # (P/E, P/B trung vị ngành, số mã)
+    roe_factor: float = 1.0      # P/B lịch sử nhân hệ số ROE hiện tại / ROE trung vị (≤ 1)
+    no_rerate: bool = False      # lợi nhuận đang giảm: không kỳ vọng P/E tăng lại
+    uncapped: float = float("nan")   # giá trị mô hình trước khi chặn theo giá mục tiêu CTCK
 
     @property
     def independent(self) -> bool:
@@ -212,6 +216,46 @@ def weighted_value(methods: dict[str, float], weights: dict[str, float]
     return float(sum(ok[k] * w for k, w in used.items())), used, notes
 
 
+def _vn(x: float, spec: str) -> str:
+    """Số trong ghi chú hiện trên thẻ báo cáo theo kiểu Việt Nam: 13,6% · 52.100 · −28,8%."""
+    return (f"{x:{spec}}".replace(",", "_").replace(".", ",").replace("_", ".")
+            .replace("-", "−"))
+
+
+def eps_trend_detail(fin: pd.DataFrame, current=None, years: int = 3) -> tuple[float, str]:
+    """(tăng trưởng, mô tả cơ sở). CAGR LNST công ty mẹ tối đa `years` năm BCTC gần nhất; nếu số
+    TTM (current) thấp hơn năm gần nhất thì lấy mức giảm đó nếu tệ hơn. NaN nếu thiếu/âm."""
+    data = fin.sort_values("year")[["year", "net_income_parent"]].dropna()
+    ni, yr = data["net_income_parent"], data["year"]
+    span = min(years, len(ni) - 1)
+    g, basis = float("nan"), ""
+    if span >= 1 and ni.iloc[-1 - span] > 0 and ni.iloc[-1] > 0:
+        g = (ni.iloc[-1] / ni.iloc[-1 - span]) ** (1 / span) - 1
+        basis = f"{_vn(g, '+.1%')}/năm {int(yr.iloc[-1 - span])}–{int(yr.iloc[-1])}"
+    is_ttm = current is not None and str(getattr(current, "basis", "")).startswith("TTM")
+    ttm = current.net_income_parent if is_ttm else None
+    if ttm is not None and not pd.isna(ttm) and len(ni) and ni.iloc[-1] > 0:
+        g_ttm = ttm / ni.iloc[-1] - 1
+        if pd.isna(g) or g_ttm < g:
+            g, basis = g_ttm, f"{current.basis} {_vn(g_ttm, '+.1%')} so với năm {int(yr.iloc[-1])}"
+    return float(g), basis
+
+
+def eps_trend(fin: pd.DataFrame, current=None, years: int = 3) -> float:
+    """Tăng trưởng lợi nhuận dùng để chặn P/E mục tiêu (xem eps_trend_detail)."""
+    return eps_trend_detail(fin, current, years)[0]
+
+
+def roe_factor(hist: pd.DataFrame, roe_now: float) -> tuple[float, float]:
+    """(hệ số, ROE trung vị lịch sử). P/B quá khứ là giá thị trường trả cho ROE quá khứ: ROE hiện
+    tại thấp hơn thì P/B mục tiêu phải thấp theo tỷ lệ (P/B ~ ROE khi tăng trưởng, chi phí vốn
+    không đổi). Hệ số = ROE hiện tại / ROE trung vị, tối đa 1 (ROE tăng không làm lạc quan hơn)."""
+    roe_med = _median_positive(hist["roe"]) if "roe" in hist else float("nan")
+    if pd.isna(roe_now) or pd.isna(roe_med) or roe_med <= 0:
+        return 1.0, roe_med
+    return float(min(1.0, max(roe_now, 0.0) / roe_med)), roe_med
+
+
 def revert(now: float, median: float, reversion: float = 1.0) -> float:
     """Bội số mục tiêu = hiện tại + reversion × (trung vị lịch sử − hiện tại). Thiếu bội số hiện
     tại (EPS âm...) thì dùng trung vị."""
@@ -232,21 +276,31 @@ def scenario_range(values: list[float], center: float) -> tuple[float, float]:
 def combine(price: float, fin: pd.DataFrame, prices: pd.DataFrame, par_value: float = 10_000,
             dcf: float = float("nan"), ri: ResidualIncome | None = None,
             weights: dict[str, float] | None = None, current=None,
-            reversion: float = 1.0, peers: tuple[float, float, int] | None = None) -> FairValue:
+            reversion: float = 1.0, peers: tuple[float, float, int] | None = None,
+            quality: dict | None = None) -> FairValue:
     """Giá trị hợp lý = bình quân có trọng số (mục [valuation.weights]) các phương pháp:
     doanh nghiệp thường DCF, P/E lịch sử, P/B lịch sử; định chế tài chính (truyền `ri`) thu nhập
     thặng dư, P/B theo ROE, P/B lịch sử. reversion: phần chênh lệch bội số hiện tại so với trung vị
     lịch sử được giả định thu hẹp trong 12 tháng (revert). peers: (P/E, P/B trung vị ngành, số mã)
-    — cũng chỉ thu hẹp `reversion` khoảng cách."""
+    — cũng chỉ thu hẹp `reversion` khoảng cách.
+    quality ([valuation] — điều chỉnh theo chất lượng lợi nhuận, xem quality_adjust):
+      roe_adjust: P/B lịch sử nhân hệ số ROE hiện tại / ROE trung vị lịch sử (≤ 1);
+      no_rerate_below: lợi nhuận giảm nhanh hơn mức này (vd −0,05/năm) thì P/E mục tiêu (lịch sử,
+      ngành) không cao hơn P/E hiện tại — không kỳ vọng thị trường trả lại bội số cũ."""
     hist = historical_multiples(fin, prices, par_value)
     last = hist.iloc[-1].copy()
     if current is not None:                     # EPS TTM, BVPS quý gần nhất, số cp hiện tại
         last["eps"], last["bvps"] = current.eps, current.bvps
     pe_med, pb_med = _median_positive(hist["pe"]), _median_positive(hist["pb"])
     bvps = last["bvps"] if ri is None else ri.book0
-    pe_t = revert(price / last["eps"] if last["eps"] > 0 else np.nan, pe_med, reversion)
-    pb_t = revert(price / bvps if bvps > 0 else np.nan, pb_med, reversion)
     notes = []
+    adj = quality_adjust(hist, fin, current, quality or {})
+    notes += adj["notes"]
+    pe_now = price / last["eps"] if last["eps"] > 0 else np.nan
+    pe_t = revert(pe_now, pe_med, reversion)
+    if adj["no_rerate"] and not pd.isna(pe_now):
+        pe_t = min(pe_t, pe_now)
+    pb_t = revert(price / bvps if bvps > 0 else np.nan, pb_med * adj["roe_factor"], reversion)
     if ri is None:
         methods = {"dcf": dcf,
                    "pe_hist": pe_t * last["eps"] if last["eps"] > 0 else np.nan,
@@ -262,10 +316,10 @@ def combine(price: float, fin: pd.DataFrame, prices: pd.DataFrame, par_value: fl
     nan = float("nan")
     if peers is not None:
         pe_p, pb_p, n = peers
-        pe_now = price / last["eps"] if last["eps"] > 0 else nan
         pb_now = price / bvps if bvps > 0 else nan
         if ri is None and pe_p > 0 and last["eps"] > 0:
-            methods["pe_peer"] = revert(pe_now, pe_p, reversion) * last["eps"]
+            pe_pt = revert(pe_now, pe_p, reversion)
+            methods["pe_peer"] = (min(pe_pt, pe_now) if adj["no_rerate"] else pe_pt) * last["eps"]
         if pb_p > 0 and bvps > 0:
             methods["pb_peer"] = revert(pb_now, pb_p, reversion) * bvps
         pe_s = f"P/E trung vị {pe_p:.1f}, " if pe_p > 0 else ""
@@ -275,4 +329,45 @@ def combine(price: float, fin: pd.DataFrame, prices: pd.DataFrame, par_value: fl
     value, used, more = weighted_value(methods, weights)
     return FairValue(price=price, methods=methods, value=value, pe_target=pe_t, pb_target=pb_t,
                      ri=ri, weights=used, notes=notes + more, pe_median=pe_med, pb_median=pb_med,
-                     peers=peers)
+                     peers=peers, roe_factor=adj["roe_factor"], no_rerate=adj["no_rerate"])
+
+
+def quality_adjust(hist: pd.DataFrame, fin: pd.DataFrame, current, cfg: dict) -> dict:
+    """Điều chỉnh bội số theo chất lượng lợi nhuận hiện tại (lỗi thường gặp của định giá theo bội
+    số lịch sử: mã "rẻ so với chính nó" vì lợi nhuận đã đi xuống, không phải vì thị trường định giá
+    sai). Trả {roe_factor, no_rerate, growth, notes}."""
+    out = {"roe_factor": 1.0, "no_rerate": False, "growth": float("nan"), "notes": []}
+    if cfg.get("roe_adjust", False):
+        roe_now = getattr(current, "roe", float("nan")) if current is not None else float("nan")
+        if pd.isna(roe_now) and len(hist):
+            roe_now = hist["roe"].iloc[-1]
+        f, roe_med = roe_factor(hist, roe_now)
+        out["roe_factor"] = f
+        if f < 0.95:
+            out["notes"].append(f"ROE hiện tại {_vn(roe_now, '.1%')} thấp hơn trung vị lịch sử "
+                                f"{_vn(roe_med, '.1%')}: P/B lịch sử nhân {_vn(f, '.2f')}")
+    floor = cfg.get("no_rerate_below")
+    if floor is not None:
+        g, basis = eps_trend_detail(fin, current)
+        out["growth"] = g
+        if not pd.isna(g) and g < floor:
+            out["no_rerate"] = True
+            out["notes"].append(f"lợi nhuận đang giảm ({basis}): không kỳ vọng P/E tăng lại về "
+                                "trung vị quá khứ/ngành")
+    return out
+
+
+def cap_by_consensus(fair: FairValue, target: float, gap: float) -> FairValue:
+    """Chặn giá trị hợp lý ở giá mục tiêu CTCK × (1 + gap) khi mô hình lạc quan hơn hẳn các CTCK
+    (thường do mô hình không hợp với mã). Giữ giá trị mô hình ở `uncapped`; gap ≤ 0 thì tắt."""
+    if (gap is None or gap <= 0 or pd.isna(target) or target <= 0 or pd.isna(fair.value)
+            or fair.value <= target * (1 + gap)):
+        return fair
+    fair.uncapped = fair.value
+    fair.value = target * (1 + gap)
+    if not pd.isna(fair.p10):
+        fair.p10 = min(fair.p10, fair.value)
+    fair.notes.append(f"giá trị mô hình {_vn(fair.uncapped, ',.0f')}đ cao hơn {gap:.0%} so với giá "
+                      f"mục tiêu CTCK {_vn(target, ',.0f')}đ: dùng {_vn(fair.value, ',.0f')}đ để "
+                      "xếp hạng")
+    return fair

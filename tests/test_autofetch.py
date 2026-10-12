@@ -327,3 +327,24 @@ def test_unfinished_session_is_dropped_not_rejected(empty_db):
     with Store(empty_db) as store:
         assert store.last_price_date("DEMO_A") < pd.Timestamp("2026-10-12")
         assert (store.prices("VNINDEX")["close"] > 0).all()
+
+
+def test_fetch_command_drops_unfinished_session(empty_db, monkeypatch):
+    """Lệnh fetch (tải hàng loạt) cũng bỏ phiên chưa đóng cửa CafeF trả về với giá 0."""
+    from vnsa import cli
+    from vnsa.data.providers import cafef_provider
+
+    fake = FakeCafeF()
+
+    def ohlcv(self, symbol, start, end):
+        df = fake.data[symbol].copy()
+        future = pd.Timestamp.today().normalize() + pd.Timedelta(days=1)   # phiên chưa đóng
+        zero = pd.DataFrame({"symbol": [symbol], "date": [future], "open": [0.0], "high": [0.0],
+                             "low": [0.0], "close": [0.0], "volume": [0]})
+        return pd.concat([df, zero], ignore_index=True)
+
+    monkeypatch.setattr(cafef_provider.CafeFProvider, "ohlcv", ohlcv)
+    assert cli.main(["fetch", "DEMO_A", "--years", "1", "--pause", "0"]) == 0
+    with Store(empty_db) as store:
+        assert (store.prices("VNINDEX")["close"] > 0).all()
+        assert store.last_price_date("DEMO_A") < pd.Timestamp.today().normalize() + pd.Timedelta(days=1)

@@ -109,3 +109,16 @@ def test_sensitivity_grid_center_equals_base():
     assert t.shape == (5, 5)
     assert t.loc[t.index[2], 0.03] == pytest.approx(v.value_per_share)
     assert t.iloc[0, 2] > t.iloc[4, 2]          # WACC thấp hơn -> giá trị cao hơn
+
+
+def test_dcf_base_uses_latest_fcff_when_profits_decline():
+    fin = _fin()
+    fin["net_income_parent"] = [200 * B, 150 * B, 110 * B]               # giảm ~26%/năm
+    fin["cfo"] = [300 * B, 200 * B, 120 * B]
+    a = val.Assumptions()
+    v = val.value("abc", fin, price=20_000, a=a)
+    flows = val.fcff(fin, a.default_tax_rate)
+    assert v.fcff_base == pytest.approx(flows.iloc[-1]) and flows.iloc[-1] < flows.mean()
+    assert any("lợi nhuận giảm" in n for n in v.notes)
+    off = val.value("abc", fin, price=20_000, a=val.Assumptions(declining_base=False))
+    assert off.fcff_base == pytest.approx(flows.tail(3).mean())
