@@ -513,53 +513,78 @@ with tab_screen:
             return out[list(names)].rename(columns=names)
 
         st.caption(f"Phiên {sc['as_of'].iloc[0]:%d/%m/%Y}. Sàng lọc theo quy tắc trong "
-                   "config/settings.toml, chưa kiểm định quá khứ — không phải lời khuyên đầu tư.")
+                   "config/settings.toml (kiểm định phần giá: lệnh study-screen) — không phải lời "
+                   "khuyên đầu tư.")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Vũ trụ", f"{len(sc):,}")
         c2.metric("Qua thanh khoản", f"{int((sc['stage'] >= 1).sum()):,}")
         c3.metric("Phân tích được", f"{int((sc['stage'] >= 2).sum()):,}")
         c4.metric("Được chọn", f"{int((sc['stage'] >= 4).sum()):,}")
         pct = st.column_config.NumberColumn(format="%+.0f%%")
-        if not sc_ind.empty:
-            st.subheader("Nhóm ngành tiềm năng (điểm 0–100)")
-            st.dataframe(
-                _show(sc_ind, {"rank": "#", "group_name": "Nhóm ngành", "members": "Số mã",
-                               "score": "Điểm", "pt_momentum": "Động lượng",
-                               "pt_breadth": "Độ rộng", "pt_earnings": "Lợi nhuận",
-                               "pt_valuation": "Định giá", "pt_quality": "Chất lượng",
-                               "pt_macro": "Vĩ mô", "rs": "RS (trung vị)",
-                               "growth": "LN tăng (trung vị)", "expected": "LN kỳ vọng (trung vị)",
-                               "note": "Ghi chú"}),
-                hide_index=True, width="stretch",
-                column_config={"Điểm": st.column_config.ProgressColumn(min_value=0, max_value=100,
-                                                                        format="%.0f"),
-                               "RS (trung vị)": pct, "LN tăng (trung vị)": pct,
-                               "LN kỳ vọng (trung vị)": pct})
-            st.caption("Thành phần là thứ hạng giữa các nhóm (tốt nhất 100). Trọng số ở "
-                       "[screen.industry_weights].")
-        stock_cols = {"symbol": "Mã", "group_name": "Nhóm", "action": "Xếp hạng", "price": "Giá",
-                      "fair_value": "Giá trị hợp lý", "expected_return": "LN kỳ vọng",
-                      "buy_low": "Vùng mua từ", "buy_high": "đến", "stop": "Cắt lỗ",
-                      "fa_score": "FA", "ta_score": "TA", "confidence": "Tin cậy",
-                      "rs_6m": "RS 6T", "eps_growth": "LNST tăng", "reason": "Ghi chú"}
-        fmt = {"LN kỳ vọng": pct, "RS 6T": pct, "LNST tăng": pct}
-        picks = sc[sc["stage"] >= 4].sort_values(["group_rank", "pick_rank"])
-        st.subheader("Mã tiềm năng trong các nhóm dẫn đầu")
-        if picks.empty:
-            st.write("Không mã nào đạt đủ điều kiện ở lượt này.")
+        if not (sc["stage"] >= 2).any():
+            # lượt chỉ lọc thanh khoản (--stage liquidity): nói rõ, hiện danh sách mã qua lọc
+            st.info("Lượt này chỉ chạy **tầng 1 — lọc thanh khoản** (`--stage liquidity`), "
+                    "chưa phân tích từng mã nên chưa có nhóm ngành và mã tiềm năng. Muốn đủ 4 "
+                    "tầng: chạy `python -m vnsa.cli screen` (lần đầu 1–3 giờ), hoặc nạp lượt đầy "
+                    "đủ từ GitHub: `git fetch origin signals` rồi "
+                    "`python -m vnsa.cli history import --git origin/signals`.")
+            liq = sc[sc["stage"] >= 1].sort_values("value_20d", ascending=False)
+            st.subheader(f"{len(liq):,} mã qua lọc thanh khoản".replace(",", "."))
+            liq_cols = {"symbol": "Mã", "exchange": "Sàn", "industry": "Ngành", "price": "Giá",
+                        "value_20d": "GTGD 20 phiên (tỷ)", "rs_3m": "RS 3T", "rs_6m": "RS 6T",
+                        "above_ma50": "Trên MA50", "above_ma200": "Trên MA200"}
+            view = liq.assign(value_20d=liq["value_20d"] / 1e9, rs_3m=liq["rs_3m"] * 100,
+                              rs_6m=liq["rs_6m"] * 100)
+            st.dataframe(view[[c for c in liq_cols if c in view]].rename(columns=liq_cols),
+                         hide_index=True, width="stretch",
+                         column_config={"RS 3T": pct, "RS 6T": pct, "GTGD 20 phiên (tỷ)":
+                                        st.column_config.NumberColumn(format="%.1f")})
+            from vnsa.screen.liquidity import reason_group
+
+            out = sc[sc["stage"] < 1]["reason"].fillna("").map(reason_group).value_counts()
+            if len(out):
+                st.caption("Bị loại: " + " · ".join(f"{k} {v}" for k, v in out.items() if k))
         else:
-            st.dataframe(_show(picks, stock_cols), hide_index=True, width="stretch",
-                         column_config=fmt)
-        if not sc_out.empty:
-            st.subheader("Mã MUA ngoài các nhóm dẫn đầu")
-            st.dataframe(_show(sc_out, stock_cols), hide_index=True, width="stretch",
-                         column_config=fmt)
-        with st.expander("Toàn bộ mã đã phân tích"):
-            groups = ["(tất cả)", *sorted(sc["group_name"].dropna().unique())]
-            g = st.selectbox("Nhóm ngành", groups, key="screen_group")
-            view = sc[sc["stage"] >= 2]
-            if g != "(tất cả)":
-                view = view[view["group_name"] == g]
-            st.dataframe(_show(view.sort_values("score", ascending=False), stock_cols),
-                         hide_index=True, width="stretch", column_config=fmt)
+            if not sc_ind.empty:
+                st.subheader("Nhóm ngành tiềm năng (điểm 0–100)")
+                st.dataframe(
+                    _show(sc_ind, {"rank": "#", "group_name": "Nhóm ngành", "members": "Số mã",
+                                   "score": "Điểm", "pt_momentum": "Động lượng",
+                                   "pt_breadth": "Độ rộng", "pt_earnings": "Lợi nhuận",
+                                   "pt_valuation": "Định giá", "pt_quality": "Chất lượng",
+                                   "pt_macro": "Vĩ mô", "rs": "RS (trung vị)",
+                                   "growth": "LN tăng (trung vị)",
+                                   "expected": "LN kỳ vọng (trung vị)", "note": "Ghi chú"}),
+                    hide_index=True, width="stretch",
+                    column_config={"Điểm": st.column_config.ProgressColumn(
+                                       min_value=0, max_value=100, format="%.0f"),
+                                   "RS (trung vị)": pct, "LN tăng (trung vị)": pct,
+                                   "LN kỳ vọng (trung vị)": pct})
+                st.caption("Thành phần là thứ hạng giữa các nhóm (tốt nhất 100). Trọng số ở "
+                           "[screen.industry_weights].")
+            stock_cols = {"symbol": "Mã", "group_name": "Nhóm", "action": "Xếp hạng",
+                          "price": "Giá", "fair_value": "Giá trị hợp lý",
+                          "expected_return": "LN kỳ vọng", "buy_low": "Vùng mua từ", "buy_high": "đến", "stop": "Cắt lỗ",
+                          "fa_score": "FA", "ta_score": "TA", "confidence": "Tin cậy",
+                          "rs_6m": "RS 6T", "eps_growth": "LNST tăng", "reason": "Ghi chú"}
+            fmt = {"LN kỳ vọng": pct, "RS 6T": pct, "LNST tăng": pct}
+            picks = sc[sc["stage"] >= 4].sort_values(["group_rank", "pick_rank"])
+            st.subheader("Mã tiềm năng trong các nhóm dẫn đầu")
+            if picks.empty:
+                st.write("Không mã nào đạt đủ điều kiện ở lượt này.")
+            else:
+                st.dataframe(_show(picks, stock_cols), hide_index=True, width="stretch",
+                             column_config=fmt)
+            if not sc_out.empty:
+                st.subheader("Mã MUA ngoài các nhóm dẫn đầu")
+                st.dataframe(_show(sc_out, stock_cols), hide_index=True, width="stretch",
+                             column_config=fmt)
+            with st.expander("Toàn bộ mã đã phân tích"):
+                groups = ["(tất cả)", *sorted(sc["group_name"].dropna().unique())]
+                g = st.selectbox("Nhóm ngành", groups, key="screen_group")
+                view = sc[sc["stage"] >= 2]
+                if g != "(tất cả)":
+                    view = view[view["group_name"] == g]
+                st.dataframe(_show(view.sort_values("score", ascending=False), stock_cols),
+                             hide_index=True, width="stretch", column_config=fmt)
 

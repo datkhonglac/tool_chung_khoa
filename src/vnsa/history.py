@@ -101,15 +101,25 @@ def import_history(src: str | Path | None = None, git_ref: str | None = None) ->
                 write(part, str(src_name))
             store.mark_stale(name, new[keys])
             counts[name] = len(new)
-        # lượt sàng lọc: nạp nguyên lượt (ngày) kho chưa có
-        have_days = set(store.screen_dates())
+        # lượt sàng lọc: nạp nguyên lượt (ngày) kho chưa có, hoặc thay lượt cùng ngày nhưng chạy
+        # nông hơn (vd. máy chỉ chạy --stage liquidity, GitHub chạy đủ 4 tầng cùng phiên)
+        depth = store.screen_depth()
+        take: set[pd.Timestamp] = set()
+        scr = frames["screen"]
+        if scr is not None and len(scr):
+            scr = scr.assign(as_of=pd.to_datetime(scr["as_of"]))
+            for day, stage in scr.groupby("as_of")["stage"].max().items():
+                if day not in depth or stage > depth[day]:
+                    take.add(day)
+        if not take:
+            return counts
         for name, write in (("screen", store.write_screen),
                             ("screen_industry", store.write_screen_industry)):
             df = frames[name]
             if df is None or df.empty:
                 continue
             df = df.assign(as_of=pd.to_datetime(df["as_of"]))
-            new = df[~df["as_of"].isin(have_days)]
+            new = df[df["as_of"].isin(take)]
             if len(new):
                 write(new)
                 counts[name] = len(new)
