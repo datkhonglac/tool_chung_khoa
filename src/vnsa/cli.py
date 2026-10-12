@@ -97,8 +97,9 @@ def cmd_import_excel(args) -> int:
 
 
 def cmd_fetch(args) -> int:
-    from datetime import date, timedelta
+    from datetime import date, datetime, timedelta
 
+    from vnsa.data.autofetch import VN_TZ, last_session
     from vnsa.data.providers.cafef_provider import CafeFProvider
 
     symbols = [s.upper() for s in args.symbols] or settings()["watchlist"]["symbols"]
@@ -110,6 +111,8 @@ def cmd_fetch(args) -> int:
     out_dir = path("raw_prices_dir")
     out_dir.mkdir(parents=True, exist_ok=True)
     prov = CafeFProvider(pause=args.pause)
+    # trong giờ giao dịch CafeF trả cả phiên hôm nay (giá 0 / giá tạm): chỉ giữ phiên đã đóng cửa
+    closed = last_session(datetime.now(VN_TZ), settings()["auto"]["market_close_hour"])
     done, code = [], 0
     for sym in symbols:
         print(f"  … {sym}: đang tải {start} → {end} từ CafeF")
@@ -119,12 +122,14 @@ def cmd_fetch(args) -> int:
             print(f"  ✗ {sym}: {e}")
             code = 1
             continue
+        df = df[df["date"] <= closed].reset_index(drop=True)
         out = out_dir / f"{sym}.csv"
         df.assign(date=df["date"].dt.strftime("%Y-%m-%d")).drop(columns="symbol").to_csv(
             out, index=False
         )
         first, last = df["date"].min().date(), df["date"].max().date()
-        print(f"  ✓ {sym}: {len(df)} phiên ({first} → {last}) → {out.relative_to(PROJECT_ROOT)}")
+        shown = out.relative_to(PROJECT_ROOT) if out.is_relative_to(PROJECT_ROOT) else out
+        print(f"  ✓ {sym}: {len(df)} phiên ({first} → {last}) → {shown}")
         if prov.repaired:
             print(f"      sửa cao/thấp cho {len(prov.repaired)} phiên CafeF ghi sai: "
                   + ", ".join(prov.repaired))
