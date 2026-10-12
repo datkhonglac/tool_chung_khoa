@@ -388,6 +388,17 @@ def test_history_roundtrip_keeps_screen_runs(market_db, tmp_path, monkeypatch):
     with Store(tmp_path / "new.duckdb") as store:
         assert set(store.screen()["symbol"]) == {"DEMO_A", "DEMO_C"}
 
+    # máy chỉ chạy --stage liquidity cùng phiên với lượt đủ 4 tầng trên GitHub: nạp thì thay
+    full = pd.read_csv(tmp_path / "hist" / "screen.csv", parse_dates=["as_of", "last_date"])
+    assert full["stage"].max() >= 2
+    monkeypatch.setenv("VNSA_WAREHOUSE", str(tmp_path / "local.duckdb"))
+    with Store(tmp_path / "local.duckdb") as store:
+        store.write_screen(full.assign(stage=1))
+    assert history.import_history(tmp_path / "hist")["screen"] == 2
+    with Store(tmp_path / "local.duckdb") as store:
+        assert set(store.screen_depth().values()) == {int(full["stage"].max())}
+    assert history.import_history(tmp_path / "hist")["screen"] == 0   # đã sâu bằng: không thay
+
 
 def test_study_picks_strong_groups_without_lookahead():
     from vnsa.screen.study import format_study, run_study

@@ -22,3 +22,49 @@
 #
 # [vn_gdp_yoy]
 # "2026-Q2" = 7.1
+
+# ======================================================================================================
+# SỐ ĐÃ NHẬP — cập nhật 12/10/2026 (Claude tra từ thông cáo chính thức qua báo chí; nên đối chiếu lại
+# trên nso.gov.vn / sbv.gov.vn khi rảnh). Tháng sau thêm dòng "2026-10" vào từng bảng, KHÔNG xoá dòng cũ.
+#
+# Cục Thống kê, thông cáo KT-XH quý III và 9 tháng năm 2026 (công bố 03/10/2026):
+#   https://www.nso.gov.vn/du-lieu-va-so-lieu-thong-ke/2026/10/thong-cao-bao-chi-tinh-hinh-kinh-te-xa-hoi-quy-iii-va-9-thang-nam-2026/
+
+[vn_gdp_yoy]
+"2026-Q1" = 8.15
+"2026-Q2" = 8.81
+"2026-Q3" = 9.95
+
+[vn_cpi_yoy]
+"2026-09" = 5.08     # CPI tháng 9 so cùng kỳ (bình quân 9 tháng 4,52%)
+
+[vn_retail_yoy]
+"2026-09" = 14.1     # tổng mức bán lẻ + doanh thu dịch vụ tiêu dùng tháng 9 (giá hiện hành)
+
+[vn_exports_yoy]
+"2026-09" = 39.1     # xuất khẩu tháng 9: 59,48 tỷ USD (9 tháng +24,5%)
+
+[vn_iip_yoy]
+"2026-09" = 16.7     # IIP tháng 9 (bản tiếng Anh của Cục Thống kê; 9 tháng +12,3%)
+
+[vn_arrivals_yoy]
+"2026-09" = 16.1     # khách quốc tế tháng 9: 1,77 triệu lượt (9 tháng +14,5%)
+
+[vn_public_invest_yoy]
+"2026-09" = 19.0     # LUỸ KẾ 9 tháng vốn thực hiện từ NSNN (chưa có số riêng tháng 9)
+
+# S&P Global Vietnam Manufacturing PMI (công bố 01/10/2026)
+[vn_pmi]
+"2026-08" = 53.3
+"2026-09" = 51.9
+
+# NHNN, họp báo quý III/2026 (07/10/2026): tín dụng đến 30/9/2026 tăng 11,59% so với cuối 2025.
+# Cùng kỳ 2025: đến 29/9/2025 tăng 13,37% so với cuối 2024.
+[vn_credit_ytd]
+"2025-09" = 13.37
+"2026-09" = 11.59
+
+# CHƯA NHẬP (chưa tìm được số đúng định nghĩa — nhóm "Tiền tệ" sẽ còn báo chưa đủ số):
+#   vn_interbank_on : cần lãi suất qua đêm BÌNH QUÂN tháng 9 và tháng 6/2026 (NHNN), không phải số một ngày
+#   vn_gov_10y      : cần lợi suất TPCP 10 năm (thứ cấp, HNX) cuối tháng 9 và cuối tháng 6/2026.
+#                     Nhập số này thì k_e/WACC dùng nó thay cho 3,5% trong settings.toml.

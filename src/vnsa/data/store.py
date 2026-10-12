@@ -713,6 +713,11 @@ class Store:
         return [pd.Timestamp(r[0]) for r in
                 self.con.execute("SELECT DISTINCT as_of FROM screen ORDER BY as_of").fetchall()]
 
+    def screen_depth(self) -> dict[pd.Timestamp, int]:
+        """{ngày as_of: tầng cao nhất đã chạy} — lượt chỉ lọc thanh khoản có tầng 1."""
+        return {pd.Timestamp(d): int(s) for d, s in self.con.execute(
+            "SELECT as_of, MAX(stage) FROM screen GROUP BY as_of").fetchall()}
+
     def screen_history(self, min_stage: int = 1) -> pd.DataFrame:
         """Mọi lượt sàng lọc đã lưu, chỉ các mã đạt từ tầng `min_stage` (để chấm lại, lưu lịch sử)."""
         df = self.con.execute(f"SELECT {', '.join(SCREEN_COLUMNS)} FROM screen WHERE stage >= ? "

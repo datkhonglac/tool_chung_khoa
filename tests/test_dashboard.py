@@ -124,3 +124,25 @@ def test_dashboard_screen_tab(warehouse):
     assert "Mã MUA ngoài các nhóm dẫn đầu" in heads
     labels = {m.label: m.value for m in at.metric}
     assert labels["Được chọn"] == "1" and labels["Vũ trụ"] == "4"
+
+
+def test_dashboard_screen_tab_liquidity_only(warehouse):
+    """Lượt chỉ chạy --stage liquidity: nói rõ chỉ có tầng 1, hiện danh sách mã qua lọc (trước đây
+    báo "Không mã nào đạt đủ điều kiện" gây hiểu nhầm)."""
+    import pandas as pd
+
+    from vnsa.data.store import Store
+
+    day = pd.Timestamp("2026-10-12")
+    rows = [{"as_of": day, "symbol": s, "exchange": "HOSE", "industry": "Ngân hàng",
+             "price": 25_000.0, "value_20d": v, "rs_3m": 0.02, "rs_6m": 0.05,
+             "above_ma50": 1.0, "above_ma200": 1.0, "stage": st, "reason": r}
+            for s, v, st, r in [("AAA", 9e9, 1, ""), ("BBB", 5e9, 1, ""),
+                                ("CCC", 1e8, 0, "thanh khoản thấp: 0,1 tỷ")]]
+    with Store(warehouse) as store:
+        store.write_screen(pd.DataFrame(rows))
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception, at.exception
+    assert any("tầng 1 — lọc thanh khoản" in i.value for i in at.info)
+    assert "2 mã qua lọc thanh khoản" in [h.value for h in at.subheader]
+    assert "Mã tiềm năng trong các nhóm dẫn đầu" not in [h.value for h in at.subheader]
