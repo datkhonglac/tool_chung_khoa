@@ -4,7 +4,8 @@ Kho `data/warehouse.duckdb` không đưa lên Git và bị xoá sau mỗi lần 
 - khuyến nghị (bảng signals) mất đi thì `review-signals` không bao giờ chấm được;
 - bản miễn phí VCI chỉ trả 4 năm / 4 quý gần nhất — muốn có dài hơn phải tự tích luỹ qua thời gian.
 
-`export_history(dir)` ghi ba file CSV (signals, fundamentals, fundamentals_q); `import_history`
+`export_history(dir)` ghi các file CSV (signals, fundamentals, fundamentals_q, và các lượt sàng lọc
+toàn thị trường: screen — chỉ mã qua lọc thanh khoản —, screen_industry); `import_history`
 nạp lại (từ thư mục hoặc từ một nhánh Git, ví dụ `origin/signals` do workflow hằng ngày
 `.github/workflows/daily.yml` cập nhật). Nạp chỉ THÊM/ghi đè theo khoá (mã, ngày | năm | quý), không
 xoá dữ liệu đang có trong kho.
@@ -21,7 +22,8 @@ import pandas as pd
 from vnsa.config import PROJECT_ROOT, path
 
 FILES = {"signals": "signals.csv", "fundamentals": "fundamentals.csv",
-         "fundamentals_q": "fundamentals_q.csv"}
+         "fundamentals_q": "fundamentals_q.csv", "screen": "screen.csv",
+         "screen_industry": "screen_industry.csv"}
 
 
 def export_history(out_dir: str | Path) -> dict[str, int]:
@@ -34,10 +36,13 @@ def export_history(out_dir: str | Path) -> dict[str, int]:
     with Store(path("warehouse")) as store:
         tables = {"signals": store.signals().drop(columns="recorded_at", errors="ignore"),
                   "fundamentals": store.all_fundamentals(),
-                  "fundamentals_q": store.all_quarterly()}
+                  "fundamentals_q": store.all_quarterly(),
+                  "screen": store.screen_history(min_stage=1),
+                  "screen_industry": store.screen_industry_history()}
     for name, df in tables.items():
-        if "as_of" in df:
-            df = df.assign(as_of=pd.to_datetime(df["as_of"]).dt.strftime("%Y-%m-%d"))
+        for c in ("as_of", "last_date"):
+            if c in df:
+                df = df.assign(**{c: pd.to_datetime(df[c]).dt.strftime("%Y-%m-%d")})
         df.to_csv(out / FILES[name], index=False)
         counts[name] = len(df)
     return counts
@@ -96,4 +101,16 @@ def import_history(src: str | Path | None = None, git_ref: str | None = None) ->
                 write(part, str(src_name))
             store.mark_stale(name, new[keys])
             counts[name] = len(new)
+        # lượt sàng lọc: nạp nguyên lượt (ngày) kho chưa có
+        have_days = set(store.screen_dates())
+        for name, write in (("screen", store.write_screen),
+                            ("screen_industry", store.write_screen_industry)):
+            df = frames[name]
+            if df is None or df.empty:
+                continue
+            df = df.assign(as_of=pd.to_datetime(df["as_of"]))
+            new = df[~df["as_of"].isin(have_days)]
+            if len(new):
+                write(new)
+                counts[name] = len(new)
     return counts

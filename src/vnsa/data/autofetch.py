@@ -19,9 +19,10 @@ Phiên "đã có giá" tính theo giờ Việt Nam: trước `market_close_hour`
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -78,6 +79,20 @@ def _fmt(d) -> str:
     return pd.Timestamp(d).strftime("%d/%m/%Y")
 
 
+def _drop_unfinished_tail(df: pd.DataFrame) -> pd.DataFrame:
+    """Bỏ các phiên CUỐI chuỗi có giá ≤ 0: nguồn chưa ghi xong phiên mới nhất (thật: CafeF trả
+    VNINDEX phiên 12/10/2026 lúc 18h với một giá bằng 0, cả lần tải bị từ chối). Lần tải sau sẽ lấy
+    lại phiên đó. Phiên lỗi ở GIỮA chuỗi vẫn bị validate_prices chặn như cũ."""
+    cols = [c for c in ("open", "high", "low", "close") if c in df]
+    if df.empty or not cols:
+        return df
+    bad = (df[cols] <= 0).any(axis=1).to_numpy()
+    n = len(df)
+    while n and bad[n - 1]:
+        n -= 1
+    return df.iloc[:n]
+
+
 class Updater:
     """Cập nhật kho cho từng mã. Nguồn dữ liệu truyền vào được (test không cần mạng)."""
 
@@ -96,6 +111,10 @@ class Updater:
         self._index_step: Step | None = None
         self._macro_step: Step | None = None       # số vĩ mô dùng chung mọi mã: kiểm tra một lần
         self.macro_provider = macro_provider
+        self._prefetched: dict = {}                # (mã, từ, đến) -> (giá, ngày sửa) | lỗi
+        self._prefer_cafef = False                 # tải hàng loạt: luôn thử CafeF trước
+        self.prefetch_backoff = 3.0                # giây chờ trước khi luồng tải trước thử lại
+        self.fallbacks: dict[str, str] = {}        # mã đã phải dùng vnstock -> lỗi CafeF
 
     # ---- các bước ----------------------------------------------------------------------------
     def _listing(self, store: Store, refresh: bool) -> Step:
@@ -132,12 +151,13 @@ class Updater:
         band = 1.0 if sym == self.index else market.band(exchange=exchange or settings()["market"]
                                                          .get("default_exchange", "HOSE"))
         self._order = [self.cafef, self.vn]
-        if store.price_source(sym) == self.vn.name and not full:
+        if store.price_source(sym) == self.vn.name and not full and not self._prefer_cafef:
             self._order.reverse()                       # mã này lần trước lấy được từ vnstock
+        depth = None                                    # ngày bắt đầu nếu tải toàn bộ
         try:
             if last is None or full:
-                df = self._download(sym, today - timedelta(days=round(365.25 * self.cfg["years"])),
-                                    today)
+                depth = start = self._full_start(store, sym, today)
+                df = self._download(sym, start, today)
                 note = f"tải {len(df)} phiên ({_fmt(df['date'].iloc[0])} → {_fmt(df['date'].iloc[-1])})"
                 write = store.write_prices
             else:
@@ -147,8 +167,8 @@ class Updater:
                 both = old.merge(df, on="date", suffixes=("_old", ""))
                 drift = (both["close"] / both["close_old"] - 1).abs().max() if len(both) else 0.0
                 if drift > self.cfg["adjust_tolerance"]:
-                    df = self._download(
-                        sym, today - timedelta(days=round(365.25 * self.cfg["years"])), today)
+                    depth = self._full_start(store, sym, today)
+                    df = self._download(sym, depth, today)
                     note = (f"giá lịch sử đã được nguồn điều chỉnh (lệch {drift:.1%}, thường do "
                             f"cổ tức/chia tách) → tải lại toàn bộ {len(df)} phiên")
                     write = store.write_prices
@@ -165,6 +185,8 @@ class Updater:
             return Step(label, "error", "dữ liệu tải về có lỗi, không nạp: "
                         + "; ".join(str(i) for i in errors))
         write(df, source=self._used.name)
+        if depth is not None:
+            store.set_price_depth(sym, depth)
         self._save_csv(store, sym)
         repaired = getattr(self._used, "repaired", None)
         if repaired:
@@ -173,6 +195,24 @@ class Updater:
             note += f" — nguồn {self._used.name}" + (f" (CafeF: {self._fallback_reason})"
                                                      if self._fallback_reason else "")
         return Step(label, "ok", note)
+
+    def _full_start(self, store: Store, sym: str, today) -> date:
+        """Ngày bắt đầu khi tải toàn bộ: `years` năm, hoặc sớm hơn nếu kho đã có lịch sử dài hơn
+        (tải lại vì nguồn điều chỉnh giá không được làm mất phần lịch sử đã có)."""
+        start = today - timedelta(days=round(365.25 * self.cfg["years"]))
+        first = store.first_price_date(sym)
+        return min(start, first.date()) if first is not None else start
+
+    def _short(self, store: Store, sym: str) -> bool:
+        """Kho có giá nhưng ngắn hơn `years` năm (vd. sàng lọc mới tải 1 năm) và chưa từng yêu cầu
+        đủ độ sâu — mã mới niêm yết đã tải đủ thì không tải lại."""
+        first = store.first_price_date(sym)
+        if first is None:
+            return False
+        want = pd.Timestamp(self.now().date()) - pd.Timedelta(
+            days=round(365.25 * self.cfg["years"]) - 30)
+        depth = store.price_depth(sym)
+        return first > want and (depth is None or depth > want)
 
     def _download(self, sym: str, start, end) -> pd.DataFrame:
         """Thử lần lượt các nguồn giá trong self._order; ghi nhận nguồn đã dùng vào self._used.
@@ -183,9 +223,17 @@ class Updater:
         closed = last_session(self.now(), self.cfg["market_close_hour"])
         for prov in self._order:
             try:
-                df = prov.ohlcv(sym, start, end)
+                pre = (self._prefetched.pop((sym, str(start), str(end)), None)
+                       if prov is self.cafef else None)
+                if pre is not None:                     # đã tải song song ở quick_prices
+                    if isinstance(pre, Exception):
+                        raise pre
+                    df, self.cafef.repaired = pre
+                else:
+                    df = prov.ohlcv(sym, start, end)
                 if not df.empty:
-                    df = df[pd.to_datetime(df["date"]) <= closed].reset_index(drop=True)
+                    df = _drop_unfinished_tail(
+                        df[pd.to_datetime(df["date"]) <= closed].reset_index(drop=True))
                 if df.empty:
                     raise ValueError(f"không có giá {sym} từ {start} đến {end}")
             except Exception as e:  # noqa: BLE001 - thử nguồn kế tiếp
@@ -194,6 +242,8 @@ class Updater:
                     self._fallback_reason = "không có dữ liệu mã này"
                 continue
             self._used = prov
+            if prov is not self.cafef and errors:
+                self.fallbacks[sym] = errors[0][:160]
             return df
         raise ValueError("; ".join(errors) + ". Mã có đúng không?")
 
@@ -253,17 +303,23 @@ class Updater:
             p = self.vn.profile(sym)
             if not p or pd.isna(p.get("shares_out", float("nan"))):
                 raise ValueError("nguồn không trả số cổ phiếu lưu hành")
-            store.write_profile(sym, p)
-            n_div = store.write_dividends(self.vn.dividends(sym), sym)
         except Exception as e:  # noqa: BLE001 - thiếu hồ sơ thì dùng vốn góp / mệnh giá
             return Step("hồ sơ", "error", f"{e}; số cổ phiếu tạm tính = vốn góp / mệnh giá")
-        return Step("hồ sơ", "ok", f"{p['shares_out'] / 1e6:,.1f} triệu cp lưu hành, "
-                    f"{n_div} lần chia cổ tức")
+        shares = f"{p['shares_out'] / 1e6:,.1f} triệu cp lưu hành"
+        try:
+            div = self.vn.dividends(sym)
+        except Exception as e:  # noqa: BLE001 - giữ số cp; không đánh dấu đã tải để lần sau thử lại
+            store.write_profile(sym, p, stamp=False)
+            return Step("hồ sơ", "error", f"cổ tức: {e} (đã có {shares}; lần sau tải lại cổ tức)")
+        store.write_profile(sym, p)
+        n_div = store.write_dividends(div, sym)
+        return Step("hồ sơ", "ok", f"{shares}, {n_div} lần chia cổ tức")
 
     def _flows(self, store: Store, sym: str) -> Step | None:
-        """Khối ngoại + tự doanh (CafeF). Nguồn giá không có hàm flows (test) thì bỏ qua."""
+        """Khối ngoại + tự doanh (CafeF). Nguồn giá không có hàm flows (test) hoặc `[auto] flows =
+        false` (sàng lọc hàng loạt không cần) thì bỏ qua."""
         get = getattr(self.cafef, "flows", None)
-        if get is None:
+        if get is None or not self.cfg.get("flows", True):
             return None
         have = store.flows(sym)
         last_px = store.last_price_date(sym)
@@ -310,23 +366,100 @@ class Updater:
             self._macro_step = Step("vĩ mô", status, detail)
         return self._macro_step
 
-    def long_prices(self, symbols: list[str], years: int) -> list[Step]:
+    def long_prices(self, symbols: list[str], years: int, workers: int = 1) -> list[Step]:
         """Chỉ tải GIÁ (kèm VNINDEX và danh sách sàn để biết biên độ) đủ `years` năm cho kiểm định
-        nhiều mã (lệnh study-timing); mã đã có đủ thì chỉ tải phần mới."""
+        nhiều mã (lệnh study-timing, study-screen); mã đã có đủ thì chỉ tải phần mới. `workers` > 1:
+        tải CafeF song song trước."""
         steps = []
         cfg_years = self.cfg.get("years")
         self.cfg = {**self.cfg, "years": years}
-        want = pd.Timestamp(self.now().date()) - pd.Timedelta(days=round(365.25 * years) - 30)
+        self._prefer_cafef = True
         try:
             with Store(path("warehouse")) as store:
                 steps.append(self._listing(store, False))
-                for sym in [*symbols, self.index]:
-                    have = store.prices(sym)
-                    short = have.empty or have["date"].min() > want
-                    steps.append(self._prices(store, sym, sym, full=short))
+                todo = [*symbols, self.index]
+                if workers > 1:
+                    self._prefetch(store, todo, workers, full_if_short=True)
+                for sym in todo:
+                    steps.append(self._prices(store, sym, sym, full=self._short(store, sym)))
         finally:
             self.cfg = {**self.cfg, "years": cfg_years}
+            self._prefetched.clear()
+            self._prefer_cafef = False
         return steps
+
+    def listing(self, refresh: bool = False) -> Step:
+        """Danh sách niêm yết (sàn, ngành): tải lại khi cũ hơn `listing_max_age_days`."""
+        with Store(path("warehouse")) as store:
+            return self._listing(store, refresh)
+
+    def _prefetch(self, store: Store, symbols: list[str], workers: int,
+                  full_if_short: bool = False) -> None:
+        """Tải trước giá CafeF của nhiều mã bằng `workers` luồng (chỉ phần gọi mạng; ghi kho vẫn
+        tuần tự trong _prices). Cùng khoảng ngày _prices sẽ hỏi: mã chưa có -> _full_start, mã đã
+        có -> từ phiên cuối − overlap_days. Mã lần trước lấy từ vnstock thì để _prices tự gọi."""
+        import copy
+        from concurrent.futures import ThreadPoolExecutor
+
+        end_ts = last_session(self.now(), self.cfg["market_close_hour"])
+        today = self.now().date()
+        jobs = []
+        for sym in symbols:
+            last = store.last_price_date(sym)
+            short = full_if_short and self._short(store, sym)
+            if last is not None and last >= end_ts and not short:
+                continue
+            full = last is None or (full_if_short and self._short(store, sym))
+            start = (self._full_start(store, sym, today) if full
+                     else (last - timedelta(days=self.cfg["overlap_days"])).date())
+            jobs.append((sym, start, today))
+
+        def fetch(job):
+            sym, start, end = job
+            prov = copy.copy(self.cafef)                # mỗi luồng một bản: `repaired` riêng
+            err: Exception | None = None
+            for attempt in range(3):                    # CafeF chặn tạm khi gọi dồn: chờ rồi thử lại
+                try:
+                    return job, (prov.ohlcv(sym, start, end),
+                                 list(getattr(prov, "repaired", [])))
+                except Exception as e:  # noqa: BLE001 - lỗi để _prices xử lý (thử nguồn khác)
+                    err = e
+                    if "Mã có đúng không" in str(e) or "không có dữ liệu" in str(e).lower():
+                        break                           # CafeF không có mã này: khỏi thử lại
+                    time.sleep(self.prefetch_backoff * (attempt + 1))
+            return job, err
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for (sym, start, end), res in pool.map(fetch, jobs):
+                self._prefetched[(sym, str(start), str(end))] = res
+
+    def quick_prices(self, symbols: list[str], years: int = 1,
+                     progress: Callable[[int, int, str, Step], None] | None = None,
+                     workers: int = 1) -> dict[str, Step]:
+        """Chỉ tải GIÁ cho nhiều mã (sàng lọc toàn thị trường, screen/): mã chưa có giá tải `years`
+        năm (1 lần gọi CafeF), mã đã có chỉ tải phần mới. Không tải BCTC/hồ sơ — phần đó để
+        ensure() làm cho các mã qua lọc (ensure tự bổ sung đủ `[auto] years` năm giá).
+        `workers` > 1: tải CafeF song song trước (nhanh hơn nhiều với ~1.500 mã)."""
+        out: dict[str, Step] = {}
+        cfg_years = self.cfg.get("years")
+        self.cfg = {**self.cfg, "years": years}
+        self._prefer_cafef = True
+        todo = [self.index, *[s for s in dict.fromkeys(x.upper() for x in symbols)
+                              if s != self.index]]
+        try:
+            with Store(path("warehouse")) as store:
+                self._listing(store, False)
+                if workers > 1:
+                    self._prefetch(store, todo, workers)
+                for i, sym in enumerate(todo, 1):
+                    out[sym] = self._prices(store, sym, sym, full=False)
+                    if progress:
+                        progress(i, len(todo), sym, out[sym])
+        finally:
+            self.cfg = {**self.cfg, "years": cfg_years}
+            self._prefetched.clear()
+            self._prefer_cafef = False
+        return out
 
     # ---- điểm vào ----------------------------------------------------------------------------
     def ensure(self, symbol: str, refresh: bool = False, full: bool = False) -> UpdateReport:
@@ -343,10 +476,11 @@ class Updater:
             elif prof:
                 rep.steps.append(Step("thông tin", "ok", " · ".join(
                     str(x) for x in (prof["name"], prof["exchange"], prof["industry"]) if x)))
-            rep.steps.append(self._prices(store, sym, "giá", full))
+            rep.steps.append(self._prices(store, sym, "giá", full or self._short(store, sym)))
             if sym != self.index:
                 if self._index_step is None:
-                    self._index_step = self._prices(store, self.index, self.index, full)
+                    self._index_step = self._prices(store, self.index, self.index,
+                                                    full or self._short(store, self.index))
                 rep.steps.append(self._index_step)
             rep.has_prices = store.last_price_date(sym) is not None
             if rep.has_prices and sym != self.index:

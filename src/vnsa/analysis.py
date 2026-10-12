@@ -643,24 +643,37 @@ def macro_mapping() -> dict:
         return tomllib.load(fh)
 
 
-def macro_view(symbol: str) -> MacroView | None:
-    """Bối cảnh vĩ mô Việt Nam và mức thuận lợi của ngành cho `symbol` từ bảng macro_series.
-    None nếu kho chưa có số vĩ mô (chạy fetch-macro)."""
+def macro_readings() -> tuple[dict, dict] | None:
+    """(số đọc từng chuỗi vĩ mô, ngưỡng chấm [macro]) từ bảng macro_series; None nếu kho chưa có
+    số vĩ mô. Dùng chung cho thẻ từng mã và điểm nhóm ngành của bộ sàng lọc."""
     from vnsa.data.store import Store
     from vnsa.macro.catalog import catalog
-    from vnsa.macro.score import industry_score, market_context
     from vnsa.macro.signals import readings
 
     with Store(path("warehouse")) as store:
         data = store.macro()
-        company = store.company(symbol)
-        news = store.news(symbol, limit=settings().get("macro", {}).get("news_items", 5),
-                          days=settings().get("macro", {}).get("news_days", 30))
     if data.empty:
         return None
     mc = settings().get("macro", {})
     rs = readings(data, catalog(), z_years=mc.get("z_years", 5), z_cap=mc.get("z_cap", 2.0))
     cfg = {k: mc[k] for k in ("favorable", "unfavorable", "min_coverage", "z_cap") if k in mc}
+    return rs, cfg
+
+
+def macro_view(symbol: str) -> MacroView | None:
+    """Bối cảnh vĩ mô Việt Nam và mức thuận lợi của ngành cho `symbol` từ bảng macro_series.
+    None nếu kho chưa có số vĩ mô (chạy fetch-macro)."""
+    from vnsa.data.store import Store
+    from vnsa.macro.score import industry_score, market_context
+
+    got = macro_readings()
+    if got is None:
+        return None
+    rs, cfg = got
+    with Store(path("warehouse")) as store:
+        company = store.company(symbol)
+        news = store.news(symbol, limit=settings().get("macro", {}).get("news_items", 5),
+                          days=settings().get("macro", {}).get("news_days", 30))
     mapping = macro_mapping()
     market, groups = market_context(rs, mapping, cfg)
     ind = industry_score(symbol, company, rs, mapping, cfg)

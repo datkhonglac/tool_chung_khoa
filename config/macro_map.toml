@@ -125,13 +125,49 @@ drivers = [
 
 [[industry]]
 name = "Chứng khoán"
-match = "chứng khoán|môi giới|ngân hàng đầu tư"
+match = "chứng khoán|ngân hàng đầu tư"   # không dùng "môi giới": có "Môi giới Bất động sản"
 model = "securities"
 drivers = [
   { series = "vn_interbank_on", sign = -1, why = "lãi suất tăng: dòng tiền rời cổ phiếu, vốn vay ký quỹ đắt" },
   { series = "vn_credit_ytd", sign = 1, why = "tín dụng nới: thanh khoản thị trường tốt" },
   { series = "usd_vnd", sign = -1, why = "VND mất giá nhanh: khối ngoại bán ròng" },
   { series = "us_10y", sign = -1, why = "lợi suất Mỹ tăng: vốn ngoại rút" },
+]
+
+[[industry]]
+name = "Bảo hiểm"
+match = "bảo hiểm"
+model = "insurance"
+drivers = [
+  { series = "vn_gov_10y", sign = 1, why = "lợi suất trái phiếu tăng: thu nhập đầu tư tăng" },
+  { series = "vn_gdp_yoy", sign = 1, why = "kinh tế tốt: phí bảo hiểm tăng" },
+]
+
+# Điện, Dầu khí, Dược đứng trước Bán lẻ: tên ICB "Sản xuất & Phân phối điện", "Phân phối khí đốt",
+# "Phân phối dược phẩm" có chữ "phân phối" — mục khớp trước được chọn.
+[[industry]]
+name = "Điện, nước"
+# "^điện, nước": tên ICB cấp 2; không khớp "Điện tử & Thiết bị điện". "^nước$": ICB cấp 4 "Nước"
+# (cấp 3 "Nước & Khí đốt" sẽ khớp Dầu khí nếu để rơi xuống)
+match = "phân phối điện|sản xuất.*điện|điện lực|năng lượng tái tạo|^điện, nước|^nước$|cấp nước|nước sạch|tiện ích"
+drivers = [
+  { series = "vn_iip_yoy", sign = 1, why = "sản xuất công nghiệp tăng: nhu cầu điện tăng" },
+  { series = "coal", sign = -1, weight = 0.5, why = "than tăng: chi phí nhiệt điện" },
+]
+
+[[industry]]
+name = "Dầu khí"
+match = "dầu khí|dầu mỏ|khí đốt|xăng dầu"
+drivers = [
+  { series = "brent", sign = 1, weight = 2, why = "giá dầu tăng: doanh thu, dự án thượng nguồn" },
+]
+
+[[industry]]
+name = "Dược phẩm, y tế"
+match = "dược phẩm|y tế|chăm sóc sức kh|công nghệ sinh học"   # không dùng "dược": có "Nông dược" (hoá chất)
+drivers = [
+  { series = "usd_vnd", sign = -1, why = "VND yếu: nguyên liệu nhập khẩu đắt hơn" },
+  { series = "vn_retail_yoy", sign = 1, weight = 0.5, why = "tiêu dùng tăng" },
 ]
 
 [[industry]]
@@ -174,6 +210,13 @@ drivers = [
 ]
 
 [[industry]]
+name = "Cao su, nhựa"
+match = "cao su|nhựa"   # ICB "Nhựa, cao su & sợi": đứng trước Dệt may
+drivers = [
+  { series = "rubber", sign = 1, weight = 2, why = "giá cao su tăng" },
+]
+
+[[industry]]
 name = "Dệt may"
 match = "dệt|may mặc|quần áo|sợi"
 drivers = [
@@ -206,13 +249,6 @@ drivers = [
 ]
 
 [[industry]]
-name = "Dầu khí"
-match = "dầu khí|dầu mỏ|khí đốt|xăng dầu"
-drivers = [
-  { series = "brent", sign = 1, weight = 2, why = "giá dầu tăng: doanh thu, dự án thượng nguồn" },
-]
-
-[[industry]]
 name = "Bất động sản"
 match = "bất động sản"
 drivers = [
@@ -222,22 +258,23 @@ drivers = [
 ]
 
 [[industry]]
-name = "Xây dựng, vật liệu"
-match = "xây dựng|vật liệu"
+name = "Vật liệu xây dựng"   # đứng trước "Xây dựng": "Vật liệu xây dựng & Nội thất"
+match = "vật liệu"
 drivers = [
   { series = "vn_public_invest_yoy", sign = 1, weight = 2, why = "giải ngân đầu tư công" },
   { series = "vn_credit_ytd", sign = 1, why = "tín dụng" },
 ]
 
 [[industry]]
-name = "Cao su"
-match = "cao su"
+name = "Xây dựng"
+match = "xây dựng"
 drivers = [
-  { series = "rubber", sign = 1, weight = 2, why = "giá cao su tăng" },
+  { series = "vn_public_invest_yoy", sign = 1, weight = 2, why = "giải ngân đầu tư công" },
+  { series = "vn_credit_ytd", sign = 1, why = "tín dụng" },
 ]
 
 [[industry]]
-name = "Thuỷ sản"
+name = "Nông nghiệp, thuỷ sản"   # ICB "Nuôi trồng nông & hải sản"
 match = "thuỷ sản|thủy sản|nuôi trồng"
 drivers = [
   { series = "usd_vnd", sign = 1, why = "VND yếu: xuất khẩu có lợi" },

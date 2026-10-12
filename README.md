@@ -186,6 +186,57 @@ python -m vnsa.cli macro HPG FPT        # yếu tố vĩ mô của ngành từng
   `[valuation] risk_free`.
 - **Tin tức:** tiêu đề tin theo mã (vnstock/VCI), chỉ để đọc; không chấm điểm cảm xúc tin.
 
+## Sàng lọc toàn thị trường
+
+Lọc mọi mã HOSE, HNX, UPCoM qua 5 tầng để ra nhóm ngành tiềm năng và mã tiềm năng trong từng
+nhóm: tầng 0 vũ trụ → tầng 1 thanh khoản → tầng 2 phân tích từng mã → tầng 3 chấm nhóm ngành →
+tầng 4 chọn mã.
+
+```bash
+python -m vnsa.cli screen                       # đủ 4 tầng: nhóm ngành tiềm năng + mã tiềm năng
+python -m vnsa.cli screen --stage industry      # dừng ở tầng 3 (bảng nhóm ngành)
+python -m vnsa.cli screen --stage liquidity     # chỉ tầng 1 (nhanh)
+python -m vnsa.cli screen --exchanges HOSE HNX  # chỉ hai sàn
+python -m vnsa.cli screen --no-update           # dùng dữ liệu đã có trong kho, không tải
+python -m vnsa.cli screen --groups              # bảng ngành ICB → nhóm ngành
+```
+
+- **Tầng 1** chỉ cần giá 1 năm mỗi mã (1 lần gọi CafeF, 4 luồng song song). Giữ mã có GTGD bình quân 20 phiên ≥ 3 tỷ,
+  giá ≥ 5.000đ, ≥ 200 phiên có giao dịch trong 1 năm, còn giao dịch trong 10 ngày gần nhất.
+- **Tầng 2** tải đủ 5 năm giá + BCTC năm/quý + hồ sơ cho các mã qua tầng 1 (thanh khoản cao trước),
+  rồi chạy đúng bộ phân tích của `analyze` cho từng mã: xếp hạng, giá trị hợp lý, FA, TA, độ tin cậy,
+  vùng mua, cắt lỗ.
+- **Tầng 3** chấm mỗi nhóm ngành 0–100: động lượng 30% (sức mạnh tương đối so VNINDEX), tăng trưởng
+  lợi nhuận 25%, định giá 15% (lợi nhuận kỳ vọng), độ rộng 10% (tỷ lệ mã trên MA50/MA200), chất lượng
+  10% (điểm FA), vĩ mô 10%. Mỗi phần là thứ hạng giữa các nhóm; phần thiếu số thì chia lại trọng số.
+  Nhóm ngành lấy theo `config/macro_map.toml` (Ngân hàng, Chứng khoán, Bảo hiểm, Điện, Dầu khí, Thép,
+  Bất động sản...); mã không thuộc nhóm nào xếp theo ngành ICB cấp 2.
+- **Tầng 4** lấy 5 nhóm điểm cao nhất, mỗi nhóm tối đa 5 mã xếp MUA hoặc KHẢ QUAN, FA ≥ 50,
+  Altman Z'' ≥ 1,1, không cờ đỏ BCTC; xếp MUA trước, rồi điểm FA 60% + TA 40%, rồi sức mạnh giá.
+  Mỗi mã in giá, giá trị hợp lý, lợi nhuận kỳ vọng, vùng mua, cắt lỗ, độ tin cậy và lý do chọn.
+  Thêm mục mã MUA ngoài 5 nhóm dẫn đầu. Ngưỡng ở `[screen]`.
+- Xem kết quả: tab **Sàng lọc thị trường** trên dashboard; Claude Desktop có công cụ
+  `screen_market` (đọc lượt gần nhất, không chạy lại).
+- **Hạn mức vnstock:** bản miễn phí chỉ 20 lượt gọi/phút, 1.200/giờ (khoảng 140 mã/giờ khi tải BCTC).
+  Vượt hạn mức thì thư viện tự thoát chương trình, nên tool tự chờ cho đủ dưới hạn mức. Mỗi lượt chỉ
+  tải BCTC tối đa 150 phút (`[screen] deep_minutes`); mã chưa kịp tải sẽ được tải ở lượt sau.
+  - Muốn nhanh gấp 3: đăng ký khoá API miễn phí ở vnstocks.com/login, rồi đặt biến môi trường
+    `VNSTOCK_API_KEY` (trên GitHub: Settings → Secrets and variables → Actions → New repository
+    secret, tên `VNSTOCK_API_KEY`).
+- Mã chỉ có 1 năm giá trong kho: `analyze` tự tải bổ sung đủ 5 năm khi cần.
+- Kết quả: bảng `screen`, `screen_industry` trong kho và `data/screen/screen_YYYY-MM-DD.csv`,
+  `industry_YYYY-MM-DD.csv`.
+- **Kiểm chứng:**
+  - `python -m vnsa.cli review-screen`: chấm lại các lượt đã lưu sau 20 và 60 phiên — mã được chọn,
+    mọi mã trong nhóm dẫn đầu, so với rổ mọi mã đủ thanh khoản và VNINDEX. Cần khoảng 10 lượt
+    (10 tuần) mới bắt đầu có ý nghĩa.
+  - `python -m vnsa.cli study-screen`: kiểm định quá khứ 10 năm phần dựa trên giá (động lượng nhóm
+    ngành, độ rộng, sức mạnh giá), mỗi tháng chọn lại, trừ phí và thuế, so với rổ chia đều và
+    VNINDEX. Phần BCTC và vĩ mô không có lịch sử miễn phí để kiểm định ngược.
+- Chạy trên GitHub: Actions → **Sàng lọc thị trường** → Run workflow (tick `study` để kiểm định 10
+  năm). Sau khi gộp vào nhánh chính, workflow tự chạy mỗi sáng thứ Bảy và lưu lịch sử vào nhánh
+  `signals`. Trên Codespaces nạp lịch sử về: `python -m vnsa.cli history import --git origin/signals`.
+
 ## 0. Chạy trên GitHub Codespaces (khuyến nghị)
 
 Trên trang repo GitHub: **Code → Codespaces → Create codespace on main**. Lần đầu mất vài phút để

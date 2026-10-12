@@ -136,6 +136,26 @@ CREATE TABLE IF NOT EXISTS news (
     PRIMARY KEY (symbol, date, title)
 );
 """
+# Độ sâu lịch sử giá đã yêu cầu ở lần tải toàn bộ gần nhất: phân biệt "kho mới tải ngắn" (sàng lọc
+# chỉ tải 1 năm) với "mã mới niêm yết, nguồn không có hơn" (không tải lại vô ích)
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS price_depth (
+    symbol    VARCHAR PRIMARY KEY,
+    full_from DATE,
+    loaded_at TIMESTAMP DEFAULT current_timestamp
+);
+-- Kết quả sàng lọc toàn thị trường (screen/): mỗi lượt (as_of) một dòng mỗi mã trong vũ trụ
+CREATE TABLE IF NOT EXISTS screen (
+    as_of  DATE    NOT NULL,     -- phiên giá của lượt sàng lọc
+    symbol VARCHAR NOT NULL,
+    PRIMARY KEY (as_of, symbol)
+);
+CREATE TABLE IF NOT EXISTS screen_industry (
+    as_of      DATE    NOT NULL,
+    group_name VARCHAR NOT NULL,
+    PRIMARY KEY (as_of, group_name)
+);
+"""
 FLOW_COLUMNS = ["foreign_buy", "foreign_sell", "foreign_net", "foreign_net_vol", "foreign_room",
                 "foreign_pct", "prop_buy", "prop_sell", "prop_net"]
 
@@ -148,6 +168,34 @@ PROFILE_TYPES = {c: "VARCHAR" if c == "analyst_rating" else "DOUBLE" for c in PR
 SIGNAL_COLUMNS = ["as_of", "symbol", "action", "score", "fa_score", "ta_score", "price",
                   "fair_value", "zone_status", "buy_low", "buy_high", "stop", "target", "params",
                   "macro_industry", "macro_market"]
+# Cột bảng screen (ngoài as_of, symbol). stage = tầng cao nhất mã đã qua (0 = chỉ trong vũ trụ);
+# reason = lý do bị loại ở tầng kế tiếp. Giá thật (đồng), GTGD đồng; tỷ lệ là số thập phân.
+SCREEN_TYPES = {
+    "exchange": "VARCHAR", "industry": "VARCHAR", "stage": "INTEGER", "reason": "VARCHAR",
+    "last_date": "DATE", "price": "DOUBLE", "value_20d": "DOUBLE", "sessions": "INTEGER",
+    "ret_1m": "DOUBLE", "ret_3m": "DOUBLE", "ret_6m": "DOUBLE", "rs_3m": "DOUBLE",
+    "rs_6m": "DOUBLE", "above_ma50": "DOUBLE", "above_ma200": "DOUBLE",
+    # tầng 2 (assess + thẻ báo cáo), tầng 3 (nhóm ngành)
+    "group_name": "VARCHAR", "model": "VARCHAR", "action": "VARCHAR", "expected_return": "DOUBLE",
+    "score": "DOUBLE", "fair_value": "DOUBLE", "upside": "DOUBLE", "dividend_yield": "DOUBLE",
+    "fa_score": "DOUBLE", "ta_score": "DOUBLE", "quant": "DOUBLE", "confidence": "VARCHAR",
+    "eps_growth": "DOUBLE", "growth_basis": "VARCHAR", "roe": "DOUBLE", "pe": "DOUBLE",
+    "pb": "DOUBLE", "z_em": "DOUBLE", "macro_industry": "DOUBLE", "zone_status": "VARCHAR",
+    "buy_low": "DOUBLE", "buy_high": "DOUBLE", "stop": "DOUBLE", "red_flags": "VARCHAR",
+    "fin_basis": "VARCHAR", "group_rank": "DOUBLE", "group_score": "DOUBLE",
+    "pick_rank": "DOUBLE",                     # tầng 4: thứ tự trong nhóm của mã được chọn
+}
+SCREEN_COLUMNS = ["as_of", "symbol", *SCREEN_TYPES]
+# Điểm nhóm ngành mỗi lượt sàng lọc (screen/industry.py): số thô + điểm thành phần (pt_*) 0–100
+INDUSTRY_TYPES = {
+    "rank": "DOUBLE", "score": "DOUBLE", "members": "INTEGER", "rs": "DOUBLE", "breadth": "DOUBLE",
+    "growth": "DOUBLE", "growing": "DOUBLE", "expected": "DOUBLE", "fa": "DOUBLE",
+    "macro": "DOUBLE", "macro_coverage": "DOUBLE", "value_20d": "DOUBLE",
+    "pt_momentum": "DOUBLE", "pt_breadth": "DOUBLE", "pt_earnings": "DOUBLE",
+    "pt_valuation": "DOUBLE", "pt_quality": "DOUBLE", "pt_macro": "DOUBLE",
+    "weight_used": "DOUBLE", "note": "VARCHAR",
+}
+INDUSTRY_COLUMNS = ["as_of", "group_name", *INDUSTRY_TYPES]
 
 
 class Store:
@@ -167,6 +215,10 @@ class Store:
         for c, t in [("industry3", "VARCHAR"), ("industry4", "VARCHAR"), *PROFILE_TYPES.items(),
                      ("profile_at", "TIMESTAMP")]:
             self.con.execute(f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {c} {t}")
+        for c, t in SCREEN_TYPES.items():
+            self.con.execute(f"ALTER TABLE screen ADD COLUMN IF NOT EXISTS {c} {t}")
+        for c, t in INDUSTRY_TYPES.items():
+            self.con.execute(f"ALTER TABLE screen_industry ADD COLUMN IF NOT EXISTS {c} {t}")
 
     def close(self) -> None:
         self.con.close()
@@ -240,6 +292,33 @@ class Store:
         d = self.con.execute("SELECT MAX(date) FROM prices WHERE symbol = ?",
                              [symbol.upper()]).fetchone()[0]
         return None if d is None else pd.Timestamp(d)
+
+    def first_price_date(self, symbol: str) -> pd.Timestamp | None:
+        d = self.con.execute("SELECT MIN(date) FROM prices WHERE symbol = ?",
+                             [symbol.upper()]).fetchone()[0]
+        return None if d is None else pd.Timestamp(d)
+
+    def set_price_depth(self, symbol: str, full_from) -> None:
+        """Ghi ngày bắt đầu đã yêu cầu ở lần tải toàn bộ giá gần nhất của mã."""
+        self.con.execute("INSERT OR REPLACE INTO price_depth (symbol, full_from, loaded_at) "
+                         "VALUES (?, ?, current_timestamp)",
+                         [symbol.upper(), pd.Timestamp(full_from).date()])
+
+    def price_depth(self, symbol: str) -> pd.Timestamp | None:
+        row = self.con.execute("SELECT full_from FROM price_depth WHERE symbol = ?",
+                               [symbol.upper()]).fetchone()
+        return None if row is None or row[0] is None else pd.Timestamp(row[0])
+
+    def recent_prices(self, start, symbols: list[str] | None = None) -> pd.DataFrame:
+        """Giá mọi mã (hoặc `symbols`) từ ngày `start` — một truy vấn cho cả thị trường."""
+        sql = ("SELECT symbol, date, close, close_raw, volume FROM prices WHERE date >= ?")
+        params: list = [pd.Timestamp(start).date()]
+        if symbols is not None:
+            sql += f" AND symbol IN ({', '.join('?' * len(symbols))})" if symbols else " AND FALSE"
+            params += [s.upper() for s in symbols]
+        df = self.con.execute(sql + " ORDER BY symbol, date", params).df()
+        df["date"] = pd.to_datetime(df["date"])
+        return df
 
     def prices(self, symbol: str, start: str | None = None, end: str | None = None) -> pd.DataFrame:
         sql = ("SELECT symbol, date, open, high, low, close, volume, close_raw FROM prices "
@@ -334,14 +413,16 @@ class Store:
             self.con.unregister("incoming")
         return len(frame)
 
-    def write_profile(self, symbol: str, profile: dict) -> None:
-        """Ghi hồ sơ doanh nghiệp vào dòng companies của mã (thêm dòng nếu chưa có)."""
+    def write_profile(self, symbol: str, profile: dict, stamp: bool = True) -> None:
+        """Ghi hồ sơ doanh nghiệp vào dòng companies của mã (thêm dòng nếu chưa có). `stamp` = False:
+        không ghi thời điểm tải (profile_at) để lần sau tải lại (vd. chưa lấy được cổ tức)."""
         sym = symbol.upper()
         if self.company(sym) is None:
             self.con.execute("INSERT INTO companies (symbol) VALUES (?)", [sym])
         cols = [c for c in PROFILE_COLUMNS if c in profile]
         sets = ", ".join(f"{c} = ?" for c in cols)
-        self.con.execute(f"UPDATE companies SET {sets}, profile_at = current_timestamp "
+        when = ", profile_at = current_timestamp" if stamp else ""
+        self.con.execute(f"UPDATE companies SET {sets}{when} "
                          "WHERE symbol = ?", [*(None if isinstance(profile[c], float)
                                                  and np.isnan(profile[c]) else profile[c]
                                                  for c in cols), sym])
@@ -442,6 +523,15 @@ class Store:
             "AND symbol IN (SELECT DISTINCT symbol FROM fundamentals) ORDER BY symbol",
             [industry]).fetchall()
         return [r[0] for r in rows]
+
+    def companies(self, exchanges: list[str] | None = None) -> pd.DataFrame:
+        """Danh sách niêm yết (cột COMPANY_COLUMNS), lọc theo sàn nếu có."""
+        sql = f"SELECT {', '.join(COMPANY_COLUMNS)} FROM companies"
+        params: list = []
+        if exchanges:
+            sql += f" WHERE exchange IN ({', '.join('?' * len(exchanges))})"
+            params = [e.upper() for e in exchanges]
+        return self.con.execute(sql + " ORDER BY symbol", params).df()
 
     def has_icb_detail(self) -> bool:
         """Danh sách niêm yết đã có ngành ICB cấp 4 (kho tạo trước 10/2026 thì chưa: tải lại)."""
@@ -568,6 +658,85 @@ class Store:
         t = self.con.execute("SELECT MAX(loaded_at) FROM news WHERE symbol = ?",
                              [symbol.upper()]).fetchone()[0]
         return None if t is None else pd.Timestamp(t)
+
+    def _replace_run(self, table: str, columns: list[str], df: pd.DataFrame,
+                     dates: tuple[str, ...]) -> int:
+        """Thay toàn bộ dòng của các ngày as_of có trong df (một lượt sàng lọc)."""
+        if df.empty:
+            return 0
+        frame = df.reindex(columns=columns).copy()
+        for c in dates:
+            frame[c] = pd.to_datetime(frame[c]).dt.date
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute("BEGIN")
+            self.con.execute(f"DELETE FROM {table} WHERE as_of IN "
+                             "(SELECT DISTINCT as_of FROM incoming)")
+            self.con.execute(f"INSERT INTO {table} ({', '.join(columns)}) "
+                             f"SELECT {', '.join(columns)} FROM incoming")
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming")
+        return len(frame)
+
+    def write_screen(self, df: pd.DataFrame, industry: pd.DataFrame | None = None) -> int:
+        """Ghi một lượt sàng lọc (bảng screen, và screen_industry nếu có điểm nhóm ngành): thay
+        toàn bộ dòng của các ngày as_of có trong df (mỗi bảng thay theo ngày của chính nó)."""
+        n = self._replace_run("screen", SCREEN_COLUMNS, df, ("as_of", "last_date"))
+        if industry is not None and not industry.empty:
+            self._replace_run("screen_industry", INDUSTRY_COLUMNS, industry, ("as_of",))
+        return n
+
+    def write_screen_industry(self, industry: pd.DataFrame) -> int:
+        return self._replace_run("screen_industry", INDUSTRY_COLUMNS, industry, ("as_of",))
+
+    def _latest_run(self, table: str, as_of):
+        if as_of is None:
+            as_of = self.con.execute(f"SELECT MAX(as_of) FROM {table}").fetchone()[0]
+        return None if as_of is None else pd.Timestamp(as_of).date()
+
+    def screen(self, as_of=None) -> pd.DataFrame:
+        """Một lượt sàng lọc (mặc định lượt mới nhất); rỗng nếu chưa chạy."""
+        day = self._latest_run("screen", as_of)
+        if day is None:
+            return pd.DataFrame(columns=SCREEN_COLUMNS)
+        df = self.con.execute(f"SELECT {', '.join(SCREEN_COLUMNS)} FROM screen WHERE as_of = ? "
+                              "ORDER BY symbol", [day]).df()
+        for c in ("as_of", "last_date"):
+            df[c] = pd.to_datetime(df[c])
+        return df
+
+    def screen_dates(self) -> list[pd.Timestamp]:
+        return [pd.Timestamp(r[0]) for r in
+                self.con.execute("SELECT DISTINCT as_of FROM screen ORDER BY as_of").fetchall()]
+
+    def screen_history(self, min_stage: int = 1) -> pd.DataFrame:
+        """Mọi lượt sàng lọc đã lưu, chỉ các mã đạt từ tầng `min_stage` (để chấm lại, lưu lịch sử)."""
+        df = self.con.execute(f"SELECT {', '.join(SCREEN_COLUMNS)} FROM screen WHERE stage >= ? "
+                              "ORDER BY as_of, symbol", [min_stage]).df()
+        for c in ("as_of", "last_date"):
+            df[c] = pd.to_datetime(df[c])
+        return df
+
+    def screen_industry_history(self) -> pd.DataFrame:
+        df = self.con.execute(f"SELECT {', '.join(INDUSTRY_COLUMNS)} FROM screen_industry "
+                              "ORDER BY as_of, rank NULLS LAST").df()
+        df["as_of"] = pd.to_datetime(df["as_of"])
+        return df
+
+    def screen_industry(self, as_of=None) -> pd.DataFrame:
+        """Điểm nhóm ngành của một lượt sàng lọc (mặc định mới nhất), xếp theo thứ hạng."""
+        day = self._latest_run("screen", as_of)
+        if day is None:
+            return pd.DataFrame(columns=INDUSTRY_COLUMNS)
+        df = self.con.execute(f"SELECT {', '.join(INDUSTRY_COLUMNS)} FROM screen_industry "
+                              "WHERE as_of = ? ORDER BY rank NULLS LAST, members DESC",
+                              [day]).df()
+        df["as_of"] = pd.to_datetime(df["as_of"])
+        return df
 
     def inventory(self) -> pd.DataFrame:
         """Mỗi mã có bao nhiêu phiên, từ ngày nào đến ngày nào."""

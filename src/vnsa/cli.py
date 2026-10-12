@@ -943,6 +943,64 @@ def cmd_study_timing(args) -> int:
     return 0
 
 
+def cmd_screen(args) -> int:
+    """Sàng lọc toàn thị trường (src/vnsa/screen/): lọc theo tầng, in và lưu kết quả."""
+    from vnsa.screen.report import format_industry, format_liquidity, format_picks, format_taxonomy
+    from vnsa.screen.run import run
+
+    exchanges = [e.upper() for e in args.exchanges] if args.exchanges else None
+    if args.groups:
+        from vnsa import analysis
+        from vnsa.data.store import Store
+        from vnsa.screen.groups import taxonomy
+
+        with Store(path("warehouse")) as store:
+            companies = store.companies(exchanges)
+        if companies.empty:
+            print("  ✗ kho chưa có danh sách niêm yết: chạy lệnh screen trước")
+            return 1
+        print(format_taxonomy(taxonomy(companies, analysis.macro_mapping())))
+        return 0
+    try:
+        res = run(args.stage, update=not args.no_update, exchanges=exchanges, limit=args.limit,
+                  deep_minutes=args.deep_minutes)
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    if res.stage == "liquidity":
+        print(format_liquidity(res, top=args.top))
+    elif res.stage == "industry":
+        print(format_industry(res))
+    else:
+        print(format_picks(res))
+    return 0
+
+
+def cmd_review_screen(args) -> int:
+    """Chấm lại các lượt sàng lọc đã lưu sau N phiên (screen/review.py)."""
+    from vnsa.screen.review import format_review
+    from vnsa.screen.run import review
+
+    _, summary, n = review(args.horizons)
+    print(format_review(summary, n))
+    return 0
+
+
+def cmd_study_screen(args) -> int:
+    """Kiểm định quá khứ phần giá của bộ sàng lọc (screen/study.py)."""
+    from vnsa.screen.run import study
+    from vnsa.screen.study import format_study
+
+    try:
+        res = study(args.years, update=not args.no_fetch)
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    print(format_study(res))
+    print(f"\nĐã lưu {path('warehouse').parent / 'study'}/screen_study*.csv")
+    return 0
+
+
 def cmd_history(args) -> int:
     """Lưu/nạp lịch sử khuyến nghị và BCTC năm/quý tích luỹ (history.py)."""
     from vnsa import history
@@ -1116,6 +1174,31 @@ def main(argv: list[str] | None = None) -> int:
     pst.add_argument("--years", type=int, help="Số năm giá cần có (mặc định [study] years)")
     pst.add_argument("--no-fetch", action="store_true", help="Không tải, chỉ dùng giá trong kho")
     pst.set_defaults(func=cmd_study_timing)
+
+    psc = sub.add_parser("screen", help="Sàng lọc toàn thị trường: nhóm ngành và mã tiềm năng")
+    psc.add_argument("--stage", choices=["liquidity", "industry", "pick"], default="pick",
+                     help="Chạy đến tầng nào: liquidity = tầng 1 (lọc thanh khoản); industry = "
+                          "tầng 2–3 (phân tích từng mã, chấm nhóm ngành); pick = tầng 4 (chọn mã "
+                          "trong nhóm dẫn đầu; mặc định)")
+    psc.add_argument("--groups", action="store_true",
+                     help="Chỉ in bảng ngành ICB → nhóm ngành (kiểm tra macro_map.toml)")
+    psc.add_argument("--exchanges", nargs="+", metavar="SÀN",
+                     help="Sàn cần lọc, vd: HOSE HNX (mặc định [screen] exchanges)")
+    psc.add_argument("--no-update", action="store_true", help="Không tải, chỉ dùng dữ liệu trong kho")
+    psc.add_argument("--limit", type=int, help="Chỉ lấy N mã đầu danh sách (chạy thử)")
+    psc.add_argument("--top", type=int, default=20, help="Số mã in trong bảng GTGD lớn nhất")
+    psc.add_argument("--deep-minutes", type=float,
+                     help="Thời gian tối đa tải BCTC ở tầng 2 (mặc định [screen] deep_minutes)")
+    psc.set_defaults(func=cmd_screen)
+
+    prs = sub.add_parser("review-screen", help="Chấm lại các lượt sàng lọc đã lưu sau N phiên")
+    prs.add_argument("--horizons", type=int, nargs="+", help="Số phiên, vd: 20 60")
+    prs.set_defaults(func=cmd_review_screen)
+
+    pss = sub.add_parser("study-screen", help="Kiểm định quá khứ phần giá của bộ sàng lọc (10 năm)")
+    pss.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
+    pss.add_argument("--no-fetch", action="store_true", help="Không tải, chỉ dùng giá trong kho")
+    pss.set_defaults(func=cmd_study_screen)
 
     ph = sub.add_parser("history", help="Lưu/nạp lịch sử khuyến nghị và BCTC tích luỹ")
     ph.add_argument("action", choices=["export", "import"])

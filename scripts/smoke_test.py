@@ -35,6 +35,9 @@ def check_mcp(symbols: list[str]) -> list[str]:
         json.dumps(mc, allow_nan=False)
         ind = (mc.get("industry") or {}).get("label", mc.get("error", "chưa có ánh xạ ngành"))
         print(f"  MCP macro_context {sym}: {ind}", flush=True)
+    sc = srv.screen_market()                 # chưa chạy sàng lọc thì chỉ báo, không tính là lỗi
+    json.dumps(sc, allow_nan=False)
+    print(f"  MCP screen_market: {sc.get('error') or sc['funnel']}", flush=True)
     rec = srv.get_recommendations(symbols)
     errors += [f"MCP get_recommendations: {e}" for e in rec["errors"]]
     for r in rec["recommendations"]:

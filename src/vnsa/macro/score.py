@@ -94,13 +94,11 @@ def _norm(text: str | None) -> str:
     return (text or "").lower()
 
 
-def drivers_for(symbol: str, company: dict | None, mapping: dict) -> tuple[str, list[dict]] | None:
-    """(phạm vi, yếu tố) của một mã: khai báo riêng [symbol.MÃ] nếu có, ngược lại mục [[industry]]
-    đầu tiên có `match` khớp tên ngành ICB cấp 4, rồi cấp 3, rồi cấp 2 (hoặc `model` khớp loại
-    doanh nghiệp). None nếu không có ánh xạ."""
-    own = mapping.get("symbol", {}).get(symbol.upper())
-    if own:
-        return own.get("name", f"mã {symbol.upper()}"), own.get("drivers", [])
+def match_industry(company: dict | None, mapping: dict) -> tuple[dict, int, str] | None:
+    """(mục [[industry]], cấp ICB đã khớp, tên ngành đã khớp) của một doanh nghiệp: mục đầu tiên có
+    `match` khớp tên ngành ICB cấp 4, rồi cấp 3, rồi cấp 2; không khớp tên thì mục có `model` trùng
+    loại doanh nghiệp (cấp 0). None nếu không mục nào khớp. Dùng chung cho điểm vĩ mô và nhóm
+    ngành của bộ sàng lọc (screen/)."""
     company = company or {}
     levels = [(4, company.get("industry4")), (3, company.get("industry3")),
               (2, company.get("industry"))]
@@ -110,12 +108,27 @@ def drivers_for(symbol: str, company: dict | None, mapping: dict) -> tuple[str, 
         for ind in mapping.get("industry", []):
             pat = ind.get("match")
             if pat and re.search(pat, _norm(name), flags=re.IGNORECASE):
-                return f"{ind.get('name', name)} (ICB cấp {level}: {name})", ind.get("drivers", [])
+                return ind, level, name
     model = company.get("model")
     for ind in mapping.get("industry", []):
         if model and ind.get("model") == model:
-            return ind.get("name", model), ind.get("drivers", [])
+            return ind, 0, model
     return None
+
+
+def drivers_for(symbol: str, company: dict | None, mapping: dict) -> tuple[str, list[dict]] | None:
+    """(phạm vi, yếu tố) của một mã: khai báo riêng [symbol.MÃ] nếu có, ngược lại mục [[industry]]
+    khớp theo match_industry. None nếu không có ánh xạ."""
+    own = mapping.get("symbol", {}).get(symbol.upper())
+    if own:
+        return own.get("name", f"mã {symbol.upper()}"), own.get("drivers", [])
+    found = match_industry(company, mapping)
+    if found is None:
+        return None
+    ind, level, name = found
+    if level:
+        return f"{ind.get('name', name)} (ICB cấp {level}: {name})", ind.get("drivers", [])
+    return ind.get("name", name), ind.get("drivers", [])
 
 
 def industry_score(symbol: str, company: dict | None, rs: dict[str, Reading], mapping: dict,

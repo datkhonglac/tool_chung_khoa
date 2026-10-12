@@ -91,8 +91,46 @@ def foreign(symbols: list[str]) -> int:
     return 0
 
 
+def limits(n: int = 45) -> int:
+    """Giới hạn số lần gọi của vnstock (vnai): in cấu hình trong mã nguồn vnai rồi gọi liên tục
+    `n` lần một hàm nhẹ, ghi thời gian và kiểu lỗi (kể cả SystemExit) để biết khi vượt giới hạn thì
+    thư viện chờ, báo lỗi hay thoát hẳn chương trình."""
+    import pathlib
+    import re
+
+    import vnai
+
+    root = pathlib.Path(vnai.__file__).parent
+    pat = re.compile(r"(per_?minute|per_?hour|rate.?limit|quota|requests?_per|max_requests|"
+                     r"sys\.exit|SystemExit|time\.sleep|tier|guest|community)", re.IGNORECASE)
+    print(f"vnai {getattr(vnai, '__version__', '?')} tại {root}")
+    shown = 0
+    for f in sorted(root.rglob("*.py")):
+        for i, line in enumerate(f.read_text(errors="ignore").splitlines(), 1):
+            if pat.search(line) and shown < 120:
+                print(f"  {f.relative_to(root)}:{i}: {line.strip()[:150]}")
+                shown += 1
+    from vnstock import Company
+
+    t0 = time.monotonic()
+    for k in range(1, n + 1):
+        t = time.monotonic()
+        try:
+            Company(source="VCI", symbol="FPT").overview()
+            status = "ok"
+        except BaseException as e:  # noqa: BLE001 - muốn thấy cả SystemExit
+            status = f"{type(e).__name__}: {str(e)[:160]}"
+        print(f"  lần {k:>2}: {time.monotonic() - t:5.1f}s (tổng {time.monotonic() - t0:6.1f}s) {status}")
+        if status != "ok" and "SystemExit" in status:
+            break
+    return 0
+
+
 def main() -> int:
     from vnstock import Company, Finance, Quote
+
+    if sys.argv[1:2] == ["--limits"]:
+        return limits(int(sys.argv[2]) if len(sys.argv) > 2 else 45)
 
     if sys.argv[1:2] == ["--items"]:
         return items([s.upper() for s in sys.argv[2:]])
