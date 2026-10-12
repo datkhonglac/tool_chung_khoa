@@ -82,7 +82,8 @@ class Updater:
     """Cập nhật kho cho từng mã. Nguồn dữ liệu truyền vào được (test không cần mạng)."""
 
     def __init__(self, price_provider=None, vnstock_provider=None, cfg: dict | None = None,
-                 now: Callable[[], datetime] | None = None, log: Callable[[str], None] | None = None):
+                 now: Callable[[], datetime] | None = None, log: Callable[[str], None] | None = None,
+                 macro_provider=None):
         from vnsa.data.providers.cafef_provider import CafeFProvider
         from vnsa.data.providers.vnstock_provider import VnstockProvider
 
@@ -93,6 +94,8 @@ class Updater:
         self.index = settings()["valuation"]["index"]
         self._listing_step: Step | None = None     # mỗi lượt chỉ kiểm tra danh sách một lần
         self._index_step: Step | None = None
+        self._macro_step: Step | None = None       # số vĩ mô dùng chung mọi mã: kiểm tra một lần
+        self.macro_provider = macro_provider
 
     # ---- các bước ----------------------------------------------------------------------------
     def _listing(self, store: Store, refresh: bool) -> Step:
@@ -100,7 +103,10 @@ class Updater:
             return self._listing_step
         loaded = store.companies_loaded_at()
         age = (pd.Timestamp.now() - loaded).days if loaded is not None else None
-        if age is not None and age < self.cfg["listing_max_age_days"] and not refresh:
+        # kho cũ chưa có ngành ICB cấp 3–4 (vnstock đổi định dạng 10/2026): tải lại, mỗi ngày tối đa
+        # một lần (nguồn vẫn không trả cấp 4 thì không tải lại liên tục)
+        if (age is not None and age < self.cfg["listing_max_age_days"] and not refresh
+                and (store.has_icb_detail() or age < 1)):
             step = Step("niêm yết", "skip", f"danh sách sàn/ngành tải {age} ngày trước")
         else:
             try:
@@ -266,6 +272,23 @@ class Updater:
             return Step("khối ngoại", "error", "CafeF không có dữ liệu mã này")
         return Step("khối ngoại", "ok", f"{n} phiên (khối ngoại, tự doanh — CafeF)")
 
+    def _macro(self) -> Step | None:
+        """Số vĩ mô (lớp vĩ mô): nạp số nhập tay, tải lại chuỗi tự động nếu đã cũ. Tắt bằng
+        `[auto] macro = false`."""
+        if not self.cfg.get("macro", False):
+            return None
+        if self._macro_step is None:
+            from vnsa.macro.update import refresh
+
+            mc = settings().get("macro", {})
+            try:
+                status, detail = refresh(mc.get("max_age_hours", 20), mc.get("years", 10),
+                                         self.macro_provider)
+            except Exception as e:  # noqa: BLE001 - thiếu vĩ mô vẫn phân tích được
+                status, detail = "error", f"không cập nhật được số vĩ mô ({e})"
+            self._macro_step = Step("vĩ mô", status, detail)
+        return self._macro_step
+
     def long_prices(self, symbols: list[str], years: int) -> list[Step]:
         """Chỉ tải GIÁ (kèm VNINDEX và danh sách sàn để biết biên độ) đủ `years` năm cho kiểm định
         nhiều mã (lệnh study-timing); mã đã có đủ thì chỉ tải phần mới."""
@@ -312,6 +335,9 @@ class Updater:
                 flow = self._flows(store, sym)
                 if flow is not None:
                     rep.steps.append(flow)
+        macro = self._macro() if rep.has_prices and sym != self.index else None
+        if macro is not None:
+            rep.steps.append(macro)
         return rep
 
 

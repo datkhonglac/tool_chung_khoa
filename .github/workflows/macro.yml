@@ -10,12 +10,13 @@ on:
       - "src/vnsa/macro/**"
       - "src/vnsa/data/providers/macro_provider.py"
       - "config/macro_map.toml"
+      - "config/macro_manual.toml"
   workflow_dispatch:
     inputs:
       probe:
         description: "Dò lại các nguồn (scripts/probe_macro.py)"
         type: boolean
-        default: true
+        default: false
 
 jobs:
   macro:
@@ -32,6 +33,16 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - name: Dò nguồn vĩ mô
-        if: github.event_name == 'push' || inputs.probe
+        if: inputs.probe
         continue-on-error: true
         run: python scripts/probe_macro.py
+      - name: Tải số liệu vĩ mô
+        run: python -m vnsa.cli fetch-macro
+      - name: Bảng số liệu vĩ mô
+        run: python -m vnsa.cli macro
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kho-vi-mo
+          path: data/warehouse.duckdb
+          if-no-files-found: ignore

@@ -112,10 +112,23 @@ CREATE TABLE IF NOT EXISTS flows (
     PRIMARY KEY (symbol, date)
 );
 """
+# Chuỗi số liệu vĩ mô (lớp vĩ mô): mỗi dòng một kỳ của một chuỗi. Chuỗi tháng/quý ghi ngày đầu kỳ.
+# Danh mục chuỗi (tên, đơn vị, nguồn) ở config/macro_map.toml.
+SCHEMA += """
+CREATE TABLE IF NOT EXISTS macro_series (
+    series    VARCHAR NOT NULL,
+    date      DATE    NOT NULL,
+    value     DOUBLE,
+    source    VARCHAR,
+    loaded_at TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (series, date)
+);
+"""
 FLOW_COLUMNS = ["foreign_buy", "foreign_sell", "foreign_net", "foreign_net_vol", "foreign_room",
                 "foreign_pct", "prop_buy", "prop_sell", "prop_net"]
 
-COMPANY_COLUMNS = ["symbol", "name", "exchange", "industry", "model"]
+COMPANY_COLUMNS = ["symbol", "name", "exchange", "industry", "model", "industry3", "industry4"]
+# industry = ngành ICB cấp 2 (so sánh cùng ngành); industry3/4 = cấp 3/4 (ánh xạ vĩ mô)
 # Hồ sơ doanh nghiệp (Company.overview), cập nhật theo từng mã
 PROFILE_COLUMNS = ["shares_out", "foreign_pct", "foreign_max_pct", "state_pct", "free_float_pct",
                    "avg_value_1m", "analyst_target", "analyst_rating"]
@@ -135,7 +148,8 @@ class Store:
                 self.con.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {f} DOUBLE")
         # giá đóng cửa chưa điều chỉnh (NULL nếu nguồn không có)
         self.con.execute("ALTER TABLE prices ADD COLUMN IF NOT EXISTS close_raw DOUBLE")
-        for c, t in [*PROFILE_TYPES.items(), ("profile_at", "TIMESTAMP")]:
+        for c, t in [("industry3", "VARCHAR"), ("industry4", "VARCHAR"), *PROFILE_TYPES.items(),
+                     ("profile_at", "TIMESTAMP")]:
             self.con.execute(f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {c} {t}")
 
     def close(self) -> None:
@@ -413,6 +427,11 @@ class Store:
             [industry]).fetchall()
         return [r[0] for r in rows]
 
+    def has_icb_detail(self) -> bool:
+        """Danh sách niêm yết đã có ngành ICB cấp 4 (kho tạo trước 10/2026 thì chưa: tải lại)."""
+        return bool(self.con.execute("SELECT COUNT(*) FROM companies WHERE industry4 IS NOT NULL")
+                    .fetchone()[0])
+
     def companies_loaded_at(self) -> pd.Timestamp | None:
         t = self.con.execute("SELECT MAX(loaded_at) FROM companies").fetchone()[0]
         return None if t is None else pd.Timestamp(t)
@@ -447,6 +466,57 @@ class Store:
         df = self.con.execute(sql + " ORDER BY as_of, symbol", params).df()
         df["as_of"] = pd.to_datetime(df["as_of"])
         return df
+
+    def write_macro(self, df: pd.DataFrame, source: str | None = None) -> int:
+        """Ghi chuỗi vĩ mô (cột series, date, value[, source]). Chỉ thay các kỳ trong khoảng ngày của
+        mỗi chuỗi có trong df; kỳ cũ hơn được GIỮ (nguồn chỉ trả số gần đây thì kho vẫn tích luỹ)."""
+        if df.empty:
+            return 0
+        frame = df.reindex(columns=["series", "date", "value", "source"]).copy()
+        frame["date"] = pd.to_datetime(frame["date"]).dt.date
+        if source is not None:
+            frame["source"] = source
+        frame = frame.dropna(subset=["value"]).drop_duplicates(["series", "date"], keep="last")
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute("BEGIN")
+            self.con.execute(
+                "DELETE FROM macro_series m USING (SELECT series, MIN(date) AS d0, MAX(date) AS d1 "
+                "FROM incoming GROUP BY series) r "
+                "WHERE m.series = r.series AND m.date BETWEEN r.d0 AND r.d1")
+            self.con.execute("INSERT INTO macro_series (series, date, value, source) "
+                             "SELECT series, date, value, source FROM incoming")
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming")
+        return len(frame)
+
+    def replace_macro(self, df: pd.DataFrame, series: list[str], source: str) -> int:
+        """Thay TOÀN BỘ các chuỗi `series` bằng df (số nhập tay: file là nguồn gốc, xoá kỳ đã bỏ)."""
+        if series:
+            self.con.execute("DELETE FROM macro_series WHERE series IN (SELECT UNNEST(?))",
+                             [list(series)])
+        return self.write_macro(df, source) if not df.empty else 0
+
+    def macro(self, series: list[str] | str | None = None) -> pd.DataFrame:
+        """Chuỗi vĩ mô dạng dài: series, date, value, source (sắp theo chuỗi, ngày)."""
+        sql = "SELECT series, date, value, source FROM macro_series"
+        params: list = []
+        if series:
+            sql += " WHERE series IN (SELECT UNNEST(?))"
+            params.append([series] if isinstance(series, str) else list(series))
+        df = self.con.execute(sql + " ORDER BY series, date", params).df()
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+
+    def macro_loaded_at(self) -> dict[str, pd.Timestamp]:
+        """Lần tải gần nhất của từng chuỗi vĩ mô."""
+        rows = self.con.execute("SELECT series, MAX(loaded_at) FROM macro_series "
+                                "GROUP BY series").fetchall()
+        return {r[0]: pd.Timestamp(r[1]) for r in rows}
 
     def inventory(self) -> pd.DataFrame:
         """Mỗi mã có bao nhiêu phiên, từ ngày nào đến ngày nào."""

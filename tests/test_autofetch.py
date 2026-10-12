@@ -190,6 +190,7 @@ def test_standardize_vnstock_listing():
     by_industry = pd.DataFrame({
         "symbol": ["VCB", "SHS", "ACV", "FPT"],
         "icb_name2": ["Ngân hàng", "Dịch vụ tài chính", "Công nghiệp", "Công nghệ"],
+        "icb_name4": ["Ngân hàng", "Môi giới chứng khoán", "Sân bay", "Phần mềm"],
         "com_type_code": ["NH", None, "CT", "CT"]})
     out = standardize_listing(by_exchange, by_industry).set_index("symbol")
     assert list(out.index) == ["VCB", "SHS", "ACV", "FPT"]
@@ -197,6 +198,25 @@ def test_standardize_vnstock_listing():
     assert out.loc["VCB", "model"] == "bank"
     assert out.loc["SHS", "model"] == "securities"       # suy ra từ tên ngành
     assert out.loc["FPT", "model"] == "general"
+    assert out.loc["ACV", "industry4"] == "Sân bay"       # ICB cấp 4 cho ánh xạ vĩ mô
+    assert out["industry3"].isna().all()                  # nguồn không có cấp 3: để trống
+
+
+def test_standardize_listing_long_icb_format():
+    """vnstock mới: mỗi mã 4 dòng icb_level/icb_name — phải lấy đúng cấp 2 (không lấy cấp 1)."""
+    by_exchange = pd.DataFrame({"symbol": ["HPG", "SSI"], "exchange": ["HSX", "HSX"],
+                                "type": ["STOCK", "STOCK"], "organ_name": ["Hòa Phát", "SSI"]})
+    rows = [("HPG", "CT", 1, "Nguyên vật liệu"), ("HPG", "CT", 2, "Tài nguyên Cơ bản"),
+            ("HPG", "CT", 3, "Kim loại"), ("HPG", "CT", 4, "Thép và sản phẩm thép"),
+            ("SSI", "CK", 1, "Tài chính"), ("SSI", "CK", 2, "Dịch vụ tài chính"),
+            ("SSI", "CK", 3, "Dịch vụ tài chính"), ("SSI", "CK", 4, "Môi giới chứng khoán")]
+    by_industry = pd.DataFrame(rows, columns=["symbol", "com_type_code", "icb_level", "icb_name"])
+    by_industry["icb_code"] = "0"
+    out = standardize_listing(by_exchange, by_industry).set_index("symbol")
+    assert out.loc["HPG", "industry"] == "Tài nguyên Cơ bản"
+    assert out.loc["HPG", "industry3"] == "Kim loại"
+    assert out.loc["HPG", "industry4"] == "Thép và sản phẩm thép"
+    assert out.loc["SSI", "model"] == "securities"
 
 
 def test_exchange_rules_band_ticks_and_financials(warehouse):

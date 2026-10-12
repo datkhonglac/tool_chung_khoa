@@ -135,6 +135,79 @@ def cmd_fetch(args) -> int:
     return cmd_load(args) or code
 
 
+def cmd_fetch_macro(args) -> int:
+    """Tải các chuỗi vĩ mô tự động (Yahoo, World Bank, FRED) và nạp số nhập tay vào kho."""
+    from vnsa.data.providers.macro_provider import MacroProvider
+    from vnsa.data.store import Store
+    from vnsa.macro.catalog import catalog
+    from vnsa.macro.update import fetch_auto, load_manual
+
+    cat = catalog()
+    unknown = [x for x in args.series if x not in cat]
+    if unknown:
+        print(f"Không có trong config/macro_map.toml: {', '.join(unknown)}")
+        return 1
+    auto = [sid for sid in (args.series or list(cat)) if cat[sid].auto]
+    with Store(path("warehouse")) as store:
+        res = fetch_auto(store, cat, MacroProvider(cat, pause=args.pause), auto,
+                         args.years) if auto or not args.series else []
+        for r in res:
+            src = cat[r.series].source
+            if r.ok:
+                print(f"  ✓ {r.series:<18} {r.rows:>5} kỳ  {r.first:%m/%Y} → {r.last:%d/%m/%Y}  "
+                      f"cuối = {r.value:,.4g}  ({src})")
+            else:
+                print(f"  ✗ {r.series:<18} {src}: {r.error}")
+        try:
+            n, missing = load_manual(store, cat)
+        except ValueError as e:
+            print(f"  ✗ số nhập tay: {e}")
+            return 1
+        n_manual = sum(1 for s in cat.values() if s.manual)
+        print(f"  Nhập tay (config/macro_manual.toml): {n} số, {n_manual - len(missing)}/{n_manual} "
+              "chuỗi có số")
+        if missing:
+            print(f"    chưa có số: {', '.join(missing)}")
+    bad = [r.series for r in res if not r.ok]
+    if bad:
+        print(f"Lỗi {len(bad)}/{len(res)} chuỗi: {', '.join(bad)}")
+    return 1 if res and len(bad) == len(res) else 0
+
+
+def cmd_macro(args) -> int:
+    """Bảng số liệu vĩ mô mới nhất trong kho: giá trị, biến động, mức bất thường (z)."""
+    from vnsa.data.store import Store
+    from vnsa.macro.catalog import catalog
+    from vnsa.macro.signals import fmt_change, fmt_value, readings
+
+    cat = catalog()
+    with Store(path("warehouse")) as store:
+        data = store.macro()
+    if data.empty:
+        print("Kho chưa có số liệu vĩ mô. Chạy: python -m vnsa.cli fetch-macro")
+        return 1
+    cfg = settings().get("macro", {})
+    rs = readings(data, cat, z_years=cfg.get("z_years", 5), z_cap=cfg.get("z_cap", 2.0))
+    print(f"{'Chuỗi':<17}{'Tên':<34}{'Kỳ cuối':>11}{'Giá trị':>13}{'Biến động':>16}{'z':>6}  Ghi chú")
+    for sid, r in rs.items():
+        if r.date is None:
+            continue
+        when = f"{r.date:%d/%m/%Y}" if cat[sid].freq == "D" else (
+            f"Q{r.date.quarter}/{r.date.year}" if cat[sid].freq == "Q" else f"{r.date:%m/%Y}")
+        z = "" if not r.ok else f"{r.z:+.1f}".replace(".", ",")
+        note = "CŨ" if r.stale else ""
+        note += ("" if r.basis.startswith("z") else (" " if note else "") + r.basis)
+        print(f"{sid:<17}{r.name[:33]:<34}{when:>11}{fmt_value(r):>13}{fmt_change(r):>16}{z:>6}  "
+              f"{note}")
+    empty = [sid for sid, r in rs.items() if r.date is None]
+    if empty:
+        print(f"\nChưa có số ({len(empty)}): {', '.join(empty)}")
+        print("  Số Việt Nam nhập tay ở config/macro_manual.toml rồi chạy lại fetch-macro.")
+    print("\nBiến động: % sau 3 tháng (giá, tỷ giá) · điểm % (lãi suất) · so mốc (tăng trưởng, PMI). "
+          "z: so với 5 năm của chính chuỗi đó, chặn ±2.")
+    return 0
+
+
 def cmd_fetch_bctc(args) -> int:
     import time
 
@@ -894,6 +967,16 @@ def main(argv: list[str] | None = None) -> int:
     pb.add_argument("symbols", nargs="*", help="Bỏ trống = danh sách theo dõi trong settings.toml")
     pb.add_argument("--pause", type=float, default=3.0, help="Giây nghỉ giữa các mã")
     pb.set_defaults(func=cmd_fetch_bctc)
+
+    pfm = sub.add_parser("fetch-macro", help="Tải số liệu vĩ mô (FRED, World Bank, tỷ giá) "
+                         "và nạp số nhập tay")
+    pfm.add_argument("series", nargs="*", help="Bỏ trống = mọi chuỗi trong config/macro_map.toml")
+    pfm.add_argument("--years", type=int, default=10)
+    pfm.add_argument("--pause", type=float, default=0.3, help="Giây nghỉ giữa các lần gọi")
+    pfm.set_defaults(func=cmd_fetch_macro)
+
+    pmc = sub.add_parser("macro", help="Số liệu vĩ mô mới nhất trong kho và biến động")
+    pmc.set_defaults(func=cmd_macro)
 
     pr = sub.add_parser("ratios", help="Bộ chỉ số tài chính năm từ BCTC trong kho")
     pr.add_argument("symbol")

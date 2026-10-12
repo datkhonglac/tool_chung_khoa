@@ -1,0 +1,24 @@
+# Số vĩ mô Việt Nam NHẬP TAY (không có nguồn miễn phí tự động). Khoảng 10 phút mỗi tháng.
+# Sau khi sửa file: python -m vnsa.cli fetch-macro   (nạp lại vào kho), rồi python -m vnsa.cli macro
+#
+# Mỗi chuỗi một bảng [tên_chuỗi] (đúng tên ở config/macro_map.toml), mỗi dòng một kỳ:
+#   tháng: "2026-09" = 3.4        quý: "2026-Q3" = 7.1
+# Đơn vị: số phần trăm ghi như báo chí (3,4% ghi 3.4 — dùng DẤU CHẤM thập phân); PMI ghi điểm (52.1).
+# Không ước lượng: kỳ nào không có số thì bỏ trống. Tool ghi rõ "chưa có số" thay vì đoán.
+# Muốn tool tính được biến động (lãi suất, tín dụng) ngay, nhập thêm 3–12 tháng trước đó.
+#
+# Lấy số ở đâu (thông cáo hằng tháng, thường đầu tháng sau):
+#   vn_cpi_yoy, vn_retail_yoy, vn_exports_yoy, vn_iip_yoy, vn_arrivals_yoy, vn_public_invest_yoy,
+#   vn_gdp_yoy : Tổng cục Thống kê (gso.gov.vn → Tình hình kinh tế - xã hội tháng)
+#   vn_credit_ytd    : NHNN (sbv.gov.vn) — tín dụng tăng bao nhiêu % so với cuối năm trước
+#   vn_interbank_on  : NHNN — lãi suất bình quân liên ngân hàng kỳ hạn qua đêm (bình quân tháng)
+#   vn_gov_10y       : HNX (hnx.vn → Trái phiếu Chính phủ) — lợi suất kỳ hạn 10 năm cuối tháng
+#   vn_pmi           : S&P Global "Vietnam Manufacturing PMI" (đầu mỗi tháng)
+#
+# Ví dụ (bỏ dấu # ở đầu dòng và thay bằng số thật):
+# [vn_cpi_yoy]
+# "2026-08" = 3.2
+# "2026-09" = 3.4
+#
+# [vn_gdp_yoy]
+# "2026-Q2" = 7.1

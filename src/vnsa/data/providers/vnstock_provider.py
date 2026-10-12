@@ -242,9 +242,23 @@ def _col(df: pd.DataFrame, *names: str) -> pd.Series | None:
     return None
 
 
+def _wide_icb(ind: pd.DataFrame) -> pd.DataFrame:
+    """vnstock (từ 10/2026) trả ngành dạng DÀI: mỗi mã 4 dòng (icb_level 1–4, icb_name). Đổi về
+    dạng RỘNG icb_name1..icb_name4 như bản cũ. Bảng đã ở dạng rộng thì giữ nguyên."""
+    if "icb_level" not in ind.columns or "icb_name" not in ind.columns:
+        return ind
+    level = pd.to_numeric(ind["icb_level"], errors="coerce")
+    names = (ind.assign(icb_level=level).dropna(subset=["icb_level"])
+             .pivot_table(index="symbol", columns="icb_level", values="icb_name", aggfunc="first"))
+    names.columns = [f"icb_name{int(c)}" for c in names.columns]
+    other = ind.drop(columns=["icb_level", "icb_name", "icb_code"], errors="ignore")
+    return other.drop_duplicates("symbol").merge(names.reset_index(), on="symbol", how="left")
+
+
 def standardize_listing(by_exchange: pd.DataFrame,
                         by_industry: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Hai bảng của vnstock Listing -> symbol, name, exchange, industry, model (chỉ cổ phiếu)."""
+    """Hai bảng của vnstock Listing -> symbol, name, exchange, industry (ICB cấp 2), model,
+    industry3, industry4 (ICB cấp 3, 4 — dùng cho ánh xạ vĩ mô) (chỉ cổ phiếu)."""
     df = by_exchange.copy()
     kind = _col(df, "type")
     if kind is not None:
@@ -257,8 +271,10 @@ def standardize_listing(by_exchange: pd.DataFrame,
     }).dropna(subset=["exchange"])
     out["industry"] = None
     out["model"] = "general"
+    out["industry3"] = None
+    out["industry4"] = None
     if by_industry is not None and len(by_industry):
-        ind = by_industry.assign(symbol=by_industry["symbol"].astype(str).str.upper())
+        ind = _wide_icb(by_industry.assign(symbol=by_industry["symbol"].astype(str).str.upper()))
         ind = ind.drop_duplicates("symbol").set_index("symbol")
         name2 = _col(ind, "icb_name2", "industry", "icb_name")
         if name2 is not None:
@@ -266,6 +282,10 @@ def standardize_listing(by_exchange: pd.DataFrame,
             for pattern, model in INDUSTRY_MODELS:
                 hit = out["industry"].fillna("").str.contains(pattern, case=False, regex=True)
                 out.loc[hit, "model"] = model
+        for level in (3, 4):
+            name = _col(ind, f"icb_name{level}")
+            if name is not None:
+                out[f"industry{level}"] = out["symbol"].map(name)
         com = _col(ind, "com_type_code")
         if com is not None:
             mapped = out["symbol"].map(com.astype(str).str.upper().map(COM_TYPES))
