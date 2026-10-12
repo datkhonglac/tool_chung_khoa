@@ -73,10 +73,6 @@ jobs:
       - name: Chấm lại các lượt sàng lọc cũ
         if: always()
         run: python -m vnsa.cli review-screen | tee review_screen.txt
-      - name: Kiểm định quá khứ phần giá (10 năm)
-        if: inputs.study || github.event_name == 'push'
-        continue-on-error: true
-        run: python -m vnsa.cli study-screen
       - name: Nhóm ngành ← ngành ICB (kiểm tra macro_map.toml)
         if: always()
         run: python -m vnsa.cli screen --groups
@@ -103,6 +99,13 @@ jobs:
             git commit -q -m "Sàng lọc thị trường ngày $(TZ=Asia/Ho_Chi_Minh date +%d/%m/%Y)"
             git push -q origin signals || (git pull -q --rebase origin signals && git push -q origin signals)
           fi
+      # Sau khi đã ghi lịch sử: lần đầu (chưa có giá 10 năm trong kho) mất ~100 phút, không được làm
+      # mất kết quả sàng lọc nếu job hết giờ; tự dừng sau 120 phút
+      - name: Kiểm định quá khứ phần giá (10 năm)
+        if: inputs.study || github.event_name == 'push'
+        continue-on-error: true
+        timeout-minutes: 120
+        run: python -m vnsa.cli study-screen
       - name: Lưu kho cho lần chạy sau
         if: always() && hashFiles('data/warehouse.duckdb') != ''
         uses: actions/cache/save@v4
