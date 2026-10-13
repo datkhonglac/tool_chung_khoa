@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+SMA_COLORS = {10: "#ec4899", 20: "#f59e0b", 50: "#2563eb", 200: "#7c3aed"}
+
 
 def candlestick(df: pd.DataFrame, title: str | None = None, mas: tuple[int, ...] = (20, 50, 200)):
     import plotly.graph_objects as go
@@ -46,10 +48,10 @@ def technical_chart(ind: pd.DataFrame, supports=(), resistances=(), plan=None, s
         x=df["date"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
         name="Giá", increasing_line_color="#16a34a", decreasing_line_color="#dc2626",
     ), row=1, col=1)
-    for col, color in (("sma20", "#f59e0b"), ("sma50", "#2563eb"), ("sma200", "#7c3aed")):
-        if col in df:
-            fig.add_trace(go.Scatter(x=df["date"], y=df[col], name=col.upper(),
-                                     line={"width": 1.2, "color": color}), row=1, col=1)
+    # mọi đường SMA đã tính (độ dài theo [ta] sma trong settings), ngắn trước
+    for n in sorted(int(c[3:]) for c in df.columns if c.startswith("sma") and c[3:].isdigit()):
+        fig.add_trace(go.Scatter(x=df["date"], y=df[f"sma{n}"], name=f"SMA{n}",
+                                 line={"width": 1.2, "color": SMA_COLORS.get(n)}), row=1, col=1)
     for col in ("bb_upper", "bb_lower"):
         if col in df:
             fig.add_trace(go.Scatter(x=df["date"], y=df[col], name="Bollinger",

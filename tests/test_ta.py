@@ -118,3 +118,15 @@ def test_ta_score_uptrend_vs_downtrend():
     assert su.groups["xu_huong"] == 100 and sd.groups["xu_huong"] == 0
     assert su.total > 60 and sd.total < 40
     assert rsi_points(65) == 100 and rsi_points(80) == 50 and rsi_points(30) == 0
+
+
+def test_technical_chart_draws_configured_smas():
+    """Biểu đồ kỹ thuật (dashboard) vẽ mọi đường SMA trong [ta] sma, gồm SMA10."""
+    pytest.importorskip("plotly")
+    from vnsa.config import settings
+    from vnsa.report.charts import technical_chart
+
+    assert 10 in settings()["ta"]["sma"]
+    ind = ti.add_indicators(_candles(20_000 + 60 * np.arange(300.0)), settings()["ta"])
+    names = [t.name for t in technical_chart(ind).data]
+    assert [n for n in names if n.startswith("SMA")] == ["SMA10", "SMA20", "SMA50", "SMA200"]

@@ -164,7 +164,7 @@ insurance = [0.10, 0.30]
 
 [ta]
 # Độ dài các chỉ báo kỹ thuật (phiên)
-sma = [20, 50, 200]
+sma = [10, 20, 50, 200]      # đường trung bình vẽ trên biểu đồ kỹ thuật (dashboard); 20/50/200 dùng trong điểm TA
 rsi = 14
 macd = [12, 26, 9]
 bollinger = [20, 2.0]
