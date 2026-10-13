@@ -479,3 +479,22 @@ def test_full_run_report_lists_buys_outside_top_groups(market_db, monkeypatch):
     if len(res.outside):
         assert "MÃ MUA NGOÀI CÁC NHÓM DẪN ĐẦU" in text
         assert res.outside["symbol"].iloc[0] in text
+
+
+def test_bulk_download_across_midnight_still_uses_prefetch(market_db):
+    """Lượt bắt đầu trước nửa đêm, tải song song xong thì đã sang ngày mới (thật: run 23:07 → 03:30
+    ngày 12–13/10/2026): _prices phải dùng đúng bản tải trước, không tải lại từng mã."""
+    clock = {"now": datetime(2026, 10, 9, 23, 59, tzinfo=VN_TZ)}
+
+    class SlowCafeF(MarketCafeF):
+        def ohlcv(self, symbol, start, end):
+            clock["now"] = datetime(2026, 10, 10, 0, 5, tzinfo=VN_TZ)   # tải lâu: qua nửa đêm
+            return super().ohlcv(symbol, start, end)
+
+    cafef = SlowCafeF()
+    up = Updater(cafef, MarketVn(), AUTO, now=lambda: clock["now"])
+    steps = up.quick_prices([*LISTING["symbol"]], years=1, workers=3)
+    assert steps["DEMO_A"].status == "ok"
+    downloaded = [c[0] for c in cafef.calls]
+    assert sorted(downloaded) == sorted(set(downloaded))          # không mã nào tải lại lần hai
+    assert up.now() == clock["now"]                               # trả lại đồng hồ thật sau lượt

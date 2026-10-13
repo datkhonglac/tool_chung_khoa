@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -366,6 +367,18 @@ class Updater:
             self._macro_step = Step("vĩ mô", status, detail)
         return self._macro_step
 
+    @contextmanager
+    def _frozen_clock(self):
+        """Một lượt tải hàng loạt dùng MỘT thời điểm: khoảng ngày tải trước song song (_prefetch) và
+        khoảng ngày _prices hỏi lại phải khớp. Thật (12/10/2026): lượt bắt đầu 23:07 qua nửa đêm,
+        "hôm nay" đổi ngày nên không mã nào dùng được bản tải trước → tải lại tuần tự ~7 giây/mã."""
+        clock, now = self.now, self.now()
+        self.now = lambda: now
+        try:
+            yield
+        finally:
+            self.now = clock
+
     def long_prices(self, symbols: list[str], years: int, workers: int = 1) -> list[Step]:
         """Chỉ tải GIÁ (kèm VNINDEX và danh sách sàn để biết biên độ) đủ `years` năm cho kiểm định
         nhiều mã (lệnh study-timing, study-screen); mã đã có đủ thì chỉ tải phần mới. `workers` > 1:
@@ -375,7 +388,7 @@ class Updater:
         self.cfg = {**self.cfg, "years": years}
         self._prefer_cafef = True
         try:
-            with Store(path("warehouse")) as store:
+            with self._frozen_clock(), Store(path("warehouse")) as store:
                 steps.append(self._listing(store, False))
                 todo = [*symbols, self.index]
                 if workers > 1:
@@ -447,7 +460,7 @@ class Updater:
         todo = [self.index, *[s for s in dict.fromkeys(x.upper() for x in symbols)
                               if s != self.index]]
         try:
-            with Store(path("warehouse")) as store:
+            with self._frozen_clock(), Store(path("warehouse")) as store:
                 self._listing(store, False)
                 if workers > 1:
                     self._prefetch(store, todo, workers)
