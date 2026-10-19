@@ -1,9 +1,16 @@
-Đã lưu 72 khuyến nghị (bảng signals, bản sao signals.csv).
+Đã lưu 84 khuyến nghị (bảng signals, bản sao signals.csv).
 
   Kỳ KN         Mẫu  Lãi/lỗ TB  Vượt VNI  Thắng  Chạm MT trước  Khớp vùng  Lãi từ vùng
-   5 KHẢ QUAN     1       0.4%      2.0%   100%              —         0%            —
+   5 KHẢ QUAN     2      -0.3%      1.5%    50%              —         0%            —
    5 KÉM KHẢ QUAN    1       2.4%      4.0%   100%           100%         0%            —
-   5 MUA          7       0.6%      2.3%    71%           100%        57%        -0.1%
-   5 NẮM GIỮ      3      -0.6%      1.0%    33%           100%         0%            —
+   5 MUA         14       0.3%      2.0%    50%           100%        79%         0.3%
+   5 NẮM GIỮ      7       0.3%      2.1%    43%           100%         0%            —
 
 MUA/KHẢ QUAN tốt khi 'Vượt VNI' dương, KÉM KHẢ QUAN/BÁN tốt khi âm. Dưới ~30 mẫu chỉ để tham khảo.
+
+Theo vĩ mô ngành lúc khuyến nghị:
+  Kỳ Vĩ mô           Mẫu  Vượt VNI  Thắng
+   5 Thuận lợi         2      1.4%     0%
+   5 Trung tính        6      3.2%    67%
+   5 chưa có điểm     16      1.7%    50%
+Vĩ mô có ích khi nhóm Thuận lợi vượt VNI cao hơn rõ nhóm Bất lợi (đủ mẫu, nhiều kỳ).
