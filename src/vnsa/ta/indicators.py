@@ -6,6 +6,8 @@ Công thức (để đối chiếu với phần mềm giao dịch):
 - RSI 14 (Wilder): trung bình tăng / trung bình giảm làm mượt hệ số 1/n. RSI = 100 − 100/(1+RS).
 - MACD 12-26-9: EMA12 − EMA26; đường tín hiệu = EMA9 của MACD; histogram = MACD − tín hiệu.
 - Bollinger 20, 2: SMA20 ± 2 độ lệch chuẩn (tổng thể, ddof=0); %B = (giá − dải dưới)/(độ rộng dải).
+  Độ rộng tương đối bb_width = (dải trên − dải dưới) / SMA20; độ nén bb_width_pct = thứ hạng phần
+  trăm của bb_width trong 120 phiên gần nhất (0 = hẹp nhất, 1 = rộng nhất).
 - True range = max(cao − thấp, |cao − đóng cửa hôm trước|, |thấp − đóng cửa hôm trước|).
   ATR 14 = TR làm mượt Wilder (1/n).
 - ADX 14 (Wilder): +DM/−DM, +DI/−DI = 100 × DM làm mượt / ATR, DX = 100 × |+DI − −DI| / (+DI + −DI),
@@ -51,7 +53,15 @@ def bollinger(close: pd.Series, n: int = 20, k: float = 2.0) -> pd.DataFrame:
     upper, lower = mid + k * sd, mid - k * sd
     width = (upper - lower).where(upper != lower)
     return pd.DataFrame({"bb_mid": mid, "bb_upper": upper, "bb_lower": lower,
-                         "bb_pctb": (close - lower) / width})
+                         "bb_pctb": (close - lower) / width,
+                         "bb_width": (upper - lower) / mid.where(mid > 0)})
+
+
+def percentile_rank(s: pd.Series, n: int = 120) -> pd.Series:
+    """Thứ hạng phần trăm (0–1) của giá trị phiên t trong `n` phiên gần nhất (gồm phiên t; chỉ dùng
+    dữ liệu đến phiên đó). Độ nén Bollinger: bb_width_pct thấp = biên độ đang hẹp nhất trong
+    khoảng 6 tháng (nền giá "siết chặt", kiểu VCP)."""
+    return s.rolling(n, min_periods=n).rank(pct=True)
 
 
 def true_range(df: pd.DataFrame) -> pd.Series:
@@ -91,6 +101,7 @@ def add_indicators(prices: pd.DataFrame, cfg: dict | None = None) -> pd.DataFram
     df["rsi"] = rsi(df["close"], c["rsi"])
     df = df.join(macd(df["close"], *c["macd"]))
     df = df.join(bollinger(df["close"], int(c["bollinger"][0]), float(c["bollinger"][1])))
+    df["bb_width_pct"] = percentile_rank(df["bb_width"], int(c.get("squeeze_window", 120)))
     df["atr"] = atr(df, c["atr"])
     df = df.join(adx(df, c["adx"]))
     df["obv"] = obv(df)
