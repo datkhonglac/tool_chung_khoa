@@ -235,8 +235,12 @@ chase_atr = 2.0             # giá cách SMA20 > 2 ATR: cảnh báo không đu�
 vwap_sessions = 20
 margin_of_safety = 0.15     # trần giá mua = giá trị hợp lý × (1 − 15%)
 weak_fa_extra = 0.10        # điểm FA < 50: biên an toàn thêm 10%
-# Thang mua 3 lớp (v2.1, ta/entry.py): thay vùng hẹp sát giá bằng 3 lệnh LO ở 3 độ sâu
-ladder = true
+# Thang mua 3 lớp (v2.1, ta/entry.py): 3 lệnh LO ở 3 độ sâu thay cho vùng hẹp sát giá.
+# Kiểm định 10 năm × 45 mã (study-entry, docs/kiem_dinh_thoi_diem.md): giá vốn rẻ hơn ~4% nhưng chỉ khớp
+# ~43% vốn nên lãi trên TỔNG vốn thấp hơn vùng cũ ở cả hai giai đoạn -> mặc định TẮT, chỉ hiển thị
+# lớp 2, 3 làm mức mua thêm tham khảo. Đặt ladder = true nếu bạn ưu tiên giá vốn thấp hơn số lần mua được.
+ladder = false
+ladder_show = true
 ladder_weights = [0.3, 0.4, 0.3]   # lớp 1 thăm dò · lớp 2 chính · lớp 3 sâu
 l2_range_atr = 4.0          # lớp 2 tìm mức đỡ mạnh trong 4 ATR dưới giá
 l3_range_atr = 7.0          # lớp 3 tìm trong 7 ATR dưới giá

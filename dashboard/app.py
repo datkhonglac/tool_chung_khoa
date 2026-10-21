@@ -201,11 +201,14 @@ with tab_ta:
         st.caption(f"Giá đóng cửa {z.close:,.0f} · VWAP20 {z.vwap20:,.0f} · giá trị hợp lý "
                    f"{fmt_num(z.fair_value)}. Vùng mua neo theo hỗ trợ / VWAP20 / SMA20 và không "
                    "vượt giá trị hợp lý trừ biên an toàn (config [entry]).")
-        if z.tiers:
+        if z.tiers or z.ref_tiers:
+            if not z.tiers:
+                st.caption("Mức mua sâu hơn (tham khảo — kế hoạch vẫn dùng vùng mua trên; bật "
+                           "[entry] ladder = true để chia vốn theo 3 lớp):")
             st.dataframe(pd.DataFrame([{"Lớp": t.name, "Giá đặt LO": t.price,
                                         "So với giá": t.depth * 100, "Phần vốn": t.weight * 100,
                                         "Khớp trong 20 phiên": t.fill_prob * 100,
-                                        "Căn cứ": t.source} for t in z.tiers]),
+                                        "Căn cứ": t.source} for t in (z.tiers or z.ref_tiers)]),
                          hide_index=True, width="stretch",
                          column_config={"Giá đặt LO": st.column_config.NumberColumn(format="localized"),
                                         "So với giá": st.column_config.NumberColumn(format="%+.1f%%"),

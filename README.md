@@ -74,9 +74,9 @@ Tool từ chối sao lưu lên repo công khai hoặc lên chính repo tool.
 
 | Hạng mục | Thay đổi | Dùng thế nào |
 |---|---|---|
-| Thang mua 3 lớp | Vùng mua cũ chỉ cách giá 0–2%. Nay 3 lệnh LO: lớp 1 thăm dò 30% (mức đỡ gần), lớp 2 chính 40% (hỗ trợ chạm nhiều lần / MA50 trong 4 ATR), lớp 3 sâu 30% (trong 7 ATR); xác suất khớp 20 phiên; cắt lỗ dưới lớp 3; "CHỜ GIÁ" cũng thành thang dưới trần giá trị | `[entry] ladder`; kiểm định: `study-entry` |
+| Thang mua 3 lớp | 3 lệnh LO: lớp 1 thăm dò 30% (mức đỡ gần), lớp 2 chính 40% (hỗ trợ chạm nhiều lần / MA50, trung vị −7%), lớp 3 sâu 30% (trung vị −13%); xác suất khớp 20 phiên. Kiểm định 10 năm: giá vốn rẻ hơn ~4% nhưng chỉ khớp 43% vốn nên lãi trên tổng vốn **thấp hơn** vùng cũ → mặc định kế hoạch giữ vùng cũ, lớp 2–3 hiện thành "mức mua thêm nếu giá giảm sâu" | `[entry] ladder` (tắt), `ladder_show` (bật); `study-entry` |
 | Sự kiện quyền trong sổ lệnh | Cổ tức tiền (sau thuế 5%) hạ mức cắt lỗ đúng bằng cổ tức; cổ phiếu thưởng cộng số lượng, giảm giá vốn | tự động |
-| Phá nền + cảnh báo sớm | Quy tắc `breakout_early` đưa vào kiểm định 10 năm | `study-timing` |
+| Phá nền + cảnh báo sớm | Quy tắc `breakout_early` kiểm định 10 năm: **không đạt** (Sharpe 0,21 so với mua & giữ 0,33) → giữ tắt | `study-timing` |
 | Sao lưu sổ lệnh | Sang repo riêng tư | `portfolio backup` / `restore` |
 | Nhiệt danh mục | Tổng rủi ro mở ≤ 5% vốn, lệnh mới tự giảm | `[portfolio] max_heat` |
 

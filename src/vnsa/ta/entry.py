@@ -38,6 +38,11 @@ Mọi lớp ≤ trần giá trị. low = lớp 3, high = lớp 1, mid = giá bì
 (plan.py dùng mid làm giá vào và đặt cắt lỗ DƯỚI lớp 3). Xác suất khớp từng lớp trong 20 phiên tính
 từ Monte Carlo (analysis.risk, theo giá đóng cửa nên thận trọng). Hiệu quả so với vùng cũ: lệnh
 study-entry (recommend/entry_study.py).
+
+KẾT QUẢ KIỂM ĐỊNH (22/10/2026, 45 mã, 10 năm — docs/kiem_dinh_thoi_diem.md): thang mua cho giá vốn
+rẻ hơn ~4% và lãi trên phần vốn khớp cao hơn, nhưng chỉ khớp ~43% vốn trong 20 phiên nên lãi trên TỔNG
+vốn thấp hơn vùng cũ ở cả hai giai đoạn. Vì vậy mặc định `ladder = false` (kế hoạch dùng vùng cũ) và
+`ladder_show = true`: thẻ báo cáo vẫn in lớp 2, lớp 3 làm "mức mua thêm nếu giá giảm sâu" để tham khảo.
 """
 
 from __future__ import annotations
@@ -75,6 +80,7 @@ class EntryZone:
     mid: float = float("nan")    # giá mua bình quân dự kiến (giữa vùng / bình quân thang mua)
     notes: list[str] = field(default_factory=list)
     tiers: list[Tier] = field(default_factory=list)   # thang mua 3 lớp (rỗng nếu tắt)
+    ref_tiers: list[Tier] = field(default_factory=list)   # thang mua chỉ để THAM KHẢO (ladder tắt)
     stop_cap: float = float("nan")     # cắt lỗ phải thấp hơn mức này (dưới lớp sâu nhất)
 
     @property
@@ -184,7 +190,7 @@ def entry_zone(ind: pd.DataFrame, supports: list[Level], cfg: dict,
     zone = EntryZone(status=status, low=low, high=high, anchor=anchor, anchor_source=source,
                      close=close, vwap20=vw, value_cap=cap, fair_value=fair_value,
                      margin_of_safety=mos, mid=mid, notes=notes)
-    if cfg.get("ladder", False):
+    if cfg.get("ladder", False) or cfg.get("ladder_show", False):
         if status == "CHỜ GIÁ":
             under = [(p, src) for p, src in [(s.price, "hỗ trợ") for s in supports]
                      + [(vw, "VWAP20"), (sma20, "MA20")] if not pd.isna(p) and cap - atr <= p <= cap]
@@ -192,6 +198,9 @@ def entry_zone(ind: pd.DataFrame, supports: list[Level], cfg: dict,
         else:
             ref, top, top_src = close, anchor, source
         tiers, stop_cap = build_ladder(ind, supports, cfg, ref, top, top_src, cap, ticks)
+        if not cfg.get("ladder", False):            # chỉ hiển thị mức mua sâu, kế hoạch giữ vùng cũ
+            zone.ref_tiers = tiers
+            return zone
         zone.tiers, zone.stop_cap = tiers, stop_cap
         zone.high, zone.low = tiers[0].price, tiers[-1].price
         total = sum(t.weight for t in tiers)

@@ -534,7 +534,7 @@ def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | N
                    adv_value=adv_value(ind), risk_scale=risk_scale, risk_adjust=adjust,
                    extra_caps=caps, max_stop=zone.stop_cap if zone.tiers else None)
     p.zone = zone
-    if zone.tiers:
+    if zone.tiers or zone.ref_tiers:
         _fill_probs(ind, zone)
     return p
 
@@ -555,7 +555,7 @@ def _fill_probs(ind: pd.DataFrame, zone, horizon: int = 20, n_paths: int = 2000)
         sim = simulate(fit, float(close.iloc[-1]), horizon, n_paths=n_paths,
                        band=market.band(sym) if sym else market.band(), seed=cfg["seed"],
                        drift=drift)
-        for t in zone.tiers:
+        for t in zone.tiers or zone.ref_tiers:
             t.fill_prob = sim.prob_touch(t.price, horizon)
     except Exception:  # noqa: BLE001 - xác suất khớp chỉ để tham khảo
         pass
@@ -707,9 +707,9 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
             p = plan(indicators(prices))
         except (ValueError, IndexError):
             p = None
-    if p is not None and getattr(p, "zone", None) is not None and p.zone.tiers:
+    if p is not None and getattr(p, "zone", None) is not None and (p.zone.tiers or p.zone.ref_tiers):
         h = min(20, max(horizons))
-        for t in p.zone.tiers:                     # xác suất khớp từng lớp của thang mua
+        for t in p.zone.tiers or p.zone.ref_tiers:   # xác suất khớp từng lớp của thang mua
             t.fill_prob = sim.prob_touch(t.price, h)
     touch = None
     if p and p.targets:

@@ -658,6 +658,11 @@ def _print_zone(z) -> None:
               f"{z.discount:+.1%} so với giá đóng cửa)")
         print(f"    Gợi ý: 2 lệnh LO, ½ khối lượng ở {z.high:,.0f} và ½ ở {z.low:,.0f} "
               f"→ giá bình quân dự kiến {z.mid:,.0f}")
+    if z.ref_tiers:
+        print("  Mức mua thêm nếu giá giảm sâu (tham khảo, kế hoạch vẫn dùng vùng trên):")
+        for t in z.ref_tiers[1:]:
+            fill = "" if _nan(t.fill_prob) else f", khớp ~{t.fill_prob:.0%} trong 20 phiên"
+            print(f"    {t.name:<14} {t.price:>9,.0f} ({t.depth:+.1%}){fill} — {t.source}")
     for n in z.notes:
         print(f"  ! {n}")
 

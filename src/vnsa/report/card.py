@@ -418,6 +418,12 @@ def build_card(a) -> Card:
                                   f" · {vn_pct(t.weight, 0)}{fill} — {t.source}")
             zone = f"Giá vốn nếu khớp đủ {vn_num(z.mid)}đ"
         plan_lines.append(f"{zone} · Cắt lỗ {vn_num(p.stop)}đ ({source})")
+        if z is not None and z.ref_tiers:
+            deep = " · ".join(
+                f"{vn_num(t.price)}đ ({vn_pct(t.depth, 1, sign=True)}"
+                + (f", khớp ~{vn_pct(t.fill_prob, 0)}" if not pd.isna(t.fill_prob) else "") + ")"
+                for t in z.ref_tiers[1:])
+            plan_lines.append(f"Mức mua thêm nếu giá giảm sâu (tham khảo): {deep}")
         plan_lines.append("Chốt lời " + " / ".join(f"{vn_num(t.price)}" for t in p.targets) + "đ · "
                           f"Tỷ trọng gợi ý {vn_pct(p.position_value / p.capital, 0)} NAV")
 

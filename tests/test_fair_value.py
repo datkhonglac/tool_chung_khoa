@@ -358,3 +358,12 @@ def test_trade_plan_stop_below_deepest_tier():
            "lot_size": 100, "max_position_pct": 0.15}
     p = trade_plan(28_500, 500, [], [], cfg, TICKS, max_stop=26_500)
     assert p.stop <= 26_500 and "lớp" in p.stop_source
+
+
+def test_ladder_show_keeps_old_zone_for_plan():
+    """Mặc định sau kiểm định: kế hoạch dùng vùng cũ, thang mua chỉ để tham khảo."""
+    ind = _ind(close=30_000, sma20=29_500, atr=500)
+    old = entry_zone(ind, [], ENTRY, TICKS)
+    show = entry_zone(ind, [], {**LADDER, "ladder": False, "ladder_show": True}, TICKS)
+    assert (show.low, show.high, show.mid) == (old.low, old.high, old.mid)
+    assert not show.tiers and len(show.ref_tiers) == 3 and pd.isna(show.stop_cap)
