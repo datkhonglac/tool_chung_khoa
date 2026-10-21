@@ -78,7 +78,8 @@ def refresh(max_age_hours: float = 20, years: int = 10, provider=None,
     from vnsa.data.providers.macro_provider import MacroProvider
 
     cat = catalog()
-    with Store(path("warehouse")) as store:
+    # kho mở theo từng lời gọi: không giữ khoá trong lúc tải Yahoo/FRED/World Bank
+    with Store.lazy(path("warehouse")) as store:
         try:
             n_manual, _ = load_manual(store, cat)
         except ValueError as e:

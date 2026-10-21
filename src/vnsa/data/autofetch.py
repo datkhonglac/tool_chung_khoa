@@ -388,12 +388,13 @@ class Updater:
         self.cfg = {**self.cfg, "years": years}
         self._prefer_cafef = True
         try:
-            with self._frozen_clock(), Store(path("warehouse")) as store:
-                steps.append(self._listing(store, False))
+            with self._frozen_clock():
+                lazy = Store.lazy(path("warehouse"))
+                steps.append(self._listing(lazy, False))
                 todo = [*symbols, self.index]
                 if workers > 1:
-                    self._prefetch(store, todo, workers, full_if_short=True)
-                for sym in todo:
+                    self._prefetch(lazy, todo, workers, full_if_short=True)
+                for store, sym in _batched(todo):
                     steps.append(self._prices(store, sym, sym, full=self._short(store, sym)))
         finally:
             self.cfg = {**self.cfg, "years": cfg_years}
@@ -403,7 +404,7 @@ class Updater:
 
     def listing(self, refresh: bool = False) -> Step:
         """Danh sách niêm yết (sàn, ngành): tải lại khi cũ hơn `listing_max_age_days`."""
-        with Store(path("warehouse")) as store:
+        with Store.lazy(path("warehouse")) as store:
             return self._listing(store, refresh)
 
     def _prefetch(self, store: Store, symbols: list[str], workers: int,
@@ -460,11 +461,12 @@ class Updater:
         todo = [self.index, *[s for s in dict.fromkeys(x.upper() for x in symbols)
                               if s != self.index]]
         try:
-            with self._frozen_clock(), Store(path("warehouse")) as store:
-                self._listing(store, False)
+            with self._frozen_clock():
+                lazy = Store.lazy(path("warehouse"))
+                self._listing(lazy, False)
                 if workers > 1:
-                    self._prefetch(store, todo, workers)
-                for i, sym in enumerate(todo, 1):
+                    self._prefetch(lazy, todo, workers)
+                for i, (store, sym) in enumerate(_batched(todo), 1):
                     out[sym] = self._prices(store, sym, sym, full=False)
                     if progress:
                         progress(i, len(todo), sym, out[sym])
@@ -480,7 +482,9 @@ class Updater:
         full: tải lại toàn bộ giá."""
         sym = symbol.upper().strip()
         rep = UpdateReport(sym)
-        with Store(path("warehouse")) as store:
+        # Kho mở theo từng lời gọi: không giữ khoá trong lúc chờ CafeF/vnstock (dashboard, MCP và
+        # lệnh khác vẫn đọc/ghi được kho trong khi đang tải)
+        with Store.lazy(path("warehouse")) as store:
             rep.steps.append(self._listing(store, refresh))
             prof = store.company(sym)
             if prof is None and store.companies_loaded_at() is not None and sym != self.index:
@@ -510,6 +514,16 @@ class Updater:
         if macro is not None:
             rep.steps.append(macro)
         return rep
+
+
+def _batched(symbols: list[str], size: int = 25):
+    """(kho, mã) cho từng mã; kho mở lại sau mỗi `size` mã. Tải hàng loạt (~1.500 mã) giữ một kết nối
+    suốt lượt sẽ khoá kho hàng chục phút; mở lại định kỳ cho tiến trình khác (dashboard, MCP) chen
+    vào giữa hai nhóm mã mà không phải mở kho cho từng lời gọi."""
+    for i in range(0, len(symbols), size):
+        with Store(path("warehouse")) as store:
+            for sym in symbols[i:i + size]:
+                yield store, sym
 
 
 def ensure(symbol: str, refresh: bool = False, full: bool = False,
