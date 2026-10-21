@@ -133,9 +133,9 @@ with st.sidebar:
                "không phải lời khuyên đầu tư.")
 
 (tab_all, tab_ta, tab_fa, tab_val, tab_macro, tab_risk, tab_bt, tab_hist,
- tab_screen) = st.tabs(
+ tab_screen, tab_pf) = st.tabs(
     ["Tổng quan", "Kỹ thuật & kế hoạch", "Tài chính", "Định giá", "Vĩ mô", "Rủi ro", "Backtest",
-     "Lịch sử khuyến nghị", "Sàng lọc thị trường"])
+     "Lịch sử khuyến nghị", "Sàng lọc thị trường", "Danh mục"])
 
 with tab_all:
     st.subheader(f"Báo cáo nhanh {symbol}")
@@ -587,4 +587,43 @@ with tab_screen:
                     view = view[view["group_name"] == g]
                 st.dataframe(_show(view.sort_values("score", ascending=False), stock_cols),
                              hide_index=True, width="stretch", column_config=fmt)
+
+with tab_pf:
+    from vnsa import portfolio as pf
+
+    trades = pf.load()
+    if trades.empty:
+        st.info("Sổ lệnh trống. Ghi lệnh bằng dòng lệnh, ví dụ "
+                "`python -m vnsa.cli portfolio buy FPT 500 98500` (giá bằng đồng), rồi tải lại trang. "
+                "Sổ lệnh lưu ở data/portfolio/trades.csv và không đưa lên Git.")
+    else:
+        try:
+            cal, last_px, grp = pf.market_context(sorted(trades["symbol"].unique()))
+            capital = settings()["plan"]["capital"]
+            tab = pf.status(trades, last_px, grp, capital, calendar=cal)
+            realized = pf.realized_total(trades, calendar=cal)
+        except ValueError as e:
+            st.error(f"Sổ lệnh có lỗi: {e}")
+        else:
+            c1, c2, c3 = st.columns(3)
+            total = float(tab["Giá trị"].sum()) if not tab.empty else 0.0
+            c1.metric("Giá trị đang giữ", f"{total:,.0f}đ", f"{total / capital:.0%} vốn")
+            c2.metric("Lãi/lỗ tạm tính", f"{tab['Lãi/lỗ'].sum() if not tab.empty else 0:+,.0f}đ")
+            c3.metric("Lãi/lỗ đã chốt", f"{realized:+,.0f}đ")
+            if not tab.empty:
+                view = tab.assign(**{c: tab[c] * 100 for c in ("Lãi/lỗ %", "Tỷ trọng",
+                                                                 "Cách cắt lỗ")})
+                p1 = st.column_config.NumberColumn(format="%+.1f%%")
+                st.dataframe(view, hide_index=True, width="stretch",
+                             column_config={"Lãi/lỗ %": p1, "Cách cắt lỗ": p1,
+                                            "Tỷ trọng": st.column_config.NumberColumn(
+                                                format="%.1f%%")})
+                share = tab.groupby("Nhóm ngành")["Giá trị"].sum() / capital
+                cap = settings().get("portfolio", {}).get("max_sector_pct", 0.30)
+                if (share > cap).any():
+                    st.warning("Tập trung ngành vượt {:.0%} vốn: ".format(cap) + ", ".join(
+                        f"{g} {w:.0%}" for g, w in share[share > cap].items()))
+            with st.expander("Sổ lệnh"):
+                st.dataframe(trades.assign(date=trades["date"].dt.strftime("%d/%m/%Y")),
+                             hide_index=True, width="stretch")
 

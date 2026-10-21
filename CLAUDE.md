@@ -128,6 +128,18 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   Claude Desktop ở `docs/`. Dashboard: `streamlit run dashboard/app.py` (extra `[dashboard]`, cổng 8501).
 - `python scripts/smoke_test.py` gọi mọi công cụ MCP + dashboard trên kho thật. Test dùng fixture
   `warehouse` (tests/conftest.py) và biến môi trường `VNSA_WAREHOUSE` để không đụng kho thật.
+- Nâng cấp v2.0 (nhánh `nang-cap-v2`): kho dùng chung nhiều tiến trình — `store.connect` chờ khi bận
+  (`WarehouseBusy`), `Store.lazy` (LazyStore) mở kho theo từng lời gọi trong autofetch/vĩ mô, tải hàng
+  loạt mở lại kho mỗi 25 mã (`_batched`); bảng `meta` giữ `SCHEMA_VERSION` (thêm ALTER viết tay thì
+  tăng `SCHEMA_REVISION`); KHÔNG dùng `fetchone()` (DuckDB 1.4 báo "unfinished result") — dùng
+  `Store._first`. `config.validate` (trọng số ≥ 0, ngưỡng đúng chiều theo `LOWER_IS_BETTER`, không bắt
+  tổng = 100). BCTC theo mùa `autofetch.bctc_due/expected_period` (`[auto] bctc_*`). Định giá theo
+  nhóm `analysis.valuation_group` (`[valuation.groups]`). `strategies.rule_set` có `vcp_pullback`
+  (`bb_width_pct` = thứ hạng 120 phiên của độ rộng Bollinger). `[risk] drift = "zero"`.
+  Sổ lệnh `portfolio.py` (CSV `[data] trades`, gitignore — repo công khai; test dùng `VNSA_TRADES`),
+  lệnh `portfolio`, MCP `get_portfolio`; `analysis.plan` gọi `portfolio.sizing_limits` (tương quan,
+  `[portfolio] max_sector_pct`). Chỉ hiển thị, chưa vào điểm: `ttm.earnings_acceleration`,
+  `flow_summary` `smart_10`, độ nén giá; `[regime] early` (tắt).
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
 - `python -m vnsa.cli load [--sample]` · `check FPT` · `list` · `chart FPT`
 

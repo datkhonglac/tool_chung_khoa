@@ -1,6 +1,8 @@
 """Mô phỏng Monte Carlo giá tương lai và các thước đo rủi ro (VaR, CVaR).
 
 Monte Carlo theo "mô phỏng lịch sử có lọc" (filtered historical simulation):
+- Lợi suất kỳ vọng mu: mặc định 0 ([risk] drift = "zero", nâng cấp v2.0 bước 4.1) — lấy bình quân
+  1.000 phiên quá khứ làm mã vừa tăng nóng có "xác suất tăng tiếp" cao giả tạo. "historical" = cách cũ.
 - Mỗi phiên mô phỏng: r = mu + sigma_t × z, z rút ngẫu nhiên (có hoàn lại) từ phần dư chuẩn hoá
   của GARCH — giữ được đuôi dày của dữ liệu thật thay vì giả định phân phối chuẩn.
 - sigma_t cập nhật theo đúng phương trình GARCH(1,1), nên giai đoạn biến động cao kéo dài như thực tế.
@@ -59,8 +61,12 @@ class Simulation:
 
 
 def simulate(fit: GarchFit, start_price: float, horizon: int, n_paths: int = 10_000,
-             band: float | None = 0.07, bootstrap: bool = True, seed: int | None = 42) -> Simulation:
+             band: float | None = 0.07, bootstrap: bool = True, seed: int | None = 42,
+             drift: float | None = None) -> Simulation:
+    """drift: lợi suất kỳ vọng mỗi phiên (log %, như fit.mu) dùng trong mô phỏng; None = fit.mu
+    (bình quân quá khứ). [risk] drift = "zero" truyền 0: không kéo dài đà tăng/giảm quá khứ."""
     rng = np.random.default_rng(seed)
+    mu = fit.mu if drift is None else drift
     resid = fit.resid[np.isfinite(fit.resid)]
     lo, hi = (np.log(1 - band) * 100, np.log(1 + band) * 100) if band else (-np.inf, np.inf)
     s2 = np.full(n_paths, fit.next_sigma ** 2)
@@ -68,9 +74,9 @@ def simulate(fit: GarchFit, start_price: float, horizon: int, n_paths: int = 10_
     for t in range(1, horizon + 1):
         z = rng.choice(resid, n_paths) if bootstrap else rng.standard_normal(n_paths)
         e = np.sqrt(s2) * z
-        r = np.clip(fit.mu + e, lo, hi)
+        r = np.clip(mu + e, lo, hi)
         log_price[:, t] = log_price[:, t - 1] + r / 100
-        s2 = fit.omega + fit.alpha * (r - fit.mu) ** 2 + fit.beta * s2
+        s2 = fit.omega + fit.alpha * (r - mu) ** 2 + fit.beta * s2
     return Simulation(start_price=start_price, paths=start_price * np.exp(log_price))
 
 
@@ -81,9 +87,10 @@ def historical_var(close: pd.Series, q: float = 0.95, window: int = 750) -> tupl
     return float(-cut), float(-r[r <= cut].mean())
 
 
-def garch_var(fit: GarchFit, q: float = 0.95, empirical: bool = True) -> float:
-    """VaR 1 ngày (tỷ lệ, lỗ tính dương) theo sigma GARCH phiên kế tiếp."""
+def garch_var(fit: GarchFit, q: float = 0.95, empirical: bool = True,
+              drift: float | None = None) -> float:
+    """VaR 1 ngày (tỷ lệ, lỗ tính dương) theo sigma GARCH phiên kế tiếp. drift như simulate."""
     resid = fit.resid[np.isfinite(fit.resid)]
     z = np.percentile(resid, (1 - q) * 100) if empirical else norm.ppf(1 - q)
-    log_r = (fit.mu + fit.next_sigma * z) / 100
+    log_r = ((fit.mu if drift is None else drift) + fit.next_sigma * z) / 100
     return float(-(np.exp(log_r) - 1))

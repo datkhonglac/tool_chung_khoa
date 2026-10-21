@@ -1,10 +1,20 @@
 """Kho dữ liệu cục bộ bằng DuckDB (một file duy nhất: data/warehouse.duckdb).
 
 Mọi module phân tích đọc từ đây, không gọi thẳng nguồn bên ngoài.
+
+Nhiều giao diện cùng mở kho (dòng lệnh, dashboard, MCP server cho Claude Desktop): DuckDB chỉ cho
+MỘT tiến trình ghi tại một thời điểm và chặn cả tiến trình khác mở chỉ-đọc khi đang có tiến trình
+ghi. Vì vậy:
+- mở kết nối có thử lại khi file đang bận (`connect`, tối đa khoảng `LOCK_WAIT_SECONDS` giây);
+- mọi chỗ mở kho đều mở ngắn (`with Store(...)`), và phần tải dữ liệu qua mạng dùng `LazyStore`:
+  mỗi lời gọi mở kết nối rồi đóng ngay, nên không giữ khoá kho trong lúc chờ CafeF/vnstock;
+- nâng cấp cấu trúc bảng (ALTER) chỉ chạy khi phiên bản cấu trúc trong bảng `meta` khác bản code.
 """
 
 from __future__ import annotations
 
+import hashlib
+import time
 from pathlib import Path
 
 import duckdb
@@ -198,11 +208,62 @@ INDUSTRY_TYPES = {
 INDUSTRY_COLUMNS = ["as_of", "group_name", *INDUSTRY_TYPES]
 
 
+# Phiên bản cấu trúc: đổi khi SCHEMA hoặc danh sách cột thay đổi -> kho cũ được nâng cấp một lần.
+# Thêm một câu ALTER viết tay trong Store._migrate thì tăng SCHEMA_REVISION.
+SCHEMA_REVISION = 1
+SCHEMA_VERSION = hashlib.sha1(repr((SCHEMA_REVISION, SCHEMA, list(FIELDS), PROFILE_TYPES,
+                                    SCREEN_TYPES, INDUSTRY_TYPES)).encode()).hexdigest()[:16]
+LOCK_WAIT_SECONDS = 60.0     # chờ tối đa khi tiến trình khác đang ghi kho
+
+
+class WarehouseBusy(RuntimeError):
+    """Kho đang bị tiến trình khác giữ quá lâu."""
+
+
+def connect(db_path: str | Path, wait: float | None = None) -> duckdb.DuckDBPyConnection:
+    """Mở kho; file đang bị tiến trình khác khoá thì chờ rồi thử lại (giãn dần 0,1 → 2 giây)."""
+    wait = LOCK_WAIT_SECONDS if wait is None else wait
+    deadline, delay = time.monotonic() + wait, 0.1
+    while True:
+        try:
+            return duckdb.connect(str(db_path))
+        except duckdb.IOException as e:
+            if "lock" not in str(e).lower():
+                raise
+            if time.monotonic() + delay > deadline:
+                raise WarehouseBusy(
+                    f"Kho {db_path} đang bị tiến trình khác dùng quá {wait:.0f} giây (một lệnh "
+                    "screen/fetch đang chạy?). Chờ lệnh đó xong rồi chạy lại.") from e
+            time.sleep(delay)
+            delay = min(delay * 1.5, 2.0)
+
+
 class Store:
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path, wait: float | None = None):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.con = duckdb.connect(str(self.db_path))
+        self.con = connect(self.db_path, wait)
+        try:
+            self._migrate()
+        except Exception:
+            self.con.close()
+            raise
+
+    @classmethod
+    def lazy(cls, db_path: str | Path) -> "LazyStore":
+        """Kho mở theo từng lời gọi (xem LazyStore) — dùng khi xen kẽ gọi mạng lâu."""
+        return LazyStore(db_path)
+
+    def _migrate(self) -> None:
+        """Tạo bảng, thêm cột mới cho kho cũ. Bỏ qua nếu kho đã ở đúng phiên bản cấu trúc."""
+        try:
+            # fetchall (không fetchone): kết quả đọc dở làm register() ở lời gọi sau báo
+            # "connection has an unfinished result" (DuckDB ≥ 1.4)
+            rows = self.con.execute("SELECT value FROM meta WHERE key = 'schema'").fetchall()
+            if rows and rows[0][0] == SCHEMA_VERSION:
+                return
+        except duckdb.CatalogException:
+            pass
         self.con.execute(SCHEMA)
         for f in FIELDS:  # kho tạo từ bản cũ: thêm cột khoản mục mới nếu còn thiếu
             for table in ("fundamentals", "fundamentals_q"):
@@ -219,9 +280,17 @@ class Store:
             self.con.execute(f"ALTER TABLE screen ADD COLUMN IF NOT EXISTS {c} {t}")
         for c, t in INDUSTRY_TYPES.items():
             self.con.execute(f"ALTER TABLE screen_industry ADD COLUMN IF NOT EXISTS {c} {t}")
+        self.con.execute("CREATE TABLE IF NOT EXISTS meta (key VARCHAR PRIMARY KEY, value VARCHAR)")
+        self.con.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", [SCHEMA_VERSION])
 
     def close(self) -> None:
         self.con.close()
+
+    def _first(self, sql: str, params: list | None = None) -> tuple | None:
+        """Dòng đầu của truy vấn, đọc HẾT kết quả (fetchone để dở kết quả làm register()/lời gọi sau
+        báo "connection has an unfinished result" từ DuckDB 1.4)."""
+        rows = self.con.execute(sql, params or []).fetchall()
+        return rows[0] if rows else None
 
     def __enter__(self) -> "Store":
         return self
@@ -284,18 +353,18 @@ class Store:
 
     def price_source(self, symbol: str) -> str | None:
         """Nguồn của phiên mới nhất (để lần cập nhật sau dùng lại đúng nguồn đó)."""
-        row = self.con.execute("SELECT source FROM prices WHERE symbol = ? ORDER BY date DESC "
-                               "LIMIT 1", [symbol.upper()]).fetchone()
+        row = self._first("SELECT source FROM prices WHERE symbol = ? ORDER BY date DESC "
+                               "LIMIT 1", [symbol.upper()])
         return row[0] if row else None
 
     def last_price_date(self, symbol: str) -> pd.Timestamp | None:
-        d = self.con.execute("SELECT MAX(date) FROM prices WHERE symbol = ?",
-                             [symbol.upper()]).fetchone()[0]
+        d = self._first("SELECT MAX(date) FROM prices WHERE symbol = ?",
+                             [symbol.upper()])[0]
         return None if d is None else pd.Timestamp(d)
 
     def first_price_date(self, symbol: str) -> pd.Timestamp | None:
-        d = self.con.execute("SELECT MIN(date) FROM prices WHERE symbol = ?",
-                             [symbol.upper()]).fetchone()[0]
+        d = self._first("SELECT MIN(date) FROM prices WHERE symbol = ?",
+                             [symbol.upper()])[0]
         return None if d is None else pd.Timestamp(d)
 
     def set_price_depth(self, symbol: str, full_from) -> None:
@@ -305,8 +374,8 @@ class Store:
                          [symbol.upper(), pd.Timestamp(full_from).date()])
 
     def price_depth(self, symbol: str) -> pd.Timestamp | None:
-        row = self.con.execute("SELECT full_from FROM price_depth WHERE symbol = ?",
-                               [symbol.upper()]).fetchone()
+        row = self._first("SELECT full_from FROM price_depth WHERE symbol = ?",
+                               [symbol.upper()])
         return None if row is None or row[0] is None else pd.Timestamp(row[0])
 
     def recent_prices(self, start, symbols: list[str] | None = None) -> pd.DataFrame:
@@ -385,8 +454,8 @@ class Store:
                                 "quarter").df()
 
     def fundamentals_loaded_at(self, symbol: str) -> pd.Timestamp | None:
-        t = self.con.execute("SELECT MAX(loaded_at) FROM fundamentals WHERE symbol = ?",
-                             [symbol.upper()]).fetchone()[0]
+        t = self._first("SELECT MAX(loaded_at) FROM fundamentals WHERE symbol = ?",
+                             [symbol.upper()])[0]
         return None if t is None else pd.Timestamp(t)
 
     def write_companies(self, df: pd.DataFrame, source: str) -> int:
@@ -482,9 +551,21 @@ class Store:
         return self.con.execute(f"SELECT {cols} FROM fundamentals_q WHERE symbol = ? "
                                 "ORDER BY year, quarter", [symbol.upper()]).df()
 
+    def latest_period(self, symbol: str, quarterly: bool = False) -> tuple[int, int] | None:
+        """Kỳ BCTC mới nhất trong kho: (năm, quý) với BCTC quý, (năm, 0) với BCTC năm; None nếu chưa có."""
+        if quarterly:
+            rows = self.con.execute("SELECT year, quarter FROM fundamentals_q WHERE symbol = ? "
+                                    "ORDER BY year DESC, quarter DESC LIMIT 1",
+                                    [symbol.upper()]).fetchall()
+        else:
+            rows = self.con.execute("SELECT MAX(year), 0 FROM fundamentals WHERE symbol = ?",
+                                    [symbol.upper()]).fetchall()
+        row = rows[0] if rows else None
+        return None if row is None or row[0] is None else (int(row[0]), int(row[1]))
+
     def quarterly_loaded_at(self, symbol: str) -> pd.Timestamp | None:
-        t = self.con.execute("SELECT MAX(loaded_at) FROM fundamentals_q WHERE symbol = ?",
-                             [symbol.upper()]).fetchone()[0]
+        t = self._first("SELECT MAX(loaded_at) FROM fundamentals_q WHERE symbol = ?",
+                             [symbol.upper()])[0]
         return None if t is None else pd.Timestamp(t)
 
     def write_dividends(self, df: pd.DataFrame, symbol: str) -> int:
@@ -512,8 +593,8 @@ class Store:
     def company(self, symbol: str) -> dict | None:
         """Sàn, ngành, loại doanh nghiệp và hồ sơ (số cp lưu hành...) của một mã; None nếu chưa có."""
         cols = [*COMPANY_COLUMNS, "loaded_at", *PROFILE_COLUMNS, "profile_at"]
-        row = self.con.execute(f"SELECT {', '.join(cols)} FROM companies WHERE symbol = ?",
-                               [symbol.upper()]).fetchone()
+        row = self._first(f"SELECT {', '.join(cols)} FROM companies WHERE symbol = ?",
+                               [symbol.upper()])
         return dict(zip(cols, row)) if row else None
 
     def peers(self, industry: str) -> list[str]:
@@ -535,11 +616,10 @@ class Store:
 
     def has_icb_detail(self) -> bool:
         """Danh sách niêm yết đã có ngành ICB cấp 4 (kho tạo trước 10/2026 thì chưa: tải lại)."""
-        return bool(self.con.execute("SELECT COUNT(*) FROM companies WHERE industry4 IS NOT NULL")
-                    .fetchone()[0])
+        return bool(self._first("SELECT COUNT(*) FROM companies WHERE industry4 IS NOT NULL")[0])
 
     def companies_loaded_at(self) -> pd.Timestamp | None:
-        t = self.con.execute("SELECT MAX(loaded_at) FROM companies").fetchone()[0]
+        t = self._first("SELECT MAX(loaded_at) FROM companies")[0]
         return None if t is None else pd.Timestamp(t)
 
     def write_signals(self, df: pd.DataFrame) -> int:
@@ -655,8 +735,8 @@ class Store:
         return df
 
     def news_loaded_at(self, symbol: str) -> pd.Timestamp | None:
-        t = self.con.execute("SELECT MAX(loaded_at) FROM news WHERE symbol = ?",
-                             [symbol.upper()]).fetchone()[0]
+        t = self._first("SELECT MAX(loaded_at) FROM news WHERE symbol = ?",
+                             [symbol.upper()])[0]
         return None if t is None else pd.Timestamp(t)
 
     def _replace_run(self, table: str, columns: list[str], df: pd.DataFrame,
@@ -695,7 +775,7 @@ class Store:
 
     def _latest_run(self, table: str, as_of):
         if as_of is None:
-            as_of = self.con.execute(f"SELECT MAX(as_of) FROM {table}").fetchone()[0]
+            as_of = self._first(f"SELECT MAX(as_of) FROM {table}")[0]
         return None if as_of is None else pd.Timestamp(as_of).date()
 
     def screen(self, as_of=None) -> pd.DataFrame:
@@ -749,3 +829,35 @@ class Store:
             "SELECT symbol, COUNT(*) AS so_phien, MIN(date) AS tu_ngay, MAX(date) AS den_ngay, "
             "ANY_VALUE(source) AS nguon FROM prices GROUP BY symbol ORDER BY symbol"
         ).df()
+
+
+class LazyStore:
+    """Như Store nhưng MỖI lời gọi phương thức mở kết nối riêng rồi đóng ngay.
+
+    Dùng cho phần tải dữ liệu (autofetch, vĩ mô): giữa hai lần ghi là các lần gọi CafeF/vnstock
+    10–30 giây; giữ một kết nối suốt thời gian đó sẽ khoá kho, làm dashboard/MCP/lệnh khác báo lỗi
+    "Could not set lock". Mỗi phương thức của Store trả DataFrame/giá trị thường nên đóng kết nối
+    sau lời gọi là an toàn."""
+
+    def __init__(self, db_path: str | Path):
+        self.db_path = Path(db_path)
+
+    def __enter__(self) -> "LazyStore":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def __getattr__(self, name: str):
+        if name.startswith("_") or not callable(getattr(Store, name, None)):
+            raise AttributeError(name)
+
+        def call(*args, **kwargs):
+            with Store(self.db_path) as store:
+                return getattr(store, name)(*args, **kwargs)
+
+        call.__name__ = name
+        return call

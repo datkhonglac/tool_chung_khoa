@@ -34,6 +34,7 @@ def warehouse(tmp_path, monkeypatch):
     db = tmp_path / "test.duckdb"
     monkeypatch.setenv("VNSA_WAREHOUSE", str(db))
     monkeypatch.setenv("VNSA_SIGNALS_CSV", str(tmp_path / "signals.csv"))
+    monkeypatch.setenv("VNSA_TRADES", str(tmp_path / "trades.csv"))   # sổ lệnh riêng của test
     prov = CSVProvider(SAMPLE)
     with Store(db) as store:
         frames = [prov.ohlcv(s) for s in prov.symbols()]

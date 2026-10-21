@@ -37,6 +37,12 @@ jobs:
           restore-keys: study-
       - name: Kiểm định
         run: python -m vnsa.cli study-timing ${{ inputs.symbols }}
+      - name: Tóm tắt kết quả (trang tóm tắt của lần chạy)
+        if: always() && hashFiles('data/study/timing_study.txt') != ''
+        run: |
+          { echo '```'; cat data/study/timing_study.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          msg=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' data/study/timing_study.txt)
+          echo "::notice title=Kết quả kiểm định thời điểm::$msg"
       - name: Lưu kho giá cho lần sau
         if: always() && hashFiles('data/warehouse.duckdb') != ''
         uses: actions/cache/save@v4

@@ -74,3 +74,16 @@ def test_historical_and_garch_var_by_hand():
     assert garch_var(fit, 0.95, empirical=False) == pytest.approx(expected)
     z = np.percentile(fit.resid, 5)
     assert garch_var(fit, 0.95) == pytest.approx(-(np.exp((fit.mu + fit.next_sigma * z) / 100) - 1))
+
+
+def test_zero_drift_removes_past_trend():
+    """Bước 4.1: mã tăng đều trong quá khứ — drift lịch sử cho xác suất tăng cao giả tạo,
+    drift 0 đưa về quanh 50% (thấp hơn chút do biến động)."""
+    rng = np.random.default_rng(3)
+    close = pd.Series(10_000 * np.exp(np.cumsum(0.004 + rng.normal(0, 0.015, 1200))))
+    fit = fit_garch(log_returns_pct(close))
+    hist = simulate(fit, float(close.iloc[-1]), 60, n_paths=4000, seed=1)
+    zero = simulate(fit, float(close.iloc[-1]), 60, n_paths=4000, seed=1, drift=0.0)
+    assert hist.prob_above() > 0.75
+    assert 0.35 < zero.prob_above() < 0.55
+    assert garch_var(fit, 0.95, drift=0.0) > garch_var(fit, 0.95)

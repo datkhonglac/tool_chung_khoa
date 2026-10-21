@@ -68,3 +68,42 @@ def test_timing_study_runs_on_sample(warehouse):
     assert res.chosen_k["trend"] in (2.5, 3.0, 4.0) and res.chosen_k["ta"] == 2.0
     text = format_study(res)
     assert "Mua & giữ" in text and "Kiểm tra độc lập" in text
+
+
+def _ind(n=5, **cols):
+    base = {"date": pd.bdate_range("2024-01-01", periods=n), "open": 100.0, "high": 104.0,
+            "low": 99.0, "close": 103.0, "volume": 1_500.0, "vol_ma20": 1_000.0, "atr": 2.0,
+            "sma20": 102.0, "sma50": 100.0, "sma200": 90.0, "rsi": 55.0, "bb_width_pct": 0.2}
+    base.update(cols)
+    return pd.DataFrame(base)
+
+
+def _vcp(ind):
+    from vnsa.recommend.strategies import rule_set
+
+    cfg = {"entry_score": 65, "exit_score": 45, "atr_stop": 2.0}
+    return rule_set(ind, pd.Series(50.0, index=ind.index), None, 2.5, cfg)["vcp_pullback"]
+
+
+def test_vcp_pullback_entry_conditions():
+    assert _vcp(_ind()).entry.all()                                  # đủ 4 điều kiện
+    assert not _vcp(_ind(rsi=70.0)).entry.any()                      # RSI quá cao: mua đuổi
+    assert not _vcp(_ind(sma50=85.0)).entry.any()                    # MA50 dưới MA200
+    assert not _vcp(_ind(volume=1_100.0)).entry.any()                # chưa có phiên xác nhận
+    assert not _vcp(_ind(close=99.5)).entry.any()                    # nến giảm (đóng < mở)
+    # nền chưa chặt nhưng giá sát MA20 (≤ 1 ATR) vẫn đạt; xa MA20 thì không
+    assert _vcp(_ind(bb_width_pct=0.8, sma20=102.0)).entry.all()
+    assert not _vcp(_ind(bb_width_pct=0.8, sma20=99.0)).entry.any()
+
+
+def test_vcp_pullback_exit_needs_volume():
+    assert _vcp(_ind(close=95.0, volume=2_000.0)).exit.all()         # thủng MA50, KL lớn
+    assert not _vcp(_ind(close=95.0, volume=1_200.0)).exit.any()     # thủng MA50, KL thường
+
+
+def test_squeeze_percentile_rank():
+    from vnsa.ta.indicators import percentile_rank
+
+    s = pd.Series(np.r_[np.linspace(1, 2, 119), 0.5])                # phiên cuối hẹp nhất
+    r = percentile_rank(s, 120)
+    assert np.isnan(r.iloc[118]) and r.iloc[-1] == pytest.approx(1 / 120)

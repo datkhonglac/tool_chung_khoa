@@ -12,6 +12,8 @@ Quy tắc (tham số ở mục [plan] trong settings):
   nhỏ hơn); số cp = rủi ro tối đa / R, làm tròn xuống lô 100 cp, rồi chặn bởi: số vốn (không margin),
   trần tỷ trọng `max_position_pct` × vốn, và `max_adv_pct` × giá trị giao dịch bình quân 20 phiên
   (mua nhiều hơn thế thì khó khớp và khó thoát hàng).
+- Danh mục đang giữ (sổ lệnh, portfolio.py): tương quan cao với mã đang giữ thì giảm ngân sách rủi
+  ro; trần tổng giá trị mỗi nhóm ngành ([portfolio], xem portfolio.sizing_limits).
 - Lưu ý T+2: cổ phiếu mua hôm nay chiều T+2 mới về tài khoản, trước đó không bán (cắt lỗ) được.
 """
 
@@ -80,7 +82,10 @@ class TradePlan:
 
 def trade_plan(close: float, atr: float, supports: list[Level], resistances: list[Level],
                cfg: dict, ticks: list[list[float]] | None = None, adv_value: float = float("nan"),
-               risk_scale: float = 1.0) -> TradePlan:
+               risk_scale: float = 1.0, risk_adjust: tuple[float, str] | None = None,
+               extra_caps: list[tuple[float, str]] | None = None) -> TradePlan:
+    """risk_adjust: (hệ số ≤ 1, lý do) giảm thêm ngân sách rủi ro (vd tương quan cao với mã đang giữ);
+    extra_caps: [(giá trị tối đa đồng, lý do)] chặn thêm khối lượng (vd trần nhóm ngành)."""
     if pd.isna(atr) or atr <= 0:
         raise ValueError("chưa đủ dữ liệu để tính ATR")
     entry = round_tick(close, "nearest", ticks)
@@ -114,6 +119,9 @@ def trade_plan(close: float, atr: float, supports: list[Level], resistances: lis
     budget = capital * cfg["risk_per_trade"] * risk_scale
     if risk_scale < 1:
         notes.append(f"thị trường chung đang giảm: rủi ro mỗi lệnh còn {risk_scale:.0%} mức thường")
+    if risk_adjust is not None and risk_adjust[0] < 1:
+        budget *= max(risk_adjust[0], 0.0)
+        notes.append(risk_adjust[1])
     lot = int(cfg.get("lot_size", 100))
     shares = int(budget / risk // lot * lot)
     caps = [(capital, "số vốn (không dùng margin)")]
@@ -124,6 +132,7 @@ def trade_plan(close: float, atr: float, supports: list[Level], resistances: lis
         caps.append((adv_value * cfg["max_adv_pct"],
                      (f"thanh khoản ({cfg['max_adv_pct']:.0%} GTGD bình quân 20 phiên "
                       f"{adv_value / 1e9:,.1f} tỷ)")))
+    caps += list(extra_caps or [])
     for value, why in caps:
         limit = int(value / entry // lot * lot)
         if shares > limit:

@@ -11,7 +11,7 @@ APP = str(Path(__file__).resolve().parents[1] / "dashboard" / "app.py")
 def test_dashboard_renders_all_tabs_without_errors(warehouse):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception, at.exception
-    assert len(at.tabs) == 9
+    assert len(at.tabs) == 10
     assert at.selectbox[0].options == ["DEMO_A", "DEMO_B", "DEMO_C"]
     labels = " | ".join(m.label for m in at.metric)
     for label in ("Điểm TA", "Điểm FA", "Giá trị DCF/cp", "Lợi nhuận/năm", "VaR 95% 1 ngày"):
@@ -146,3 +146,14 @@ def test_dashboard_screen_tab_liquidity_only(warehouse):
     assert any("tầng 1 — lọc thanh khoản" in i.value for i in at.info)
     assert "2 mã qua lọc thanh khoản" in [h.value for h in at.subheader]
     assert "Mã tiềm năng trong các nhóm dẫn đầu" not in [h.value for h in at.subheader]
+
+
+def test_dashboard_portfolio_tab(warehouse):
+    from vnsa import portfolio as pf
+
+    pf.add(pf.BUY, "DEMO_A", 200, 50_000, "2026-01-05", fee=0)
+    pf.add(pf.STOP, "DEMO_A", 0, 45_000, "2026-01-06")
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception, at.exception
+    labels = " | ".join(m.label for m in at.metric)
+    assert "Giá trị đang giữ" in labels and "Lãi/lỗ đã chốt" in labels

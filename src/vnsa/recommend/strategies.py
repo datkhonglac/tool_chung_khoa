@@ -20,6 +20,12 @@ Các quy tắc (`rule_set`):
 - breakout    : giá đóng cửa vượt đỉnh cao nhất 55 phiên trước, khối lượng > 1,5 × TB 20 phiên và
                 giá > MA200 thì mua; bán bằng cắt lỗ động k ATR (hoặc thủng MA200).
 - trend_vni, breakout_vni: như trên, chỉ MUA MỚI khi VNINDEX không ở trạng thái "giảm".
+- vcp_pullback: mua nhịp điều chỉnh trong nền giá chặt của xu hướng tăng (đề xuất nâng cấp v2.0,
+                bước 3.3). Mua khi CẢ BỐN điều kiện: (1) giá > MA200 và MA50 > MA200; (2) nền chặt
+                (độ nén bb_width_pct < 0,40) HOẶC giá cách MA20 không quá 1 ATR; (3) 45 ≤ RSI14 ≤ 62;
+                (4) phiên xác nhận: đóng cửa > mở cửa và khối lượng > 1,2 × TB 20 phiên. Bán: cắt lỗ
+                động k ATR, hoặc đóng cửa dưới MA50 với khối lượng > 1,5 × TB 20 phiên.
+                Tham số đặt TRƯỚC khi chạy kiểm định, không chỉnh theo kết quả.
 """
 
 from __future__ import annotations
@@ -159,6 +165,17 @@ def rule_set(ind: pd.DataFrame, score: pd.Series, regime: pd.Series | None, atr_
     hh55 = d["high"].shift(1).rolling(55).max()
     breakout = ((d["close"] > hh55) & (d["volume"] > 1.5 * d["vol_ma20"])
                 & (d["close"] > sma200))
+    no = pd.Series(False, index=d.index)
+    if {"rsi", "atr", "open"} <= set(d.columns):
+        sma20 = d["sma20"] if "sma20" in d else d["close"].rolling(20).mean()
+        tight = (d["bb_width_pct"] < 0.40) if "bb_width_pct" in d else no
+        vcp = ((d["close"] > sma200) & (sma50 > sma200)
+               & (tight | ((d["close"] - sma20).abs() <= 1.0 * d["atr"]))
+               & d["rsi"].between(45, 62)
+               & (d["close"] > d["open"]) & (d["volume"] > 1.2 * d["vol_ma20"]))
+        vcp_exit = (d["close"] < sma50) & (d["volume"] > 1.5 * d["vol_ma20"])
+    else:                                   # bảng chỉ báo rút gọn (test cũ): quy tắc không kích hoạt
+        vcp, vcp_exit = no, no
     extra = cfg.get("bear_entry_extra", 10)
     bear_size = cfg.get("bear_position", 0.5)
     return {
@@ -173,10 +190,12 @@ def rule_set(ind: pd.DataFrame, score: pd.Series, regime: pd.Series | None, atr_
                           one, "trail", atr_k),
         "breakout_vni": Rule("breakout_vni", (breakout & ~bear).fillna(False),
                              below_200.fillna(False), one, "trail", atr_k),
+        "vcp_pullback": Rule("vcp_pullback", vcp.fillna(False), vcp_exit.fillna(False), one,
+                             "trail", atr_k),
     }
 
 
 NAMES = {"ta": "Điểm TA (hiện tại)", "ta_vni": "Điểm TA + VNINDEX",
          "trend": "Theo xu hướng MA200", "breakout": "Phá nền 55 phiên",
          "trend_vni": "Xu hướng + VNINDEX", "breakout_vni": "Phá nền + VNINDEX",
-         "hold": "Mua & giữ"}
+         "vcp_pullback": "Nền chặt + điều chỉnh (VCP)", "hold": "Mua & giữ"}

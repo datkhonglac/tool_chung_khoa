@@ -75,3 +75,20 @@ def test_abnormal_dividend_uses_three_year_average(warehouse):
     d = analysis.load("DEMO_A", need_fin=False)
     assert analysis.dividend_yield(d, raw=True) == pytest.approx(0.12)
     assert analysis.dividend_yield(d) == pytest.approx(0.04)          # 12% / 3 năm
+
+
+def test_early_warning_distribution_days():
+    """Bước 3.1 (tắt mặc định): 5 phiên giảm mạnh kèm KL lớn dưới MA50 -> "giảm" sớm."""
+    from vnsa.ta.regime import early_warning, regime_series
+
+    n = 320
+    close = np.r_[np.linspace(1000, 1300, n - 20), np.linspace(1300, 1240, 20)]
+    vol = np.full(n, 1_000.0)
+    for i in (n - 15, n - 12, n - 9, n - 6, n - 3):
+        close[i] = close[i - 1] * 0.99
+        vol[i] = 2_000.0
+    idx = pd.DataFrame({"date": pd.bdate_range("2025-01-01", periods=n), "close": close,
+                        "volume": vol})
+    assert early_warning(idx, {}).iloc[-1]
+    assert regime_series(idx, {}).iloc[-1] != "giảm"                 # tắt: như cũ
+    assert regime_series(idx, {"early": True}).iloc[-1] == "giảm"

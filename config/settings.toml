@@ -12,6 +12,7 @@ bank_manual = "config/bank_manual.toml"   # NPL, CASA, CAR ngân hàng nhập ta
 macro_map = "config/macro_map.toml"       # danh mục chuỗi vĩ mô + ánh xạ ngành → yếu tố vĩ mô
 macro_manual = "config/macro_manual.toml" # số vĩ mô Việt Nam nhập tay (CPI, tín dụng, PMI...)
 screen_dir = "data/screen"                # kết quả sàng lọc toàn thị trường (lệnh screen), mỗi lượt một CSV
+trades = "data/portfolio/trades.csv"      # SỔ LỆNH thật (lệnh portfolio). KHÔNG đưa lên Git: repo đang công khai
 
 # Đơn vị giá trong file CSV: "auto" | "dong" | "nghin"
 # auto: nếu trung vị giá đóng cửa < 1000 thì coi là nghìn đồng và nhân 1000.
@@ -36,7 +37,14 @@ years = 5                   # số năm giá tải lần đầu
 overlap_days = 10           # tải lại 10 ngày cuối để so khớp và bắt các phiên nguồn sửa lại
 adjust_tolerance = 0.005    # giá cũ lệch > 0,5% so với lần tải mới -> có sự kiện quyền, tải lại toàn bộ
 market_close_hour = 15      # trước 15h (giờ Việt Nam) chưa có giá phiên hôm nay
-bctc_max_age_days = 30      # BCTC trong kho cũ hơn số ngày này thì tải lại
+# BCTC tải lại theo MÙA BÁO CÁO (data/autofetch.py bctc_due): đã có kỳ mới nhất đáng lẽ đã công bố
+# thì không gọi vnstock nữa; doanh nghiệp nộp muộn thì thử lại mỗi bctc_retry_days ngày
+bctc_season = true
+quarter_lag_days = 30       # BCTC quý: kỳ kết thúc trước hôm nay ≥ 30 ngày coi như đã phải công bố
+annual_lag_days = 100       # BCTC năm (kiểm toán, hạn 90 ngày)
+bctc_retry_days = 3
+bctc_max_age_days_current = 90   # đã có kỳ mới nhất: vẫn tải lại sau 90 ngày (bắt số điều chỉnh)
+bctc_max_age_days = 30      # chỉ dùng khi bctc_season = false: BCTC cũ hơn số ngày này thì tải lại
 listing_max_age_days = 30   # danh sách niêm yết (sàn, ngành) cũ hơn số ngày này thì tải lại
 profile_max_age_days = 7    # hồ sơ (số cp lưu hành, sở hữu NN) và cổ tức cũ hơn số ngày này thì tải lại
 pause = 0.3                 # giây nghỉ giữa các lần gọi CafeF
@@ -98,7 +106,18 @@ max_peer_pe = 60               # bỏ mã cùng ngành có P/E ≤ 0 hoặc > 60
 # pe_peer, pb_peer: bội số trung vị NGÀNH (chỉ khi kho có ≥ min_peers mã cùng ngành; không có thì
 # chia lại cho các phương pháp còn lại như trước)
 general = { dcf = 0.4, pe_hist = 0.3, pb_hist = 0.3, pe_peer = 0.15, pb_peer = 0.15 }
+# Nhóm ngành đặc thù (nâng cấp v2.0, bước 2.1; nhóm theo [valuation.groups]):
+# chu kỳ: lợi nhuận đỉnh/đáy làm P/E và DCF lệch -> neo nhiều hơn vào giá trị sổ sách
+cyclical = { dcf = 0.15, pe_hist = 0.2, pb_hist = 0.35, pe_peer = 0.15, pb_peer = 0.15 }
+# bất động sản: doanh thu theo điểm bàn giao dự án, FCFF thất thường -> bỏ DCF
+real_estate = { dcf = 0.0, pe_hist = 0.15, pb_hist = 0.45, pe_peer = 0.1, pb_peer = 0.3 }
 financial = { ri = 0.25, pb_roe = 0.25, pb_hist = 0.5, pb_peer = 0.25 }
+
+[valuation.groups]
+# Tên nhóm ngành (config/macro_map.toml [[industry]] name) dùng trọng số định giá riêng ở trên.
+# Thêm/bớt nhóm tại đây (vd thêm "Nông nghiệp, thuỷ sản" vào cyclical nếu bạn coi là chu kỳ).
+real_estate = ["Bất động sản"]
+cyclical = ["Thép", "Hoá chất, phân bón", "Dầu khí"]
 
 [valuation.financials]
 # Ngân hàng / chứng khoán / bảo hiểm: thu nhập thặng dư + P/B hợp lý theo ROE (fa/fair_value.py)
@@ -197,6 +216,13 @@ max_position_pct = 0.15     # trần tỷ trọng mỗi mã: 15% vốn
 max_adv_pct = 0.10          # vị thế không quá 10% giá trị giao dịch bình quân 20 phiên (thanh khoản)
 # Bước giá theo sàn nằm ở [market.ticks]
 
+[portfolio]
+# Danh mục đang nắm giữ (lệnh portfolio, sổ lệnh ở [data] trades) và giới hạn khi lập kế hoạch mua
+max_sector_pct = 0.30       # tổng giá trị một nhóm ngành tối đa 30% vốn (kể cả lệnh mới)
+corr_sessions = 120         # tương quan lợi suất ngày với các mã đang giữ, 120 phiên gần nhất
+corr_threshold = 0.60       # tương quan cực đại > 0,6: giảm ngân sách rủi ro của lệnh mới
+corr_max_cut = 0.50         # ... giảm tuyến tính, tối đa 50% khi tương quan = 1
+
 [entry]
 # Vùng giá mua khuyến nghị (ta/entry.py) — không lấy thẳng giá đóng cửa làm giá vào
 max_pullback_atr = 2.0      # điểm neo (hỗ trợ / VWAP20 / SMA20) cách giá hiện tại tối đa 2 ATR
@@ -272,6 +298,8 @@ horizons = [20, 60]         # số phiên mô phỏng (≈ 1 tháng, 3 tháng)
 n_paths = 10000
 bootstrap = true            # rút phần dư thật (true) hay phân phối chuẩn (false)
 seed = 42
+drift = "zero"              # lợi suất kỳ vọng trong Monte Carlo/VaR GARCH: "zero" (mặc định, không kéo
+                            # dài đà quá khứ) | "historical" (bình quân 1.000 phiên, cách cũ)
 
 [recommend]
 # Khuyến nghị hai trục (recommend/engine.py)
@@ -309,6 +337,12 @@ sma_long = 200
 sma_short = 50
 slope_sessions = 20         # MA50 đi lên/xuống so với 20 phiên trước
 bear_risk_factor = 0.5      # thị trường giảm: rủi ro mỗi lệnh còn 50% (khối lượng nhỏ lại)
+# Cảnh báo sớm (ta/regime.py early_warning): phiên phân phối / biến động tăng vọt. TẮT cho tới khi
+# kiểm định; bật thì regime_series dùng luôn trong backtest/study-timing để so sánh.
+early = false
+dist_days = 5               # ≥ 5 phiên phân phối trong 20 phiên
+dist_drop = 0.005           # phiên phân phối: VNINDEX giảm > 0,5% với KL > TB 20 phiên
+vol_quantile = 0.85         # ATR14/giá vượt phân vị 85% của 250 phiên
 
 [report]
 # Độ tin cậy của khuyến nghị (report/card.py): đếm số điều kiện đạt
