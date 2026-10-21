@@ -140,6 +140,14 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   lệnh `portfolio`, MCP `get_portfolio`; `analysis.plan` gọi `portfolio.sizing_limits` (tương quan,
   `[portfolio] max_sector_pct`). Chỉ hiển thị, chưa vào điểm: `ttm.earnings_acceleration`,
   `flow_summary` `smart_10`, độ nén giá; `[regime] early` (tắt).
+- Nâng cấp v2.1 (nhánh `nang-cap-v2.1`): thang mua 3 lớp `ta/entry.py` (`build_ladder`, `Tier`,
+  `EntryZone.tiers/stop_cap`; low = lớp 3, high = lớp 1, mid = bình quân có trọng số; `[entry] ladder*`),
+  `trade_plan(max_stop=...)` đặt cắt lỗ dưới lớp 3, `analysis._fill_probs`/`Simulation.prob_touch` xác suất
+  khớp; kiểm định `study-entry` (`recommend/entry_study.py`, workflow `entry.yml`). Sổ lệnh: sự kiện quyền
+  `positions(..., actions=corporate_actions(...))` (cổ tức tiền hạ cắt lỗ, thưởng cp cộng SL), sao lưu
+  `portfolio backup/restore` (`VNSA_BACKUP_REPO`, `VNSA_BACKUP_TOKEN`, chặn repo công khai), nhiệt danh mục
+  `portfolio_heat` (`[portfolio] max_heat`; extra_caps dạng ("risk"|"value", đồng, lý do)). Quy tắc
+  `breakout_early` (`rule_set(..., regime_early)`, `data["__regime_early__"]`).
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
 - `python -m vnsa.cli load [--sample]` · `check FPT` · `list` · `chart FPT`
 
