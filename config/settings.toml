@@ -298,6 +298,8 @@ horizons = [20, 60]         # số phiên mô phỏng (≈ 1 tháng, 3 tháng)
 n_paths = 10000
 bootstrap = true            # rút phần dư thật (true) hay phân phối chuẩn (false)
 seed = 42
+drift = "zero"              # lợi suất kỳ vọng trong Monte Carlo/VaR GARCH: "zero" (mặc định, không kéo
+                            # dài đà quá khứ) | "historical" (bình quân 1.000 phiên, cách cũ)
 
 [recommend]
 # Khuyến nghị hai trục (recommend/engine.py)

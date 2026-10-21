@@ -639,15 +639,16 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
     close = prices["close"]
     fit = fit_garch(log_returns_pct(close.tail(cfg["garch_window"] + 1)))
     p0 = float(close.iloc[-1])
+    drift = None if cfg.get("drift", "zero") == "historical" else 0.0
     var = {}
     for q in cfg["confidence"]:
         hv, cv = historical_var(close, q, cfg["var_window"])
-        var[q] = {"hist": hv, "cvar": cv, "garch": garch_var(fit, q),
-                  "garch_normal": garch_var(fit, q, empirical=False)}
+        var[q] = {"hist": hv, "cvar": cv, "garch": garch_var(fit, q, drift=drift),
+                  "garch_normal": garch_var(fit, q, empirical=False, drift=drift)}
     horizons = sorted(horizons or cfg["horizons"])
     band = market.band(prices["symbol"].iloc[-1]) if "symbol" in prices else market.band()
     sim = simulate(fit, p0, max(horizons), n_paths=n_paths or cfg["n_paths"], band=band,
-                   bootstrap=cfg["bootstrap"], seed=cfg["seed"])
+                   bootstrap=cfg["bootstrap"], seed=cfg["seed"], drift=drift)
     p = trade_plan
     if p is None:
         try:
