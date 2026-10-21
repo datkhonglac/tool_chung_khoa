@@ -84,4 +84,30 @@ Tham số được đặt **trước** khi chạy. Kiểm định dùng cùng r�
 - Trục thời điểm giữ nguyên `timing_rule = "none"`.
 - Các quy tắc cũ chạy lại với dữ liệu thêm đến 21/10/2026 cho kết luận như lần trước. Phá nền 55 phiên vẫn gần đạt nhất.
 
+## Bổ sung 22/10/2026: phá nền 55 phiên + cảnh báo sớm VNINDEX (nâng cấp v2.1)
+
+Quy tắc `breakout_early` giống "Phá nền 55 phiên", nhưng chỉ MUA MỚI khi VNINDEX không ở trạng thái "giảm". Trạng thái này tính **có** cảnh báo sớm (`ta/regime.early_warning`), kích hoạt khi có một trong hai điều kiện:
+
+- ≥ 5 phiên phân phối trong 20 phiên, đóng cửa dưới MA50;
+- ATR/giá vượt phân vị 85% của 250 phiên, đóng cửa dưới MA20.
+
+Cùng rổ 45 mã, cùng tiêu chí "đạt". Kho giá được tải lại từ đầu, dữ liệu đến 21/10/2026.
+
+| Quy tắc | Giai đoạn | k ATR | CAGR | Sharpe | Sụt giảm tối đa | Thời gian cầm cp |
+|---|---|---|---|---|---|---|
+| Phá nền + cảnh báo sớm | 2016–2021 | 3 | 6,0% | 1,06 | −12,6% | 14% |
+| | 2022–10/2026 | 3 | 0,9% | 0,21 | −6,5% | 14% |
+| Phá nền + VNINDEX (MA) | 2022–10/2026 | 3 | 0,9% | 0,20 | −6,3% | 14% |
+| Phá nền 55 phiên | 2022–10/2026 | 2,5 | 0,9% | 0,23 | −5,8% | 13% |
+| **Mua & giữ** | 2016–2021 | | 30,2% | 1,36 | −49,7% | 100% |
+| | 2022–10/2026 | | 5,1% | 0,33 | −46,4% | 100% |
+
+**Kết luận: không đạt.**
+
+- Cảnh báo sớm gần như không đổi kết quả so với bộ lọc MA50/MA200 cũ: Sharpe 0,21 so với 0,20.
+- Cả hai đều thấp hơn mua & giữ ở cả hai giai đoạn.
+- Giữ nguyên `[regime] early = false` và `timing_rule = "none"`.
+
+Một lưu ý quan trọng: lần chạy này tải lại kho giá từ đầu, và "Phá nền 55 phiên" chọn k = 2,5 thay cho k = 4. Kết quả giai đoạn kiểm tra vì thế đổi từ Sharpe 0,36 xuống 0,23. Chỉ khác dữ liệu một chút mà kết quả đã dịch chuyển như vậy, tức là lợi thế "gần đạt" của quy tắc này mong manh. Đó thêm một lý do để không bật trục thời điểm.
+
 Trục **xếp hạng** (giá trị hợp lý) không kiểm định được theo cách này, vì BCTC miễn phí chỉ có 4 năm. Thay vào đó, workflow hằng ngày lưu khuyến nghị vào nhánh `signals`, và lệnh `review-signals` chấm kết quả thật sau 5/20/60 phiên.
