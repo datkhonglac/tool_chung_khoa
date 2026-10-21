@@ -10,7 +10,7 @@ from vnsa import mcp_server as srv
 EXPECTED = {"list_symbols", "get_prices", "get_ratios", "get_valuation", "get_fa_score",
             "get_technical", "get_trade_plan", "get_risk", "get_recommendations", "run_backtest",
             "update_symbol", "analyze_symbol", "review_signals", "macro_context",
-            "screen_market"}
+            "screen_market", "get_portfolio"}
 
 
 def test_all_tools_registered_with_schemas():
@@ -105,3 +105,14 @@ def test_screen_market_reads_latest_run(warehouse):
     assert out["industries"][0]["group_name"] == "Ngân hàng"
     grp = srv.screen_market(group="thép")
     assert {p["symbol"] for p in grp["group"]} == {"CCC", "DDD"}
+
+
+def test_get_portfolio(warehouse):
+    from vnsa import portfolio as pf
+
+    assert srv.get_portfolio()["positions"] == []
+    pf.add(pf.BUY, "DEMO_A", 100, 50_000, "2026-01-05", fee=0)
+    out = srv.get_portfolio()
+    json.dumps(out)
+    assert out["positions"][0]["Mã"] == "DEMO_A" and out["positions"][0]["SL"] == 100
+

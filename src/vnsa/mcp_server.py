@@ -323,6 +323,25 @@ def review_signals(horizons: list[int] | None = None) -> dict:
             "note": "Dưới ~30 mẫu mỗi nhóm chỉ để tham khảo."}
 
 
+@mcp.tool()
+@_guard
+def get_portfolio() -> dict:
+    """Danh mục đang nắm giữ từ sổ lệnh cá nhân (lệnh `portfolio`): số lượng, số bán được (đã qua
+    T+2), giá vốn bình quân, giá hiện tại, lãi/lỗ tạm tính, tỷ trọng so với vốn [plan], nhóm ngành,
+    khoảng cách tới cắt lỗ; lãi/lỗ đã chốt. Chỉ đọc — ghi lệnh bằng dòng lệnh."""
+    from vnsa import portfolio as pf
+
+    trades = pf.load()
+    if trades.empty:
+        return {"positions": [], "note": "Sổ lệnh trống (python -m vnsa.cli portfolio buy MÃ SL GIÁ)."}
+    cal, prices, groups = pf.market_context(sorted(trades["symbol"].unique()))
+    capital = settings()["plan"]["capital"]
+    tab = pf.status(trades, prices, groups, capital, calendar=cal)
+    return {"capital": capital, "positions": tab,
+            "realized": pf.realized_total(trades, calendar=cal),
+            "note": "Lãi/lỗ % và tỷ trọng dạng thập phân; giá bằng đồng."}
+
+
 def _reading(r) -> dict:
     from vnsa.macro.signals import fmt_change, fmt_period
 
