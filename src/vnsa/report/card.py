@@ -386,7 +386,7 @@ def build_card(a) -> Card:
         technical.append("Khối ngoại " + " · ".join(
             f"{n} phiên {net(fs[f'foreign_{n}'], fs[f'foreign_{n}_pct'])}" for n in wins)
             + f" · Tự doanh {wins[-1]} phiên {net(fs[f'prop_{wins[-1]}'])}"
-            + (f" · Tổ chức 10 phiên {vn_pct(fs['smart_10'], 1, sign=True)} GTGD/phiên"
+            + (f" · Tổ chức (NN + tự doanh) 10 phiên {vn_pct(fs['smart_10'], 1, sign=True)} GTGD"
                if not pd.isna(fs.get("smart_10", nan)) else "")
             + f" (đến {fs['last_date']:%d/%m}, tham khảo)")
 
