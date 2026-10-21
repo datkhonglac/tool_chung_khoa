@@ -9,7 +9,7 @@ Thứ tự cho mỗi mã (tham số ở mục [auto] trong settings):
    thì nguồn đã điều chỉnh lại lịch sử (cổ tức/chia tách), nên tải lại toàn bộ cho khớp.
 3. Chỉ số thị trường (VNINDEX, để tính beta): như bước 2.
 4. BCTC năm và BCTC quý (vnstock/VCI; bản miễn phí 4 quý gần nhất, dùng tính TTM): chưa có hoặc
-   cũ hơn `bctc_max_age_days` thì tải lại.
+   tải lại theo mùa báo cáo (`bctc_due`: đã có kỳ mới nhất đáng lẽ đã công bố thì không gọi lại).
 5. Hồ sơ doanh nghiệp (số cổ phiếu lưu hành, sở hữu nước ngoài, free float, GTGD bình quân) và
    lịch sử cổ tức: cũ hơn `profile_max_age_days` thì tải lại.
 
@@ -256,11 +256,20 @@ class Updater:
         df.assign(date=df["date"].dt.strftime("%Y-%m-%d")).drop(columns="symbol").to_csv(
             out / f"{sym}.csv", index=False)
 
+    def _bctc_skip(self, store: Store, sym: str, quarterly: bool, refresh: bool) -> str | None:
+        """Lý do bỏ qua tải BCTC (None = tải). Xem bctc_due."""
+        if refresh:
+            return None
+        loaded = (store.quarterly_loaded_at if quarterly else store.fundamentals_loaded_at)(sym)
+        latest = store.latest_period(sym, quarterly) if loaded is not None else None
+        now = pd.Timestamp(self.now())
+        return bctc_due(latest, loaded, now.tz_localize(None) if now.tz else now, self.cfg, quarterly)
+
     def _fundamentals(self, store: Store, sym: str, refresh: bool) -> Step:
         loaded = store.fundamentals_loaded_at(sym)
-        age = (pd.Timestamp.now() - loaded).days if loaded is not None else None
-        if age is not None and age < self.cfg["bctc_max_age_days"] and not refresh:
-            return Step("BCTC", "skip", f"đã có (tải {age} ngày trước)")
+        skip = self._bctc_skip(store, sym, False, refresh)
+        if skip is not None:
+            return Step("BCTC", "skip", skip)
         try:
             df = self.vn.fundamentals(sym)
             fields = df.drop(columns=["symbol", "year"])
@@ -279,10 +288,9 @@ class Updater:
                     + (f", thiếu {len(missing)} khoản mục" if missing else ""))
 
     def _quarterly(self, store: Store, sym: str, refresh: bool) -> Step:
-        loaded = store.quarterly_loaded_at(sym)
-        age = (pd.Timestamp.now() - loaded).days if loaded is not None else None
-        if age is not None and age < self.cfg["bctc_max_age_days"] and not refresh:
-            return Step("BCTC quý", "skip", f"đã có (tải {age} ngày trước)")
+        skip = self._bctc_skip(store, sym, True, refresh)
+        if skip is not None:
+            return Step("BCTC quý", "skip", skip)
         try:
             df = self.vn.quarterly(sym)
             if df.empty or df.drop(columns=["symbol", "year", "quarter"]).isna().all().all():
@@ -514,6 +522,48 @@ class Updater:
         if macro is not None:
             rep.steps.append(macro)
         return rep
+
+
+def expected_period(now: pd.Timestamp, quarterly: bool, cfg: dict) -> tuple[int, int]:
+    """Kỳ BCTC mới nhất ĐÁNG LẼ đã công bố tại `now`: (năm, quý) hoặc (năm, 0).
+    Quý: kỳ kết thúc trước now ít nhất `quarter_lag_days` ngày (hạn công bố BCTC quý ~20–30 ngày).
+    Năm: năm tài chính kết thúc trước now ít nhất `annual_lag_days` ngày (BCTC kiểm toán ~90 ngày)."""
+    now = pd.Timestamp(now)
+    if quarterly:
+        cut = now - pd.Timedelta(days=cfg.get("quarter_lag_days", 30))
+        q = (cut.month - 1) // 3                       # số quý đã KẾT THÚC trong năm của `cut`
+        return (cut.year, q) if q > 0 else (cut.year - 1, 4)
+    cut = now - pd.Timedelta(days=cfg.get("annual_lag_days", 100))
+    return cut.year - 1, 0
+
+
+def bctc_due(latest: tuple[int, int] | None, loaded: pd.Timestamp | None, now: pd.Timestamp,
+             cfg: dict, quarterly: bool) -> str | None:
+    """Có cần gọi vnstock tải lại BCTC không — theo MÙA BÁO CÁO thay vì cứ 30 ngày một lần
+    (nâng cấp v2.0, bước 1.3; tiết kiệm hạn mức vnstock khi sàng lọc toàn thị trường).
+    Trả lý do BỎ QUA, hoặc None nếu cần tải:
+    - chưa có trong kho → tải;
+    - đã có kỳ kỳ vọng (expected_period) → bỏ qua tới khi bản trong kho cũ hơn
+      `bctc_max_age_days_current` ngày (bắt BCTC điều chỉnh/kiểm toán lại);
+    - chưa có kỳ kỳ vọng (doanh nghiệp nộp muộn) → tải, nhưng cách lần tải trước ≥ `bctc_retry_days`
+      ngày để không gọi lại ở MỌI lượt chạy trong mùa báo cáo.
+    `bctc_season = false` thì quay về quy tắc cũ: tải lại khi cũ hơn `bctc_max_age_days`."""
+    if loaded is None:
+        return None
+    now = pd.Timestamp(now)
+    age = (now - pd.Timestamp(loaded)).days
+    if not cfg.get("bctc_season", False):
+        return f"đã có (tải {age} ngày trước)" if age < cfg["bctc_max_age_days"] else None
+    exp = expected_period(now, quarterly, cfg)
+    label = (lambda p: f"Q{p[1]}/{p[0]}") if quarterly else (lambda p: f"năm {p[0]}")
+    if latest is not None and tuple(latest) >= exp:
+        if age < cfg.get("bctc_max_age_days_current", 90):
+            return f"đã có kỳ mới nhất {label(latest)} (tải {age} ngày trước)"
+        return None
+    if age < cfg.get("bctc_retry_days", 3):
+        have = label(latest) if latest is not None else "chưa rõ kỳ"
+        return f"chưa có {label(exp)} (đang có {have}); thử lại sau {cfg.get('bctc_retry_days', 3)} ngày"
+    return None
 
 
 def _batched(symbols: list[str], size: int = 25):

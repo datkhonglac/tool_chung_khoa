@@ -257,8 +257,10 @@ class Store:
     def _migrate(self) -> None:
         """Tạo bảng, thêm cột mới cho kho cũ. Bỏ qua nếu kho đã ở đúng phiên bản cấu trúc."""
         try:
-            row = self.con.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
-            if row is not None and row[0] == SCHEMA_VERSION:
+            # fetchall (không fetchone): kết quả đọc dở làm register() ở lời gọi sau báo
+            # "connection has an unfinished result" (DuckDB ≥ 1.4)
+            rows = self.con.execute("SELECT value FROM meta WHERE key = 'schema'").fetchall()
+            if rows and rows[0][0] == SCHEMA_VERSION:
                 return
         except duckdb.CatalogException:
             pass
@@ -283,6 +285,12 @@ class Store:
 
     def close(self) -> None:
         self.con.close()
+
+    def _first(self, sql: str, params: list | None = None) -> tuple | None:
+        """Dòng đầu của truy vấn, đọc HẾT kết quả (fetchone để dở kết quả làm register()/lời gọi sau
+        báo "connection has an unfinished result" từ DuckDB 1.4)."""
+        rows = self.con.execute(sql, params or []).fetchall()
+        return rows[0] if rows else None
 
     def __enter__(self) -> "Store":
         return self
@@ -345,18 +353,18 @@ class Store:
 
     def price_source(self, symbol: str) -> str | None:
         """Nguồn của phiên mới nhất (để lần cập nhật sau dùng lại đúng nguồn đó)."""
-        row = self.con.execute("SELECT source FROM prices WHERE symbol = ? ORDER BY date DESC "
-                               "LIMIT 1", [symbol.upper()]).fetchone()
+        row = self._first("SELECT source FROM prices WHERE symbol = ? ORDER BY date DESC "
+                               "LIMIT 1", [symbol.upper()])
         return row[0] if row else None
 
     def last_price_date(self, symbol: str) -> pd.Timestamp | None:
-        d = self.con.execute("SELECT MAX(date) FROM prices WHERE symbol = ?",
-                             [symbol.upper()]).fetchone()[0]
+        d = self._first("SELECT MAX(date) FROM prices WHERE symbol = ?",
+                             [symbol.upper()])[0]
         return None if d is None else pd.Timestamp(d)
 
     def first_price_date(self, symbol: str) -> pd.Timestamp | None:
-        d = self.con.execute("SELECT MIN(date) FROM prices WHERE symbol = ?",
-                             [symbol.upper()]).fetchone()[0]
+        d = self._first("SELECT MIN(date) FROM prices WHERE symbol = ?",
+                             [symbol.upper()])[0]
         return None if d is None else pd.Timestamp(d)
 
     def set_price_depth(self, symbol: str, full_from) -> None:
@@ -366,8 +374,8 @@ class Store:
                          [symbol.upper(), pd.Timestamp(full_from).date()])
 
     def price_depth(self, symbol: str) -> pd.Timestamp | None:
-        row = self.con.execute("SELECT full_from FROM price_depth WHERE symbol = ?",
-                               [symbol.upper()]).fetchone()
+        row = self._first("SELECT full_from FROM price_depth WHERE symbol = ?",
+                               [symbol.upper()])
         return None if row is None or row[0] is None else pd.Timestamp(row[0])
 
     def recent_prices(self, start, symbols: list[str] | None = None) -> pd.DataFrame:
@@ -446,8 +454,8 @@ class Store:
                                 "quarter").df()
 
     def fundamentals_loaded_at(self, symbol: str) -> pd.Timestamp | None:
-        t = self.con.execute("SELECT MAX(loaded_at) FROM fundamentals WHERE symbol = ?",
-                             [symbol.upper()]).fetchone()[0]
+        t = self._first("SELECT MAX(loaded_at) FROM fundamentals WHERE symbol = ?",
+                             [symbol.upper()])[0]
         return None if t is None else pd.Timestamp(t)
 
     def write_companies(self, df: pd.DataFrame, source: str) -> int:
@@ -543,9 +551,21 @@ class Store:
         return self.con.execute(f"SELECT {cols} FROM fundamentals_q WHERE symbol = ? "
                                 "ORDER BY year, quarter", [symbol.upper()]).df()
 
+    def latest_period(self, symbol: str, quarterly: bool = False) -> tuple[int, int] | None:
+        """Kỳ BCTC mới nhất trong kho: (năm, quý) với BCTC quý, (năm, 0) với BCTC năm; None nếu chưa có."""
+        if quarterly:
+            rows = self.con.execute("SELECT year, quarter FROM fundamentals_q WHERE symbol = ? "
+                                    "ORDER BY year DESC, quarter DESC LIMIT 1",
+                                    [symbol.upper()]).fetchall()
+        else:
+            rows = self.con.execute("SELECT MAX(year), 0 FROM fundamentals WHERE symbol = ?",
+                                    [symbol.upper()]).fetchall()
+        row = rows[0] if rows else None
+        return None if row is None or row[0] is None else (int(row[0]), int(row[1]))
+
     def quarterly_loaded_at(self, symbol: str) -> pd.Timestamp | None:
-        t = self.con.execute("SELECT MAX(loaded_at) FROM fundamentals_q WHERE symbol = ?",
-                             [symbol.upper()]).fetchone()[0]
+        t = self._first("SELECT MAX(loaded_at) FROM fundamentals_q WHERE symbol = ?",
+                             [symbol.upper()])[0]
         return None if t is None else pd.Timestamp(t)
 
     def write_dividends(self, df: pd.DataFrame, symbol: str) -> int:
@@ -573,8 +593,8 @@ class Store:
     def company(self, symbol: str) -> dict | None:
         """Sàn, ngành, loại doanh nghiệp và hồ sơ (số cp lưu hành...) của một mã; None nếu chưa có."""
         cols = [*COMPANY_COLUMNS, "loaded_at", *PROFILE_COLUMNS, "profile_at"]
-        row = self.con.execute(f"SELECT {', '.join(cols)} FROM companies WHERE symbol = ?",
-                               [symbol.upper()]).fetchone()
+        row = self._first(f"SELECT {', '.join(cols)} FROM companies WHERE symbol = ?",
+                               [symbol.upper()])
         return dict(zip(cols, row)) if row else None
 
     def peers(self, industry: str) -> list[str]:
@@ -596,11 +616,10 @@ class Store:
 
     def has_icb_detail(self) -> bool:
         """Danh sách niêm yết đã có ngành ICB cấp 4 (kho tạo trước 10/2026 thì chưa: tải lại)."""
-        return bool(self.con.execute("SELECT COUNT(*) FROM companies WHERE industry4 IS NOT NULL")
-                    .fetchone()[0])
+        return bool(self._first("SELECT COUNT(*) FROM companies WHERE industry4 IS NOT NULL")[0])
 
     def companies_loaded_at(self) -> pd.Timestamp | None:
-        t = self.con.execute("SELECT MAX(loaded_at) FROM companies").fetchone()[0]
+        t = self._first("SELECT MAX(loaded_at) FROM companies")[0]
         return None if t is None else pd.Timestamp(t)
 
     def write_signals(self, df: pd.DataFrame) -> int:
@@ -716,8 +735,8 @@ class Store:
         return df
 
     def news_loaded_at(self, symbol: str) -> pd.Timestamp | None:
-        t = self.con.execute("SELECT MAX(loaded_at) FROM news WHERE symbol = ?",
-                             [symbol.upper()]).fetchone()[0]
+        t = self._first("SELECT MAX(loaded_at) FROM news WHERE symbol = ?",
+                             [symbol.upper()])[0]
         return None if t is None else pd.Timestamp(t)
 
     def _replace_run(self, table: str, columns: list[str], df: pd.DataFrame,
@@ -756,7 +775,7 @@ class Store:
 
     def _latest_run(self, table: str, as_of):
         if as_of is None:
-            as_of = self.con.execute(f"SELECT MAX(as_of) FROM {table}").fetchone()[0]
+            as_of = self._first(f"SELECT MAX(as_of) FROM {table}")[0]
         return None if as_of is None else pd.Timestamp(as_of).date()
 
     def screen(self, as_of=None) -> pd.DataFrame:

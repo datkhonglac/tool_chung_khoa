@@ -404,3 +404,35 @@ def test_dividend_error_keeps_shares_and_retries(empty_db):
     assert vn.div_calls == 2 and {s.what: s for s in rep.steps}["hồ sơ"].status == "ok"
     with Store(empty_db) as store:
         assert store.dividends("DEMO_A")["cash_per_share"].iloc[0] == 1500
+
+
+def test_expected_period_follows_reporting_season():
+    from vnsa.data.autofetch import expected_period
+
+    cfg = {"quarter_lag_days": 30, "annual_lag_days": 100}
+    ts = pd.Timestamp
+    assert expected_period(ts("2026-07-29"), True, cfg) == (2026, 1)   # Q2 chưa đến hạn
+    assert expected_period(ts("2026-08-01"), True, cfg) == (2026, 2)
+    assert expected_period(ts("2026-01-15"), True, cfg) == (2025, 3)
+    assert expected_period(ts("2026-02-01"), True, cfg) == (2025, 4)
+    assert expected_period(ts("2026-04-05"), False, cfg) == (2024, 0)  # BCTC 2025 chưa kiểm toán xong
+    assert expected_period(ts("2026-04-15"), False, cfg) == (2025, 0)
+
+
+def test_bctc_due_skips_until_new_period():
+    from vnsa.data.autofetch import bctc_due
+
+    cfg = {"bctc_season": True, "quarter_lag_days": 30, "bctc_retry_days": 3,
+           "bctc_max_age_days_current": 90, "bctc_max_age_days": 30}
+    now = pd.Timestamp("2026-10-21")
+    assert bctc_due(None, None, now, cfg, True) is None                              # chưa có
+    # đã có Q3? chưa đến hạn (Q3 kết thúc 30/9 + 30 ngày) -> kỳ kỳ vọng là Q2: có rồi thì bỏ qua
+    assert "Q2/2026" in bctc_due((2026, 2), pd.Timestamp("2026-08-10"), now, cfg, True)
+    # sau 90 ngày vẫn tải lại một lần (BCTC điều chỉnh)
+    assert bctc_due((2026, 2), pd.Timestamp("2026-07-01"), now, cfg, True) is None
+    # nộp muộn: chỉ có Q1 -> tải, nhưng không quá mỗi 3 ngày
+    assert bctc_due((2026, 1), pd.Timestamp("2026-10-15"), now, cfg, True) is None
+    assert "thử lại" in bctc_due((2026, 1), pd.Timestamp("2026-10-20"), now, cfg, True)
+    # tắt theo mùa: quy tắc cũ 30 ngày
+    old = {**cfg, "bctc_season": False}
+    assert bctc_due((2026, 2), pd.Timestamp("2026-08-10"), now, old, True) is None

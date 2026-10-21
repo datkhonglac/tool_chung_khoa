@@ -37,7 +37,14 @@ years = 5                   # số năm giá tải lần đầu
 overlap_days = 10           # tải lại 10 ngày cuối để so khớp và bắt các phiên nguồn sửa lại
 adjust_tolerance = 0.005    # giá cũ lệch > 0,5% so với lần tải mới -> có sự kiện quyền, tải lại toàn bộ
 market_close_hour = 15      # trước 15h (giờ Việt Nam) chưa có giá phiên hôm nay
-bctc_max_age_days = 30      # BCTC trong kho cũ hơn số ngày này thì tải lại
+# BCTC tải lại theo MÙA BÁO CÁO (data/autofetch.py bctc_due): đã có kỳ mới nhất đáng lẽ đã công bố
+# thì không gọi vnstock nữa; doanh nghiệp nộp muộn thì thử lại mỗi bctc_retry_days ngày
+bctc_season = true
+quarter_lag_days = 30       # BCTC quý: kỳ kết thúc trước hôm nay ≥ 30 ngày coi như đã phải công bố
+annual_lag_days = 100       # BCTC năm (kiểm toán, hạn 90 ngày)
+bctc_retry_days = 3
+bctc_max_age_days_current = 90   # đã có kỳ mới nhất: vẫn tải lại sau 90 ngày (bắt số điều chỉnh)
+bctc_max_age_days = 30      # chỉ dùng khi bctc_season = false: BCTC cũ hơn số ngày này thì tải lại
 listing_max_age_days = 30   # danh sách niêm yết (sàn, ngành) cũ hơn số ngày này thì tải lại
 profile_max_age_days = 7    # hồ sơ (số cp lưu hành, sở hữu NN) và cổ tức cũ hơn số ngày này thì tải lại
 pause = 0.3                 # giây nghỉ giữa các lần gọi CafeF
