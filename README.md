@@ -29,7 +29,7 @@ kiểm định được; phần chưa kiểm định thì hiển thị để the
 | 1.2 | Kiểm tra `config/settings.toml` khi khởi động, báo lỗi tiếng Việt chỉ rõ dòng sai | `python -m vnsa.config` |
 | 1.3 | Tải BCTC theo mùa báo cáo: đã có kỳ mới nhất thì không gọi vnstock nữa | `[auto] bctc_season` |
 | 2.1 | Định giá theo nhóm ngành: bất động sản bỏ DCF, nhóm chu kỳ (thép, hoá chất – phân bón, dầu khí) neo P/B | `[valuation.groups]`, `[valuation.weights]` |
-| 3.3 | Quy tắc thời điểm `vcp_pullback` (nền chặt + nhịp điều chỉnh) đưa vào kiểm định 10 năm | `study-timing`; bật bằng `[recommend] timing_rule` nếu đạt |
+| 3.3 | Quy tắc thời điểm `vcp_pullback` (nền chặt + nhịp điều chỉnh) đưa vào kiểm định 10 năm — **không đạt** (giai đoạn 2022–2026 Sharpe −0,32 so với mua & giữ 0,33; xem `docs/kiem_dinh_thoi_diem.md`), trục thời điểm giữ `none` | `study-timing` |
 | 4.1 | Monte Carlo/VaR dùng lợi suất kỳ vọng 0, không kéo dài đà quá khứ | `[risk] drift` |
 | 5.1 | **Sổ lệnh** từng giao dịch: giá vốn bình quân, số bán được sau T+2, cắt lỗ | `portfolio buy/sell/stop/status` |
 | 5.2 | Kế hoạch mua giảm rủi ro khi tương quan cao với mã đang giữ; trần 30% vốn mỗi nhóm ngành | `[portfolio]` |

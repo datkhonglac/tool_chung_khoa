@@ -55,4 +55,33 @@ Chạy lại: `python -m vnsa.cli study-timing`, hoặc trên GitHub: Actions �
    - Chưa tính trượt giá ngoài phí và thuế.
    - Kết quả quá khứ không đảm bảo tương lai.
 
+## Bổ sung 21/10/2026: quy tắc `vcp_pullback` (nâng cấp v2.0, bước 3.3)
+
+Quy tắc mua nhịp điều chỉnh trong nền giá chặt của xu hướng tăng (`src/vnsa/recommend/strategies.py`). Mua khi đủ 4 điều kiện:
+
+1. Giá > MA200 và MA50 > MA200.
+2. Độ nén Bollinger `bb_width_pct` < 0,40, hoặc giá cách MA20 không quá 1 ATR.
+3. 45 ≤ RSI14 ≤ 62.
+4. Phiên xác nhận: đóng cửa > mở cửa và khối lượng > 1,2 × trung bình 20 phiên.
+
+Bán bằng cắt lỗ động k ATR, hoặc khi đóng cửa dưới MA50 với khối lượng > 1,5 × trung bình 20 phiên.
+
+Tham số được đặt **trước** khi chạy. Kiểm định dùng cùng rổ 45 mã, cùng cách khớp lệnh và cùng tiêu chí "đạt" như trên. Dữ liệu đến 21/10/2026, chạy trên GitHub Actions.
+
+| Quy tắc | Giai đoạn | k ATR | CAGR | Sharpe | Sụt giảm tối đa | Thời gian cầm cp | Số lệnh | Tỷ lệ thắng |
+|---|---|---|---|---|---|---|---|---|
+| Nền chặt + điều chỉnh (VCP) | 2016–2021 | 2,5 | 6,2% | 1,34 | −9,3% | 16% | 578 | 44% |
+| | 2022–10/2026 | 2,5 | −1,6% | −0,32 | −10,5% | 19% | 708 | 32% |
+| Phá nền 55 phiên (tham chiếu) | 2022–10/2026 | 4 | 2,2% | 0,36 | −7,9% | 21% | 346 | 37% |
+| **Mua & giữ** | 2016–2021 | | 29,4% | 1,33 | −49,4% | 100% | | |
+| | 2022–10/2026 | | 5,1% | 0,33 | −46,4% | 100% | | |
+
+**Kết luận: không đạt.**
+
+- Giai đoạn chọn tham số trông tốt: Sharpe 1,34 nhỉnh hơn mua & giữ (1,33), sụt giảm chỉ −9%.
+- Giai đoạn kiểm tra độc lập thì lỗ: CAGR −1,6%, Sharpe −0,32, trong khi mua & giữ đạt 0,33.
+- Quy tắc nhiều điều kiện khớp tốt với quá khứ nhưng không giữ được ở dữ liệu mới. Đây đúng là rủi ro "khớp quá mức" đã nêu khi nhận xét đề xuất.
+- Trục thời điểm giữ nguyên `timing_rule = "none"`.
+- Các quy tắc cũ chạy lại với dữ liệu thêm đến 21/10/2026 cho kết luận như lần trước. Phá nền 55 phiên vẫn gần đạt nhất.
+
 Trục **xếp hạng** (giá trị hợp lý) không kiểm định được theo cách này, vì BCTC miễn phí chỉ có 4 năm. Thay vào đó, workflow hằng ngày lưu khuyến nghị vào nhánh `signals`, và lệnh `review-signals` chấm kết quả thật sau 5/20/60 phiên.
