@@ -1092,11 +1092,23 @@ def cmd_portfolio(args) -> int:
                 f"{side} {row['quantity']:,.0f} {sym} giá {row['price']:,.0f}đ "
                 f"(phí {row['fee']:,.0f}đ, thuế {row['tax']:,.0f}đ)")
         print(f"Đã ghi {row['date']:%d/%m/%Y}: {what}")
-        print(f"Sổ lệnh: {file} (không đưa lên Git — nhớ sao lưu)")
+        saved = pf.auto_backup()
+        print(f"Sổ lệnh: {file} — " + (saved or "chưa cấu hình sao lưu (portfolio backup, xem README)"))
         return 0
     if action == "undo":
         line = pf.undo()
         print(f"Đã xoá dòng cuối: {line}" if line else "Sổ lệnh trống.")
+        if line:
+            saved = pf.auto_backup()
+            if saved:
+                print(saved)
+        return 0
+    if action in ("backup", "restore"):
+        try:
+            print(pf.backup() if action == "backup" else pf.restore(force=args.force))
+        except pf.BackupError as e:
+            print(f"Không {('sao lưu' if action == 'backup' else 'lấy về')} được: {e}")
+            return 1
         return 0
     trades = pf.load()
     if trades.empty:
@@ -1340,9 +1352,9 @@ def main(argv: list[str] | None = None) -> int:
     ph.add_argument("--git", help="Nạp từ nhánh Git, ví dụ origin/signals (workflow hằng ngày)")
     ph.set_defaults(func=cmd_history)
 
-    ppf = sub.add_parser("portfolio", help="Sổ lệnh và danh mục: buy/sell/stop/list/status/undo")
+    ppf = sub.add_parser("portfolio", help="Sổ lệnh và danh mục: buy/sell/stop/list/status/undo/backup/restore")
     ppf.add_argument("action", nargs="?", default="status",
-                     choices=["status", "buy", "sell", "stop", "list", "undo"])
+                     choices=["status", "buy", "sell", "stop", "list", "undo", "backup", "restore"])
     ppf.add_argument("symbol", nargs="?")
     ppf.add_argument("quantity", nargs="?", type=float,
                      help="Số lượng (buy/sell) hoặc giá cắt lỗ (stop)")
@@ -1351,6 +1363,8 @@ def main(argv: list[str] | None = None) -> int:
     ppf.add_argument("--fee", type=float, help="Phí thật trên sao kê (mặc định theo [backtest] fee)")
     ppf.add_argument("--tax", type=float, help="Thuế bán thật (mặc định 0,1%% giá trị bán)")
     ppf.add_argument("--note", help="Ghi chú")
+    ppf.add_argument("--force", action="store_true",
+                     help="restore: thay sổ lệnh trên máy bằng bản sao lưu (giữ bản cũ .bak)")
     ppf.set_defaults(func=cmd_portfolio)
 
     pc = sub.add_parser("check", help="Kiểm tra chất lượng dữ liệu")

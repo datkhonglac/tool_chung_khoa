@@ -368,3 +368,148 @@ def sizing_limits(symbol: str, prices: pd.DataFrame, capital: float, cfg: dict |
         caps.append((max(0.0, capital * max_pct - used),
                      f"trần nhóm {group} {max_pct:.0%} vốn (đang giữ {used / capital:.0%})"))
     return adjust, caps
+
+
+# ---- sao lưu sổ lệnh sang repo RIÊNG TƯ (v2.1) ----------------------------------------------------
+# Repo chính đang CÔNG KHAI nên sổ lệnh nằm trong .gitignore; Codespace bị xoá là mất. Lệnh
+# `portfolio backup` / `portfolio restore` chép data/portfolio/trades.csv sang/từ một repo riêng tư.
+# Cấu hình bằng biến môi trường (đặt ở GitHub → Settings → Codespaces → Secrets):
+#   VNSA_BACKUP_REPO  = "chu_so_huu/ten_repo" (repo RIÊNG TƯ, tạo trước, có thể trống)
+#   VNSA_BACKUP_TOKEN = token GitHub fine-grained chỉ có quyền Contents: Read and write với repo đó
+#                       (không có thì dùng quyền git sẵn có của máy)
+# Từ chối sao lưu nếu repo đích là repo công khai hoặc chính repo tool.
+
+BACKUP_FILE = "trades.csv"
+
+
+class BackupError(RuntimeError):
+    pass
+
+
+def _backup_target(repo: str | None = None) -> tuple[str, str | None, str | None]:
+    """(URL git, "owner/repo" nếu là GitHub, token)."""
+    import os
+    import re
+
+    repo = (repo or os.environ.get("VNSA_BACKUP_REPO") or _cfg().get("backup_repo") or "").strip()
+    if not repo:
+        raise BackupError("chưa cấu hình repo sao lưu: đặt biến môi trường VNSA_BACKUP_REPO = "
+                          "\"ten_ban/ten_repo_rieng_tu\" (xem README, mục Sổ lệnh)")
+    token = os.environ.get("VNSA_BACKUP_TOKEN") or None
+    m = re.fullmatch(r"(?:https://github\.com/)?([\w.-]+/[\w.-]+?)(?:\.git)?/?", repo)
+    if m and "/" in repo and not Path(repo).exists():
+        slug = m.group(1)
+        auth = f"x-access-token:{token}@" if token else ""
+        return f"https://{auth}github.com/{slug}.git", slug, token
+    return repo, None, token                       # đường dẫn/URL git khác (vd repo nội bộ, test)
+
+
+def _check_private(slug: str, token: str | None) -> None:
+    """Chặn sao lưu lên repo công khai hoặc chính repo của tool (GitHub API)."""
+    import json
+    import subprocess
+    import urllib.error
+    import urllib.request
+
+    origin = subprocess.run(["git", "config", "--get", "remote.origin.url"], capture_output=True,
+                            text=True, cwd=Path(__file__).resolve().parents[2]).stdout
+    if slug.lower() in origin.lower():
+        raise BackupError(f"{slug} là repo của tool (công khai) — chọn một repo RIÊNG TƯ khác")
+    req = urllib.request.Request(f"https://api.github.com/repos/{slug}",
+                                 headers={"Accept": "application/vnd.github+json",
+                                          **({"Authorization": f"Bearer {token}"} if token else {})})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            info = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:          # không thấy: repo riêng tư (không có token) hoặc chưa tạo
+            return
+        raise BackupError(f"không kiểm tra được repo {slug}: HTTP {e.code}") from e
+    except OSError:
+        return                     # không có mạng tới API: để git tự báo lỗi quyền
+    if not info.get("private", False):
+        raise BackupError(f"repo {slug} đang CÔNG KHAI — không sao lưu sổ lệnh lên đó. Đổi repo sang "
+                          "Private (Settings → Danger Zone → Change visibility) rồi chạy lại.")
+
+
+def _git(*args, cwd=None) -> str:
+    import subprocess
+
+    import re
+
+    res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    if res.returncode != 0:
+        msg = (res.stderr or res.stdout).strip().splitlines()
+        text = re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", msg[-1] if msg else "lỗi")
+        raise BackupError(f"git {args[0]}: {text}")   # không in token ra màn hình
+    return res.stdout
+
+
+def _clone(url: str, where: Path) -> None:
+    import shutil
+
+    shutil.rmtree(where, ignore_errors=True)
+    where.parent.mkdir(parents=True, exist_ok=True)
+    _git("clone", "-q", "--depth", "1", url, str(where))
+
+
+def backup(file: Path | None = None, repo: str | None = None) -> str:
+    """Chép sổ lệnh lên repo riêng tư (một commit nếu có thay đổi). Trả mô tả kết quả."""
+    import shutil
+    import tempfile
+
+    file = Path(file or ledger_path())
+    if not file.exists():
+        raise BackupError(f"chưa có sổ lệnh {file}")
+    url, slug, token = _backup_target(repo)
+    if slug:
+        _check_private(slug, token)
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "backup"
+        _clone(url, work)
+        shutil.copyfile(file, work / BACKUP_FILE)
+        _git("add", BACKUP_FILE, cwd=work)
+        if not _git("status", "--porcelain", cwd=work).strip():
+            return "sổ lệnh trên repo sao lưu đã giống bản trên máy — không cần sao lưu"
+        _git("-c", "user.name=vnsa", "-c", "user.email=vnsa@localhost", "commit", "-q", "-m",
+             f"Sao lưu sổ lệnh {pd.Timestamp.now():%d/%m/%Y %H:%M}", cwd=work)
+        _git("push", "-q", "origin", "HEAD", cwd=work)
+    return f"đã sao lưu {file.name} ({len(load(file))} lệnh) lên {slug or 'repo sao lưu'}"
+
+
+def restore(file: Path | None = None, repo: str | None = None, force: bool = False) -> str:
+    """Lấy sổ lệnh từ repo riêng tư về máy. Không ghi đè sổ đang có trừ khi force (bản cũ được giữ
+    thành trades.csv.bak)."""
+    import shutil
+    import tempfile
+
+    file = Path(file or ledger_path())
+    url, slug, token = _backup_target(repo)
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "backup"
+        _clone(url, work)
+        src = work / BACKUP_FILE
+        if not src.exists():
+            raise BackupError(f"repo {slug or url} chưa có {BACKUP_FILE}")
+        if file.exists() and not force:
+            if file.read_bytes() == src.read_bytes():
+                return "sổ lệnh trên máy đã giống bản sao lưu"
+            raise BackupError(f"đã có sổ lệnh {file} khác bản sao lưu — chạy lại với --force để thay "
+                              "(bản trên máy được giữ thành trades.csv.bak)")
+        file.parent.mkdir(parents=True, exist_ok=True)
+        if file.exists():
+            shutil.copyfile(file, file.with_suffix(".csv.bak"))
+        shutil.copyfile(src, file)
+    return f"đã lấy sổ lệnh ({len(load(file))} lệnh) từ {slug or 'repo sao lưu'} về {file}"
+
+
+def auto_backup() -> str | None:
+    """Sao lưu sau mỗi lệnh ghi nếu đã cấu hình VNSA_BACKUP_REPO; lỗi chỉ cảnh báo, không chặn."""
+    import os
+
+    if not (os.environ.get("VNSA_BACKUP_REPO") or _cfg().get("backup_repo")):
+        return None
+    try:
+        return backup()
+    except BackupError as e:
+        return f"chưa sao lưu được: {e}"

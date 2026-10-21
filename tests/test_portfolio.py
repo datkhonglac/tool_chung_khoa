@@ -164,3 +164,33 @@ def test_dividend_only_for_shares_held_before_exdate(tmp_path):
     acts = _acts(HPG=[("2026-10-08", 500, np.nan)])
     p = pf.positions(pf.load(f), "2026-10-12", CAL, acts)["HPG"]
     assert p.dividends == pytest.approx(1_000 * 500 * 0.95)
+
+
+def test_backup_and_restore_with_private_repo(tmp_path, monkeypatch):
+    """v2.1: sao lưu sổ lệnh sang repo khác (ở đây là repo git cục bộ) và lấy về."""
+    import subprocess
+
+    remote = tmp_path / "so-lenh.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    f = tmp_path / "trades.csv"
+    _add(f, pf.BUY, "FPT", 100, 98_500, "2026-10-01")
+    assert "đã sao lưu" in pf.backup(f, str(remote))
+    assert "giống" in pf.backup(f, str(remote))                  # không đổi: không commit thừa
+    other = tmp_path / "may-moi" / "trades.csv"
+    assert "đã lấy" in pf.restore(other, str(remote))
+    assert other.read_text() == f.read_text()
+    _add(other, pf.BUY, "HPG", 100, 25_000, "2026-10-02")         # máy mới có thêm lệnh
+    with pytest.raises(pf.BackupError, match="--force"):
+        pf.restore(other, str(remote))
+    pf.restore(other, str(remote), force=True)
+    assert other.with_suffix(".csv.bak").exists() and len(pf.load(other)) == 1
+
+
+def test_backup_refuses_tool_repo_and_needs_config(monkeypatch):
+    monkeypatch.delenv("VNSA_BACKUP_REPO", raising=False)
+    with pytest.raises(pf.BackupError, match="VNSA_BACKUP_REPO"):
+        pf._backup_target("")
+    url, slug, _ = pf._backup_target("datkhonglac/so-lenh")
+    assert slug == "datkhonglac/so-lenh" and url.endswith("github.com/datkhonglac/so-lenh.git")
+    with pytest.raises(pf.BackupError, match="repo của tool"):
+        pf._check_private("datkhonglac/tool_chung_khoa", None)
