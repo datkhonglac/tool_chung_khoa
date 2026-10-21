@@ -11,7 +11,7 @@ APP = str(Path(__file__).resolve().parents[1] / "dashboard" / "app.py")
 def test_dashboard_renders_all_tabs_without_errors(warehouse):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception, at.exception
-    assert len(at.tabs) == 9
+    assert len(at.tabs) == 10
     assert at.selectbox[0].options == ["DEMO_A", "DEMO_B", "DEMO_C"]
     labels = " | ".join(m.label for m in at.metric)
     for label in ("Điểm TA", "Điểm FA", "Giá trị DCF/cp", "Lợi nhuận/năm", "VaR 95% 1 ngày"):
