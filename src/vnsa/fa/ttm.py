@@ -90,3 +90,31 @@ def current(fin: pd.DataFrame, quarterly: pd.DataFrame | None, shares_out: float
     return Current(basis=basis, net_income_parent=ni, equity_parent=eq, shares=float(shares),
                    roe=float(roe), eps=ni / shares if shares > 0 else np.nan,
                    bvps=eq / shares if shares > 0 else np.nan, row=row)
+
+
+def earnings_acceleration(quarterly: pd.DataFrame, col: str = "net_income_parent"
+                          ) -> tuple[float, float, float, str] | None:
+    """Gia tốc lợi nhuận (nâng cấp v2.0, bước 2.3 — CHỈ THAM KHẢO, chưa vào điểm FA):
+        g(Q_t)   = (LN_t − LN_{t−4}) / |LN_{t−4}|     tăng trưởng so cùng kỳ quý gần nhất
+        g(Q_t−1) = (LN_{t−1} − LN_{t−5}) / |LN_{t−5}| quý liền trước
+        gia tốc  = g(Q_t) − g(Q_t−1)
+    Cần 6 quý LIÊN TIẾP (bản vnstock miễn phí trả 4 quý: có số khi nhánh signals tích luỹ đủ). Quý
+    gốc có |LN| quá nhỏ (< 5% bình quân |LN| 6 quý) thì không tính vì % tăng trưởng vô nghĩa.
+    Trả (gia tốc, g_t, g_t−1, nhãn quý) hoặc None."""
+    if quarterly is None or quarterly.empty or col not in quarterly:
+        return None
+    q = quarterly.dropna(subset=[col]).sort_values(["year", "quarter"])
+    if len(q) < 6:
+        return None
+    q = q.tail(6)
+    idx = (q["year"] * 4 + q["quarter"]).to_numpy()
+    if not (idx[1:] - idx[:-1] == 1).all():
+        return None
+    v = q[col].to_numpy(dtype=float)
+    floor = 0.05 * float(np.mean(np.abs(v)))
+    if abs(v[0]) <= floor or abs(v[1]) <= floor:
+        return None
+    g_prev = (v[4] - v[0]) / abs(v[0])
+    g_now = (v[5] - v[1]) / abs(v[1])
+    last = q.iloc[-1]
+    return g_now - g_prev, g_now, g_prev, f"Q{int(last['quarter'])}/{int(last['year'])}"

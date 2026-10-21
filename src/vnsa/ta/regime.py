@@ -5,6 +5,14 @@
 - "giảm": VNINDEX dưới MA200 và MA50 đi xuống.
 - "trung tính": các trường hợp còn lại (hoặc chưa đủ dữ liệu).
 `regime_series` tính cho mọi phiên (chỉ dùng dữ liệu đến phiên đó) để backtest.
+
+Cảnh báo sớm (nâng cấp v2.0, bước 3.1 — TẮT mặc định, `[regime] early = true` để bật sau khi đã
+kiểm định): chuyển sang "giảm" ngay khi một trong hai điều kiện, không chờ thủng MA200:
+  1. Phiên phân phối: trong 20 phiên gần nhất có ≥ 5 phiên VNINDEX giảm > 0,5% với khối lượng lớn
+     hơn trung bình 20 phiên, đồng thời đóng cửa dưới MA50.
+  2. Biến động tăng vọt: ATR14 / giá vượt phân vị 85% của 250 phiên gần nhất, đóng cửa dưới MA20.
+Ngưỡng là của đề xuất, CHƯA kiểm định với VNINDEX — bật lên sẽ cắt khối lượng và nâng ngưỡng xếp
+hạng thường xuyên hơn.
 """
 
 from __future__ import annotations
@@ -42,7 +50,29 @@ def regime_series(index: pd.DataFrame, cfg: dict) -> pd.Series:
     state = pd.Series("trung tính", index=s.index)
     state[(s > long_) & (slope > 0)] = "tăng"
     state[(s < long_) & (slope < 0)] = "giảm"
+    if cfg.get("early", False):
+        state[early_warning(index, cfg).reindex(s.index, fill_value=False)] = "giảm"
     return state
+
+
+def early_warning(index: pd.DataFrame, cfg: dict) -> pd.Series:
+    """True ở các phiên có cảnh báo sớm thị trường giảm (xem docstring module)."""
+    d = index.sort_values("date").set_index("date")
+    c = d["close"].astype(float)
+    sma50, sma20 = c.rolling(50).mean(), c.rolling(20).mean()
+    out = pd.Series(False, index=d.index)
+    if "volume" in d and d["volume"].fillna(0).gt(0).any():
+        v = d["volume"].astype(float)
+        dist = (c.pct_change() < -cfg.get("dist_drop", 0.005)) & (v > v.rolling(20).mean())
+        out |= (dist.rolling(20).sum() >= cfg.get("dist_days", 5)) & (c < sma50)
+    if {"high", "low"} <= set(d.columns):
+        prev = c.shift(1)
+        tr = pd.concat([d["high"] - d["low"], (d["high"] - prev).abs(), (d["low"] - prev).abs()],
+                       axis=1).max(axis=1)
+        atr_pct = tr.ewm(alpha=1 / 14, adjust=False).mean() / c
+        cut = atr_pct.rolling(250).quantile(cfg.get("vol_quantile", 0.85))
+        out |= (atr_pct > cut) & (c < sma20)
+    return out.fillna(False)
 
 
 def regime(index: pd.DataFrame, cfg: dict) -> Regime:

@@ -160,3 +160,17 @@ def test_cli_value_and_fa_score_use_ttm_like_card(warehouse, capsys):
         store.write_quarterly(_quarters().assign(symbol="DEMO_A"), "test")
     assert cli.main(["value", "DEMO_A"]) == 0
     assert "(TTM Q2/2026)" in capsys.readouterr().out          # trước đây CLI bỏ mất BCTC quý
+
+
+def test_earnings_acceleration():
+    """Bước 2.3 (tham khảo): cần 6 quý liên tiếp; gia tốc = g(Q_t) − g(Q_t−1)."""
+    from vnsa.fa.ttm import earnings_acceleration
+
+    q = pd.DataFrame({"year": [2025] * 4 + [2026] * 2, "quarter": [1, 2, 3, 4, 1, 2],
+                      "net_income_parent": [100.0, 100, 110, 120, 110, 130]})
+    acc, g_now, g_prev, label = earnings_acceleration(q)
+    assert g_prev == pytest.approx(0.10) and g_now == pytest.approx(0.30)
+    assert acc == pytest.approx(0.20) and label == "Q2/2026"
+    assert earnings_acceleration(q.tail(4)) is None                  # bản miễn phí: 4 quý
+    gap = q.drop(index=2)                                            # thiếu một quý ở giữa
+    assert earnings_acceleration(pd.concat([gap, q.tail(1).assign(quarter=3)])) is None

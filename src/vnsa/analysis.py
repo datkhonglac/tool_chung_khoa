@@ -462,6 +462,12 @@ def flow_summary(d: Data) -> dict | None:
     px = d.prices.assign(value=d.prices["close"] * d.prices["volume"]).set_index("date")["value"]
     out = {"last_date": f["date"].iloc[-1], "foreign_pct": f["foreign_pct"].dropna().iloc[-1]
            if f["foreign_pct"].notna().any() else float("nan")}
+    # dòng tiền tổ chức 10 phiên (bước 3.2, tham khảo): (khối ngoại + tự doanh ròng) / (10 × GTGD TB 20)
+    adtv = px.tail(20).mean()
+    t10 = f.tail(10)
+    inst = (t10["foreign_net"].fillna(0) + t10["prop_net"].fillna(0)).sum()
+    out["smart_10"] = (inst / (10 * adtv) if len(t10) == 10 and adtv > 0
+                       and t10["foreign_net"].notna().any() else float("nan"))
     for n in settings().get("flows", {}).get("windows", [5, 20]):
         tail = f.tail(n)
         traded = px[px.index.isin(tail["date"])].sum()

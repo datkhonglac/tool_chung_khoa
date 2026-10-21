@@ -337,6 +337,12 @@ sma_long = 200
 sma_short = 50
 slope_sessions = 20         # MA50 đi lên/xuống so với 20 phiên trước
 bear_risk_factor = 0.5      # thị trường giảm: rủi ro mỗi lệnh còn 50% (khối lượng nhỏ lại)
+# Cảnh báo sớm (ta/regime.py early_warning): phiên phân phối / biến động tăng vọt. TẮT cho tới khi
+# kiểm định; bật thì regime_series dùng luôn trong backtest/study-timing để so sánh.
+early = false
+dist_days = 5               # ≥ 5 phiên phân phối trong 20 phiên
+dist_drop = 0.005           # phiên phân phối: VNINDEX giảm > 0,5% với KL > TB 20 phiên
+vol_quantile = 0.85         # ATR14/giá vượt phân vị 85% của 250 phiên
 
 [report]
 # Độ tin cậy của khuyến nghị (report/card.py): đếm số điều kiện đạt

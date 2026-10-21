@@ -347,6 +347,12 @@ def build_card(a) -> Card:
         extra.append(f"GTGD TB 1 tháng {vn_num(pr['avg_value_1m'] / 1e9, 1)} tỷ")
     if extra:
         fundamentals.append(" · ".join(extra))
+    from vnsa.fa.ttm import earnings_acceleration
+
+    acc = earnings_acceleration(d.quarterly)
+    if acc is not None:
+        fundamentals.append(f"Gia tốc LNST quý {acc[3]}: {vn_pct(acc[0], 0, sign=True)} (tăng trưởng cùng kỳ "
+                            f"{vn_pct(acc[1], 0, sign=True)} so với quý trước {vn_pct(acc[2], 0, sign=True)}; tham khảo)")
 
     # Kỹ thuật
     last = a.ind.iloc[-1]
@@ -360,7 +366,10 @@ def build_card(a) -> Card:
     from vnsa.analysis import levels
 
     sup, res = levels(a.ind)
-    technical = [f"{trend}, RSI {vn_num(last['rsi'], 0)}",
+    squeeze = last.get("bb_width_pct", nan)
+    technical = [f"{trend}, RSI {vn_num(last['rsi'], 0)}"
+                 + (f" · Độ nén giá {vn_pct(squeeze, 0)} 6 tháng (thấp = nền chặt)"
+                    if not pd.isna(squeeze) else ""),
                  (f"Hỗ trợ {vn_num(sup[0].price) + 'đ' if sup else '—'} · "
                   f"Kháng cự {vn_num(res[0].price) + 'đ' if res else '— (vùng đỉnh)'}")]
     from vnsa.analysis import flow_summary
@@ -377,6 +386,8 @@ def build_card(a) -> Card:
         technical.append("Khối ngoại " + " · ".join(
             f"{n} phiên {net(fs[f'foreign_{n}'], fs[f'foreign_{n}_pct'])}" for n in wins)
             + f" · Tự doanh {wins[-1]} phiên {net(fs[f'prop_{wins[-1]}'])}"
+            + (f" · Tổ chức 10 phiên {vn_pct(fs['smart_10'], 1, sign=True)} GTGD/phiên"
+               if not pd.isna(fs.get("smart_10", nan)) else "")
             + f" (đến {fs['last_date']:%d/%m}, tham khảo)")
 
     # Dự báo 20 phiên
