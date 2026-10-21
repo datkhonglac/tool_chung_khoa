@@ -2,7 +2,6 @@ name: Gỡ lỗi tạm (nang-cap-v2)
 on:
   push:
     branches: [nang-cap-v2]
-    paths: [".github/workflows/ci-debug.yml", ".github/debug.sh"]
 jobs:
   run:
     runs-on: ubuntu-latest
