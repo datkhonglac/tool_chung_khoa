@@ -643,7 +643,15 @@ def _print_zone(z) -> None:
     if not _nan(z.fair_value):
         print(f"  Giá trị hợp lý {z.fair_value:,.0f} − biên an toàn {z.margin_of_safety:.0%} "
               f"= trần giá mua {z.value_cap:,.0f}")
-    if z.status == "CHỜ GIÁ":
+    if z.tiers:
+        head = "CHỜ GIÁ — thang mua dưới trần giá trị" if z.status == "CHỜ GIÁ" else "THANG MUA"
+        print(f"  ⇒ {head} (3 lệnh LO):")
+        for t in z.tiers:
+            fill = "" if _nan(t.fill_prob) else f", khớp ~{t.fill_prob:.0%} trong 20 phiên"
+            print(f"    {t.name:<14} {t.price:>9,.0f} ({t.depth:+.1%}) · {t.weight:.0%} vốn lệnh"
+                  f"{fill} — {t.source}")
+        print(f"    Giá vốn bình quân nếu khớp đủ 3 lớp: {z.mid:,.0f}")
+    elif z.status == "CHỜ GIÁ":
         print(f"  ⇒ CHỜ GIÁ: chỉ mua khi giá về ≤ {z.high:,.0f} ({z.discount:+.1%} so với giá hiện tại)")
     else:
         print(f"  ⇒ VÙNG MUA {z.low:,.0f} – {z.high:,.0f} ({z.low / z.close - 1:+.1%} đến "
@@ -940,6 +948,36 @@ def cmd_study_timing(args) -> int:
     (out / "timing_study.txt").write_text(text, encoding="utf-8")
     res.table.to_csv(out / "timing_study.csv", index=False)
     print(f"\nĐã lưu {out / 'timing_study.txt'} và timing_study.csv")
+    return 0
+
+
+def cmd_study_entry(args) -> int:
+    """Kiểm định điểm mua: vùng cũ vs thang 3 lớp (recommend/entry_study.py)."""
+    from vnsa import analysis
+    from vnsa.recommend.entry_study import format_entry_study
+
+    cfg = settings()["study"]
+    syms = [s.upper() for s in args.symbols] or cfg["universe"]
+    if not args.no_fetch:
+        from vnsa.data.autofetch import Updater
+
+        print(f"Tải giá {args.years or cfg['years']} năm cho {len(syms)} mã + VNINDEX ...")
+        for step in Updater().long_prices(syms, args.years or cfg["years"]):
+            print(step)
+    try:
+        res = analysis.entry_study(syms, cfg["split"], cfg["start"])
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    text = format_entry_study(res)
+    if res.skipped:
+        text += f"\nBỏ qua (thiếu giá): {', '.join(res.skipped)}"
+    print("\n" + text)
+    out = path("warehouse").parent / "study"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "entry_study.txt").write_text(text, encoding="utf-8")
+    res.rows.to_csv(out / "entry_study.csv", index=False)
+    print(f"\nĐã lưu {out / 'entry_study.txt'} và entry_study.csv")
     return 0
 
 
@@ -1257,6 +1295,12 @@ def main(argv: list[str] | None = None) -> int:
     pst.add_argument("--years", type=int, help="Số năm giá cần có (mặc định [study] years)")
     pst.add_argument("--no-fetch", action="store_true", help="Không tải, chỉ dùng giá trong kho")
     pst.set_defaults(func=cmd_study_timing)
+
+    pse = sub.add_parser("study-entry", help="Kiểm định điểm mua: vùng cũ vs thang mua 3 lớp")
+    pse.add_argument("symbols", nargs="*", help="Bỏ trống = [study] universe trong settings")
+    pse.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
+    pse.add_argument("--no-fetch", action="store_true", help="Không tải, chỉ dùng giá trong kho")
+    pse.set_defaults(func=cmd_study_entry)
 
     psc = sub.add_parser("screen", help="Sàng lọc toàn thị trường: nhóm ngành và mã tiềm năng")
     psc.add_argument("--stage", choices=["liquidity", "industry", "pick"], default="pick",

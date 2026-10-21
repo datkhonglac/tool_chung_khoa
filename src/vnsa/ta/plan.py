@@ -83,7 +83,8 @@ class TradePlan:
 def trade_plan(close: float, atr: float, supports: list[Level], resistances: list[Level],
                cfg: dict, ticks: list[list[float]] | None = None, adv_value: float = float("nan"),
                risk_scale: float = 1.0, risk_adjust: tuple[float, str] | None = None,
-               extra_caps: list[tuple[float, str]] | None = None) -> TradePlan:
+               extra_caps: list[tuple[float, str]] | None = None,
+               max_stop: float | None = None) -> TradePlan:
     """risk_adjust: (hệ số ≤ 1, lý do) giảm thêm ngân sách rủi ro (vd tương quan cao với mã đang giữ);
     extra_caps: [(giá trị tối đa đồng, lý do)] chặn thêm khối lượng (vd trần nhóm ngành)."""
     if pd.isna(atr) or atr <= 0:
@@ -96,6 +97,13 @@ def trade_plan(close: float, atr: float, supports: list[Level], resistances: lis
     if near:
         stop = near[0].price - buffer
         source = f"dưới hỗ trợ {near[0].price:,.0f}"
+    if max_stop is not None and not pd.isna(max_stop) and stop > max_stop:
+        # thang mua: cắt lỗ phải nằm dưới lớp sâu nhất (không thì lớp 3 vừa khớp đã chạm cắt lỗ)
+        stop, source = max_stop, "dưới lớp mua sâu nhất"
+        below = [s for s in supports if s.price < max_stop + buffer and
+                 max_stop - lo <= s.price - buffer]
+        if below:
+            stop, source = below[0].price - buffer, f"dưới hỗ trợ {below[0].price:,.0f} (dưới lớp 3)"
     stop = round_tick(stop, "down", ticks)
     risk = entry - stop
     notes = []

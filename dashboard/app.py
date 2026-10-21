@@ -194,12 +194,25 @@ with tab_ta:
             c[0].metric("Chờ giá về", f"≤ {z.high:,.0f}", fmt_pct(z.discount))
         else:
             c[0].metric("Vùng mua", f"{z.low:,.0f} – {z.high:,.0f}", fmt_pct(z.discount))
-        c[1].metric("Giá bình quân dự kiến (2 lệnh LO)", fmt_num(z.mid))
+        c[1].metric("Giá bình quân dự kiến" + (" (khớp đủ 3 lớp)" if z.tiers else " (2 lệnh LO)"),
+                    fmt_num(z.mid))
         c[2].metric(f"Neo kỹ thuật ({z.anchor_source})", fmt_num(z.anchor))
         c[3].metric(f"Trần giá trị (hợp lý − {z.margin_of_safety:.0%})", fmt_num(z.value_cap))
         st.caption(f"Giá đóng cửa {z.close:,.0f} · VWAP20 {z.vwap20:,.0f} · giá trị hợp lý "
                    f"{fmt_num(z.fair_value)}. Vùng mua neo theo hỗ trợ / VWAP20 / SMA20 và không "
                    "vượt giá trị hợp lý trừ biên an toàn (config [entry]).")
+        if z.tiers:
+            st.dataframe(pd.DataFrame([{"Lớp": t.name, "Giá đặt LO": t.price,
+                                        "So với giá": t.depth * 100, "Phần vốn": t.weight * 100,
+                                        "Khớp trong 20 phiên": t.fill_prob * 100,
+                                        "Căn cứ": t.source} for t in z.tiers]),
+                         hide_index=True, width="stretch",
+                         column_config={"Giá đặt LO": st.column_config.NumberColumn(format="localized"),
+                                        "So với giá": st.column_config.NumberColumn(format="%+.1f%%"),
+                                        "Phần vốn": st.column_config.NumberColumn(format="%.0f%%"),
+                                        "Khớp trong 20 phiên": st.column_config.NumberColumn(
+                                            format="%.0f%%")})
+            st.caption("Xác suất khớp ước tính bằng Monte Carlo theo giá đóng cửa (thận trọng).")
         for n in z.notes:
             st.caption(f"! {n}")
     if plan:
