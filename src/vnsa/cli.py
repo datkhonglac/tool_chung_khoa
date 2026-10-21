@@ -1084,7 +1084,7 @@ def cmd_portfolio(args) -> int:
         cal, _, _ = pf.market_context([sym])
         try:
             row = pf.add(side, sym, qty, price, args.date, args.fee, args.tax, args.note or "",
-                         calendar=cal)
+                         calendar=cal, actions=pf.corporate_actions([sym]))
         except ValueError as e:
             print(f"Không ghi: {e}")
             return 1
@@ -1109,10 +1109,13 @@ def cmd_portfolio(args) -> int:
         return 0
     syms = sorted(trades["symbol"].unique())
     cal, prices, groups = pf.market_context(syms)
+    acts = pf.corporate_actions(syms)
     capital = settings()["plan"]["capital"]
     try:
-        tab = pf.status(trades, prices, groups, capital, calendar=cal)
-        realized = pf.realized_total(trades, calendar=cal)
+        tab = pf.status(trades, prices, groups, capital, calendar=cal, actions=acts)
+        realized = pf.realized_total(trades, calendar=cal, actions=acts)
+        events = [n for p in pf.positions(trades, calendar=cal, actions=acts).values()
+                  for n in (p.events or [])]
     except ValueError as e:
         print(f"Sổ lệnh có lỗi: {e}. Sửa bằng 'portfolio undo' hoặc mở file {file}.")
         return 1
@@ -1120,14 +1123,18 @@ def cmd_portfolio(args) -> int:
         print(f"Không còn vị thế nào. Lãi/lỗ đã chốt: {realized:,.0f}đ")
         return 0
     fmt = {c: "{:,.0f}".format for c in ("SL", "Bán được", "Giá vốn", "Giá", "Giá trị", "Lãi/lỗ",
-                                          "Cắt lỗ", "Đã chốt")}
+                                          "Cắt lỗ", "Cổ tức nhận", "Đã chốt")}
     fmt.update({c: (lambda x: "—" if pd.isna(x) else f"{x:+.1%}") for c in ("Lãi/lỗ %", "Cách cắt lỗ")})
     fmt["Tỷ trọng"] = lambda x: "—" if pd.isna(x) else f"{x:.1%}"
     print(f"DANH MỤC — vốn tham chiếu {capital:,.0f}đ ([plan] capital)")
     print(tab.to_string(index=False, formatters=fmt))
     total = tab["Giá trị"].sum()
     print(f"\nTổng giá trị {total:,.0f}đ ({total / capital:.1%} vốn) · lãi/lỗ tạm tính "
-          f"{tab['Lãi/lỗ'].sum():+,.0f}đ · đã chốt {realized:+,.0f}đ")
+          f"{tab['Lãi/lỗ'].sum():+,.0f}đ · đã chốt + cổ tức {realized:+,.0f}đ")
+    if events:
+        print("Sự kiện quyền đã tính (giá vốn, số lượng, cắt lỗ đã điều chỉnh):")
+        for n in events:
+            print(f"  · {n}")
     by_group = tab.groupby("Nhóm ngành")["Giá trị"].sum() / capital
     cap = settings().get("portfolio", {}).get("max_sector_pct", 0.30)
     over = by_group[by_group > cap]

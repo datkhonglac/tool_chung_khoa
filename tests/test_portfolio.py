@@ -1,5 +1,6 @@
-"""Sổ lệnh: giá vốn bình quân, T+2 theo lịch giao dịch, lãi đã chốt, cắt lỗ."""
+"""Sổ lệnh: giá vốn bình quân, T+2 theo lịch giao dịch, lãi đã chốt, cắt lỗ, sự kiện quyền."""
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -122,3 +123,44 @@ def test_trade_plan_applies_portfolio_limits():
                      extra_caps=[(5_000_000, "trần nhóm")])
     assert base.shares == 300 and cut.shares == 100
     assert "tương quan cao" in cut.notes and any("trần nhóm" in n for n in cut.notes)
+
+
+def _acts(**rows):
+    return {sym: pd.DataFrame([{"exright_date": pd.Timestamp(d), "cash_per_share": c,
+                                "stock_ratio": r} for d, c, r in evs])
+            for sym, evs in rows.items()}
+
+
+def test_cash_dividend_adjusts_stop_and_counts_income(tmp_path):
+    """v2.1: cổ tức tiền — nhận tiền sau thuế 5%, cắt lỗ hạ đúng bằng cổ tức, giá vốn giữ nguyên."""
+    f = tmp_path / "trades.csv"
+    _add(f, pf.BUY, "VNM", 1_000, 60_000, "2026-10-01", fee=0)
+    _add(f, pf.STOP, "VNM", 0, 56_000, "2026-10-02")
+    acts = _acts(VNM=[("2026-10-08", 2_000, np.nan)])
+    p = pf.positions(pf.load(f), "2026-10-12", CAL, acts)["VNM"]
+    assert p.stop == pytest.approx(54_000) and p.avg_cost == pytest.approx(60_000)
+    assert p.dividends == pytest.approx(1_000 * 2_000 * 0.95)
+    # giá sau GDKHQ 57.500 (đã trừ cổ tức): KHÔNG báo chạm cắt lỗ
+    tab = pf.status(pf.load(f), {"VNM": 57_500}, {}, 1e8, "2026-10-12", CAL, acts)
+    assert tab.iloc[0]["Cách cắt lỗ"] > 0 and tab.iloc[0]["Cổ tức nhận"] == pytest.approx(1.9e6)
+
+
+def test_stock_dividend_adds_shares_and_lowers_cost(tmp_path):
+    f = tmp_path / "trades.csv"
+    _add(f, pf.BUY, "FPT", 1_050, 100_000, "2026-10-01", fee=0)
+    _add(f, pf.STOP, "FPT", 0, 90_000, "2026-10-02")
+    acts = _acts(FPT=[("2026-10-08", np.nan, 0.10)])
+    p = pf.positions(pf.load(f), "2026-10-12", CAL, acts)["FPT"]
+    assert p.quantity == 1_155                                  # floor(1.050 × 10%) = 105
+    assert p.avg_cost == pytest.approx(105_000_000 / 1_155)
+    assert p.stop == pytest.approx(90_000 / 1.1)
+    assert p.sellable == 1_050                                  # cp thưởng chưa niêm yết
+
+
+def test_dividend_only_for_shares_held_before_exdate(tmp_path):
+    f = tmp_path / "trades.csv"
+    _add(f, pf.BUY, "HPG", 1_000, 25_000, "2026-10-01", fee=0)
+    _add(f, pf.BUY, "HPG", 500, 25_000, "2026-10-08", fee=0)     # mua đúng ngày GDKHQ: không hưởng
+    acts = _acts(HPG=[("2026-10-08", 500, np.nan)])
+    p = pf.positions(pf.load(f), "2026-10-12", CAL, acts)["HPG"]
+    assert p.dividends == pytest.approx(1_000 * 500 * 0.95)

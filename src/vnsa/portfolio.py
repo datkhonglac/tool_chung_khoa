@@ -18,6 +18,16 @@ Quy ước tính:
   lịch giao dịch = các ngày có giá VNINDEX trong kho, sau ngày cuối cùng thì đếm ngày thường (thứ
   Hai–Sáu; chưa trừ ngày lễ chưa có trong kho).
 - Lệnh bán vượt số lượng bán được tại ngày đó bị từ chối.
+
+Sự kiện quyền (nâng cấp v2.1, bảng `dividends` trong kho, theo ngày GDKHQ): người đang giữ cổ phiếu
+hết phiên TRƯỚC ngày GDKHQ được hưởng.
+- Cổ tức tiền: ghi nhận tiền nhận = số cp × cổ tức/cp × (1 − thuế TNCN `[portfolio] dividend_tax`,
+  5%); giá vốn không đổi; mức cắt lỗ đặt trước ngày GDKHQ hạ đúng bằng cổ tức/cp (giá thị trường điều
+  chỉnh giảm bằng chừng ấy — không thì báo chạm cắt lỗ giả).
+- Cổ tức/thưởng bằng cổ phiếu tỷ lệ r: nhận thêm floor(số cp × r) cp (phần lẻ bị bỏ như thực tế),
+  tổng giá vốn không đổi nên giá vốn/cp giảm; mức cắt lỗ chia (1 + r). Cổ phiếu mới coi như bán được
+  sau `[portfolio] bonus_sellable_sessions` phiên (thời gian chờ niêm yết bổ sung, ước lượng).
+- Chưa xử lý: quyền mua phát hành thêm (cần nhập lệnh MUA thật khi thực hiện quyền).
 """
 
 from __future__ import annotations
@@ -69,6 +79,13 @@ def sessions_after(start: pd.Timestamp, end: pd.Timestamp, calendar: pd.Datetime
     return n
 
 
+def _cfg() -> dict:
+    try:
+        return settings().get("portfolio", {})
+    except Exception:  # noqa: BLE001 - test không có settings đầy đủ
+        return {}
+
+
 @dataclass
 class Position:
     symbol: str
@@ -79,28 +96,68 @@ class Position:
     realized: float               # lãi/lỗ đã chốt (sau phí, thuế)
     first_buy: pd.Timestamp | None
     last_buy: pd.Timestamp | None
-    stop: float                   # mức cắt lỗ đang đặt (NaN nếu chưa)
+    stop: float                   # mức cắt lỗ đang đặt (NaN nếu chưa), đã điều chỉnh theo sự kiện quyền
+    dividends: float = 0.0        # cổ tức tiền đã nhận (sau thuế) từ khi bắt đầu giữ
+    events: list = None           # mô tả các sự kiện quyền đã áp dụng
 
 
 def positions(trades: pd.DataFrame, as_of: pd.Timestamp | None = None,
-              calendar: pd.DatetimeIndex | None = None) -> dict[str, Position]:
+              calendar: pd.DatetimeIndex | None = None,
+              actions: dict[str, pd.DataFrame] | None = None) -> dict[str, Position]:
     """Vị thế từng mã tại ngày `as_of` (mặc định hôm nay), kể cả mã đã bán hết (để có lãi đã chốt).
+    actions: {mã: bảng cổ tức (exright_date, cash_per_share, stock_ratio)} — sự kiện quyền.
     ValueError nếu có lệnh bán vượt số lượng bán được lúc đó."""
     as_of = pd.Timestamp(as_of or pd.Timestamp.today()).normalize()
     cal = calendar if calendar is not None else pd.DatetimeIndex([])
+    cfg = _cfg()
+    tax_rate = float(cfg.get("dividend_tax", 0.05))
+    wait_bonus = int(cfg.get("bonus_sellable_sessions", 15))
     out: dict[str, Position] = {}
     for sym, rows in trades[trades["date"] <= as_of].groupby("symbol", sort=True):
-        lots: list[tuple[pd.Timestamp, float]] = []      # (ngày mua, số lượng còn) để tính T+2
-        qty = cost = realized = 0.0
+        # lô: (ngày, số lượng còn, số phiên chờ trước khi bán được)
+        lots: list[tuple[pd.Timestamp, float, int]] = []
+        qty = cost = realized = divs = 0.0
         stop, first, last = float("nan"), None, None
-        for r in rows.itertuples(index=False):
+        notes: list[str] = []
+        ev = (actions or {}).get(sym)
+        events = []
+        if ev is not None and not ev.empty and len(rows):
+            start = rows["date"].min()
+            ev = ev[(ev["exright_date"] > start) & (ev["exright_date"] <= as_of)]
+            events = [("ACT", r.exright_date, r) for r in ev.itertuples(index=False)]
+        # sự kiện quyền ngày D xử lý TRƯỚC lệnh cùng ngày D (hưởng quyền = giữ hết phiên D − 1)
+        seq = sorted([("ACT", d, r) for _, d, r in events]
+                     + [("TRD", r.date, r) for r in rows.itertuples(index=False)],
+                     key=lambda x: (x[1], 0 if x[0] == "ACT" else 1))
+        for kind, day, r in seq:
+            if kind == "ACT":
+                if qty <= 0:
+                    continue
+                cash = getattr(r, "cash_per_share", float("nan"))
+                ratio = getattr(r, "stock_ratio", float("nan"))
+                if not pd.isna(cash) and cash > 0:
+                    got = qty * cash * (1 - tax_rate)
+                    divs += got
+                    if not pd.isna(stop):
+                        stop -= cash
+                    notes.append(f"{day:%d/%m/%Y}: cổ tức tiền {cash:,.0f}đ/cp → nhận {got:,.0f}đ")
+                if not pd.isna(ratio) and ratio > 0:
+                    new = float(np.floor(qty * ratio))
+                    if new > 0:
+                        qty += new
+                        lots.append((day, new, wait_bonus))
+                    if not pd.isna(stop):
+                        stop /= 1 + ratio
+                    notes.append(f"{day:%d/%m/%Y}: cổ tức/thưởng cổ phiếu {ratio:.0%} → thêm "
+                                 f"{new:,.0f} cp")
+                continue
             if r.side == BUY:
                 qty += r.quantity
                 cost += r.quantity * r.price + r.fee
-                lots.append((r.date, r.quantity))
+                lots.append((r.date, r.quantity, 2))
                 first, last = first or r.date, r.date
             elif r.side == SELL:
-                ready = sum(q for d, q in lots if sessions_after(d, r.date, cal) >= 2)
+                ready = sum(q for d, q, w in lots if sessions_after(d, r.date, cal) >= w)
                 if r.quantity > ready + 1e-9:
                     raise ValueError(f"{sym} ngày {r.date:%d/%m/%Y}: bán {r.quantity:,.0f} cp nhưng "
                                      f"chỉ có {ready:,.0f} cp đã về tài khoản (T+2)")
@@ -109,20 +166,20 @@ def positions(trades: pd.DataFrame, as_of: pd.Timestamp | None = None,
                 cost -= avg * r.quantity
                 qty -= r.quantity
                 left = r.quantity                          # trừ vào lô đã về, lô cũ trước
-                for i, (d, q) in enumerate(lots):
+                for i, (d, q, w) in enumerate(lots):
                     if left <= 0:
                         break
-                    if sessions_after(d, r.date, cal) >= 2:
+                    if sessions_after(d, r.date, cal) >= w:
                         take = min(q, left)
-                        lots[i], left = (d, q - take), left - take
-                lots = [(d, q) for d, q in lots if q > 1e-9]
+                        lots[i], left = (d, q - take, w), left - take
+                lots = [(d, q, w) for d, q, w in lots if q > 1e-9]
                 if qty <= 1e-9:
                     qty, cost, stop = 0.0, 0.0, float("nan")
             elif r.side == STOP:
                 stop = r.price
-        sellable = sum(q for d, q in lots if sessions_after(d, as_of, cal) >= 2)
+        sellable = sum(q for d, q, w in lots if sessions_after(d, as_of, cal) >= w)
         out[sym] = Position(sym, qty, sellable, cost / qty if qty > 0 else float("nan"), cost,
-                            realized, first, last, stop)
+                            realized, first, last, stop, divs, notes)
     return out
 
 
@@ -137,7 +194,8 @@ def _costs(side: str, quantity: float, price: float, fee: float | None,
 
 def add(side: str, symbol: str, quantity: float, price: float, date=None,
         fee: float | None = None, tax: float | None = None, note: str = "",
-        file: Path | None = None, calendar: pd.DatetimeIndex | None = None) -> dict:
+        file: Path | None = None, calendar: pd.DatetimeIndex | None = None,
+        actions: dict[str, pd.DataFrame] | None = None) -> dict:
     """Ghi một lệnh vào sổ (kiểm tra trước: số lượng > 0, bán không vượt số bán được). Trả dòng đã ghi."""
     side = side.upper()
     if side not in SIDES:
@@ -161,7 +219,7 @@ def add(side: str, symbol: str, quantity: float, price: float, date=None,
         raise ValueError(f"chưa có lệnh mua {symbol} trong sổ")
     trial = (pd.DataFrame([row]) if trades.empty
              else pd.concat([trades, pd.DataFrame([row])], ignore_index=True))
-    positions(trial, max(date, pd.Timestamp.today().normalize()), calendar)   # báo lỗi T+2 nếu có
+    positions(trial, max(date, pd.Timestamp.today().normalize()), calendar, actions)   # lỗi T+2
     file.parent.mkdir(parents=True, exist_ok=True)
     new = not file.exists()
     with file.open("a", newline="", encoding="utf-8") as f:
@@ -187,11 +245,12 @@ def undo(file: Path | None = None) -> str | None:
 
 def status(trades: pd.DataFrame, prices: dict[str, float], groups: dict[str, str],
            capital: float, as_of: pd.Timestamp | None = None,
-           calendar: pd.DatetimeIndex | None = None) -> pd.DataFrame:
+           calendar: pd.DatetimeIndex | None = None,
+           actions: dict[str, pd.DataFrame] | None = None) -> pd.DataFrame:
     """Bảng vị thế đang giữ: số lượng, bán được (T+2), giá vốn, giá hiện tại, lãi/lỗ tạm tính,
-    tỷ trọng / vốn, khoảng cách tới cắt lỗ, nhóm ngành."""
+    tỷ trọng / vốn, khoảng cách tới cắt lỗ, cổ tức tiền đã nhận, nhóm ngành."""
     rows = []
-    for sym, p in positions(trades, as_of, calendar).items():
+    for sym, p in positions(trades, as_of, calendar, actions).items():
         if p.quantity <= 0:
             continue
         px = prices.get(sym, float("nan"))
@@ -203,12 +262,22 @@ def status(trades: pd.DataFrame, prices: dict[str, float], groups: dict[str, str
                      "Tỷ trọng": value / capital if capital > 0 else float("nan"),
                      "Cắt lỗ": p.stop,
                      "Cách cắt lỗ": px / p.stop - 1 if p.stop > 0 else float("nan"),
-                     "Đã chốt": p.realized})
+                     "Cổ tức nhận": p.dividends, "Đã chốt": p.realized})
     return pd.DataFrame(rows)
 
 
-def realized_total(trades: pd.DataFrame, as_of=None, calendar=None) -> float:
-    return float(sum(p.realized for p in positions(trades, as_of, calendar).values()))
+def realized_total(trades: pd.DataFrame, as_of=None, calendar=None, actions=None) -> float:
+    """Lãi/lỗ đã chốt + cổ tức tiền đã nhận (kể cả mã đã bán hết)."""
+    return float(sum(p.realized + p.dividends
+                     for p in positions(trades, as_of, calendar, actions).values()))
+
+
+def corporate_actions(symbols: list[str]) -> dict[str, pd.DataFrame]:
+    """{mã: bảng cổ tức trong kho} cho các mã trong sổ lệnh."""
+    from vnsa.data.store import Store
+
+    with Store(path("warehouse")) as store:
+        return {s: store.dividends(s) for s in symbols}
 
 
 def market_context(symbols: list[str]) -> tuple[pd.DatetimeIndex, dict[str, float], dict[str, str]]:
@@ -278,7 +347,9 @@ def sizing_limits(symbol: str, prices: pd.DataFrame, capital: float, cfg: dict |
             hist = {s: store.prices(s) for s in syms if s != symbol}
     else:
         cal, last, groups, hist = context
-    held = {s: p for s, p in positions(trades, calendar=cal).items() if p.quantity > 0}
+    acts = corporate_actions(syms) if context is None else None
+    held = {s: p for s, p in positions(trades, calendar=cal, actions=acts).items()
+            if p.quantity > 0}
     if not held:
         return None, []
     others = {s: _returns(hist[s]) for s in held if s != symbol and s in hist and len(hist[s])}

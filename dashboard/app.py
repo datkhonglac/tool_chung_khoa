@@ -613,8 +613,9 @@ with tab_pf:
         try:
             cal, last_px, grp = pf.market_context(sorted(trades["symbol"].unique()))
             capital = settings()["plan"]["capital"]
-            tab = pf.status(trades, last_px, grp, capital, calendar=cal)
-            realized = pf.realized_total(trades, calendar=cal)
+            acts = pf.corporate_actions(sorted(trades["symbol"].unique()))
+            tab = pf.status(trades, last_px, grp, capital, calendar=cal, actions=acts)
+            realized = pf.realized_total(trades, calendar=cal, actions=acts)
         except ValueError as e:
             st.error(f"Sổ lệnh có lỗi: {e}")
         else:
@@ -622,7 +623,7 @@ with tab_pf:
             total = float(tab["Giá trị"].sum()) if not tab.empty else 0.0
             c1.metric("Giá trị đang giữ", f"{total:,.0f}đ", f"{total / capital:.0%} vốn")
             c2.metric("Lãi/lỗ tạm tính", f"{tab['Lãi/lỗ'].sum() if not tab.empty else 0:+,.0f}đ")
-            c3.metric("Lãi/lỗ đã chốt", f"{realized:+,.0f}đ")
+            c3.metric("Lãi/lỗ đã chốt + cổ tức", f"{realized:+,.0f}đ")
             if not tab.empty:
                 view = tab.assign(**{c: tab[c] * 100 for c in ("Lãi/lỗ %", "Tỷ trọng",
                                                                  "Cách cắt lỗ")})

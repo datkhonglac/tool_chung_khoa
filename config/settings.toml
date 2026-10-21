@@ -222,6 +222,8 @@ max_sector_pct = 0.30       # tổng giá trị một nhóm ngành tối đa 30%
 corr_sessions = 120         # tương quan lợi suất ngày với các mã đang giữ, 120 phiên gần nhất
 corr_threshold = 0.60       # tương quan cực đại > 0,6: giảm ngân sách rủi ro của lệnh mới
 corr_max_cut = 0.50         # ... giảm tuyến tính, tối đa 50% khi tương quan = 1
+dividend_tax = 0.05         # thuế TNCN trên cổ tức tiền (khấu trừ tại nguồn)
+bonus_sellable_sessions = 15   # cổ phiếu thưởng/cổ tức cp bán được sau ~15 phiên (chờ niêm yết bổ sung)
 
 [entry]
 # Vùng giá mua khuyến nghị (ta/entry.py) — không lấy thẳng giá đóng cửa làm giá vào
