@@ -14,8 +14,48 @@ Làm hằng ngày (Codespaces):
 python -m vnsa.cli analyze SHS                              # MỌI mã HOSE/HNX/UPCoM: tự tải rồi phân tích
 python -m vnsa.cli fetch && python -m vnsa.cli fetch-bctc   # cập nhật danh sách theo dõi
 python -m vnsa.cli recommend                                # bảng khuyến nghị 5 mã
+python -m vnsa.cli portfolio                                # danh mục đang giữ (sổ lệnh riêng tư)
 streamlit run dashboard/app.py                              # mở dashboard (cổng 8501)
 ```
+
+## Nâng cấp v2.0 (10/2026)
+
+Theo đề xuất "Quy trình nâng cấp hệ thống v2.0" sau khi đã cân chỉnh (chỉ đưa vào điểm số những gì
+kiểm định được; phần chưa kiểm định thì hiển thị để theo dõi):
+
+| Bước | Thay đổi | Dùng thế nào |
+|---|---|---|
+| 1.1 | Dashboard, Claude Desktop (MCP) và dòng lệnh dùng chung kho cùng lúc: chờ khi kho bận (tối đa 60 giây), không giữ khoá trong lúc tải mạng | tự động |
+| 1.2 | Kiểm tra `config/settings.toml` khi khởi động, báo lỗi tiếng Việt chỉ rõ dòng sai | `python -m vnsa.config` |
+| 1.3 | Tải BCTC theo mùa báo cáo: đã có kỳ mới nhất thì không gọi vnstock nữa | `[auto] bctc_season` |
+| 2.1 | Định giá theo nhóm ngành: bất động sản bỏ DCF, nhóm chu kỳ (thép, hoá chất – phân bón, dầu khí) neo P/B | `[valuation.groups]`, `[valuation.weights]` |
+| 3.3 | Quy tắc thời điểm `vcp_pullback` (nền chặt + nhịp điều chỉnh) đưa vào kiểm định 10 năm | `study-timing`; bật bằng `[recommend] timing_rule` nếu đạt |
+| 4.1 | Monte Carlo/VaR dùng lợi suất kỳ vọng 0, không kéo dài đà quá khứ | `[risk] drift` |
+| 5.1 | **Sổ lệnh** từng giao dịch: giá vốn bình quân, số bán được sau T+2, cắt lỗ | `portfolio buy/sell/stop/status` |
+| 5.2 | Kế hoạch mua giảm rủi ro khi tương quan cao với mã đang giữ; trần 30% vốn mỗi nhóm ngành | `[portfolio]` |
+| 2.3, 3.2 | Gia tốc LNST quý, độ nén giá, dòng tiền tổ chức 10 phiên — **chỉ hiển thị** trên thẻ | tự động |
+| 3.1 | Cảnh báo sớm VNINDEX (phiên phân phối, biến động tăng vọt) — **tắt** tới khi kiểm định | `[regime] early` |
+
+Không làm: đưa điểm vĩ mô vào chi phí vốn k_e (trái nguyên tắc vĩ mô chỉ vào điểm khi
+`review-signals` chứng minh có ích); EPS chuẩn hoá theo ROE trung vị (4 năm BCTC ngắn hơn một chu
+kỳ ngành — chờ nhánh `signals` tích luỹ thêm).
+
+### Sổ lệnh và danh mục
+
+```bash
+python -m vnsa.cli portfolio buy FPT 500 98500 --date 2026-10-10   # giá bằng ĐỒNG; phí 0,15% tự tính
+python -m vnsa.cli portfolio stop FPT 92000                         # đặt/đổi mức cắt lỗ
+python -m vnsa.cli portfolio sell FPT 200 105000                    # từ chối nếu chưa qua T+2
+python -m vnsa.cli portfolio                                        # danh mục: lãi/lỗ, tỷ trọng, cắt lỗ
+python -m vnsa.cli portfolio list                                   # toàn bộ sổ lệnh
+python -m vnsa.cli portfolio undo                                   # xoá dòng vừa nhập nhầm
+```
+
+Sổ lệnh nằm ở `data/portfolio/trades.csv` và **không đưa lên Git** (repo này công khai). Đây là dữ
+liệu không tải lại được: tải file về máy định kỳ, hoặc đặt biến môi trường `VNSA_TRADES` trỏ vào thư
+mục của một repo **riêng tư**. Khi sổ lệnh có vị thế, `analyze`/`plan` tự giảm khối lượng gợi ý nếu
+mã mới đi cùng chiều mã đang giữ, và chặn tổng một nhóm ngành ở 30% vốn. Claude Desktop đọc được
+danh mục qua công cụ `get_portfolio`.
 
 ## Phân tích một mã bất kỳ (tự lấy dữ liệu)
 
@@ -447,7 +487,8 @@ Mã có LỖI sẽ không được nạp (dùng `--force` nếu muốn nạp v�
 ```text
 config/settings.toml          cấu hình: đường dẫn, đơn vị giá, biên độ, danh sách mã
 src/vnsa/
-  config.py                   đọc cấu hình
+  config.py                   đọc và kiểm tra cấu hình (python -m vnsa.config)
+  portfolio.py                sổ lệnh, vị thế (T+2, giá vốn), giới hạn theo tương quan và nhóm ngành
   data/providers/base.py      DataProvider: giao diện chung cho mọi nguồn dữ liệu
   data/providers/csv_provider.py   nguồn CSV thủ công
   data/providers/cafef_provider.py tải giá tự động từ CafeF
