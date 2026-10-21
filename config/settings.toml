@@ -106,7 +106,18 @@ max_peer_pe = 60               # bỏ mã cùng ngành có P/E ≤ 0 hoặc > 60
 # pe_peer, pb_peer: bội số trung vị NGÀNH (chỉ khi kho có ≥ min_peers mã cùng ngành; không có thì
 # chia lại cho các phương pháp còn lại như trước)
 general = { dcf = 0.4, pe_hist = 0.3, pb_hist = 0.3, pe_peer = 0.15, pb_peer = 0.15 }
+# Nhóm ngành đặc thù (nâng cấp v2.0, bước 2.1; nhóm theo [valuation.groups]):
+# chu kỳ: lợi nhuận đỉnh/đáy làm P/E và DCF lệch -> neo nhiều hơn vào giá trị sổ sách
+cyclical = { dcf = 0.15, pe_hist = 0.2, pb_hist = 0.35, pe_peer = 0.15, pb_peer = 0.15 }
+# bất động sản: doanh thu theo điểm bàn giao dự án, FCFF thất thường -> bỏ DCF
+real_estate = { dcf = 0.0, pe_hist = 0.15, pb_hist = 0.45, pe_peer = 0.1, pb_peer = 0.3 }
 financial = { ri = 0.25, pb_roe = 0.25, pb_hist = 0.5, pb_peer = 0.25 }
+
+[valuation.groups]
+# Tên nhóm ngành (config/macro_map.toml [[industry]] name) dùng trọng số định giá riêng ở trên.
+# Thêm/bớt nhóm tại đây (vd thêm "Nông nghiệp, thuỷ sản" vào cyclical nếu bạn coi là chu kỳ).
+real_estate = ["Bất động sản"]
+cyclical = ["Thép", "Hoá chất, phân bón", "Dầu khí"]
 
 [valuation.financials]
 # Ngân hàng / chứng khoán / bảo hiểm: thu nhập thặng dư + P/B hợp lý theo ROE (fa/fair_value.py)

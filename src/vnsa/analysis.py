@@ -152,7 +152,27 @@ def valuation_settings() -> dict:
 
 
 def _weights(kind: str) -> dict:
-    return settings()["valuation"].get("weights", {}).get(kind)
+    w = settings()["valuation"].get("weights", {})
+    return w.get(kind) or w.get("general")
+
+
+def valuation_group(symbol: str) -> tuple[str, str | None]:
+    """(nhóm trọng số định giá, tên nhóm ngành) cho doanh nghiệp thường (nâng cấp v2.0, bước 2.1):
+    "real_estate" / "cyclical" theo `[valuation.groups]` (tên nhóm ngành trong macro_map.toml),
+    còn lại "general". Không đọc được ngành thì "general"."""
+    from vnsa.data.store import Store
+    from vnsa.screen.groups import industry_group
+
+    try:
+        with Store(path("warehouse")) as store:
+            company = store.company(symbol)
+        group = industry_group(company, macro_mapping()) if company else None
+    except Exception:  # noqa: BLE001 - thiếu ngành: dùng trọng số chung
+        return "general", None
+    for kind, names in settings()["valuation"].get("groups", {}).items():
+        if group in names:
+            return kind, group
+    return "general", group
 
 
 def sector(d: Data):
@@ -297,9 +317,17 @@ def general_fair_value(d: Data, v=None):
     par = settings()["valuation"]["par_value"]
     rev = settings()["valuation"].get("multiple_reversion", 1.0)
     price = float(d.prices["close"].iloc[-1])
+    kind, group = valuation_group(d.symbol)
+    weights = _weights(kind)
     fair = fv.combine(price, d.fin, d.prices, par, dcf=v.value_per_share if v else nan,
-                      weights=_weights("general"), current=d.current, reversion=rev,
+                      weights=weights, current=d.current, reversion=rev,
                       peers=peer_multiples(d), quality=_quality_cfg())
+    if kind != "general":
+        fair.notes.append(f"nhóm ngành {group}: trọng số định giá riêng [valuation.weights] {kind}"
+                          + (" (bỏ DCF)" if not weights.get("dcf") else ""))
+    if kind == "real_estate":
+        fair.notes.append("P/B theo giá sổ sách thường đánh giá thấp quỹ đất (ghi giá gốc); RNAV "
+                          "không có trong nguồn miễn phí — đối chiếu báo cáo CTCK")
     hist = fv.historical_multiples(d.fin, d.prices, par)
     c = d.current
     eps, bvps = (c.eps, c.bvps) if c is not None else (hist["eps"].iloc[-1], hist["bvps"].iloc[-1])
@@ -310,7 +338,7 @@ def general_fair_value(d: Data, v=None):
         pe_s = [min(x, pe_now) for x in pe_s]
     scenarios = ([x * eps for x in pe_s]
                  + [fv.revert(pb_now, x * fair.roe_factor, rev) * bvps for x in hist["pb"]])
-    if v is not None and v.fcff_base > 0:
+    if v is not None and v.fcff_base > 0 and weights.get("dcf", 0) > 0:
         a = val.Assumptions.from_settings(valuation_settings())
         scenarios += [x for x in val.sensitivity(v, a).to_numpy().ravel()]
     fair.p10, fair.p90 = fv.scenario_range(scenarios, fair.value)

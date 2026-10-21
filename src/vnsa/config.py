@@ -30,6 +30,7 @@ LOWER_IS_BETTER = {"debt_to_equity", "pe_rel", "pb_rel", "cir", "credit_cost", "
                    "npl", "vol_annual"}
 WEIGHT_TABLES = ["fa_score.weights", "fa_score.financials.weights", "ta_score.weights",
                  "valuation.weights.general", "valuation.weights.financial",
+                 "valuation.weights.cyclical", "valuation.weights.real_estate",
                  "screen.industry_weights"]
 THRESHOLD_TABLES = ["fa_score.thresholds", "fa_score.financials.thresholds",
                     "fa_score.financials.relative", "fa_score.financials.equity_to_assets",

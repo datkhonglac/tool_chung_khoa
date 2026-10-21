@@ -296,3 +296,22 @@ def test_cap_by_consensus():
     off = fv.FairValue(price=33_800, methods={}, value=77_353)
     fv.cap_by_consensus(off, float("nan"), 0.3)                          # không có giá CTCK
     assert off.value == 77_353
+
+
+def test_valuation_group_weights(warehouse):
+    """Bước 2.1: bất động sản bỏ DCF, nhóm chu kỳ giảm DCF; còn lại trọng số chung."""
+    from vnsa import analysis
+    from vnsa.data.store import Store
+
+    with Store(warehouse) as store:
+        store.write_companies(pd.DataFrame([
+            {"symbol": "DEMO_A", "name": "A", "exchange": "HOSE", "industry": "Bất động sản",
+             "model": "general"}]), "test")
+    assert analysis.valuation_group("DEMO_A") == ("real_estate", "Bất động sản")
+    assert analysis.valuation_group("DEMO_B")[0] == "general"         # chưa có ngành
+    d = analysis.load("DEMO_A")
+    _, v, _ = analysis.valuation(d)
+    assert v.value_per_share > 0                                     # DCF tính được nhưng không dùng
+    fair = analysis.general_fair_value(d, v)
+    assert "dcf" not in fair.weights and fair.methods["dcf"] > 0
+    assert any("quỹ đất" in n for n in fair.notes)
