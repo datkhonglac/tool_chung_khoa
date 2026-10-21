@@ -12,6 +12,7 @@ bank_manual = "config/bank_manual.toml"   # NPL, CASA, CAR ngân hàng nhập ta
 macro_map = "config/macro_map.toml"       # danh mục chuỗi vĩ mô + ánh xạ ngành → yếu tố vĩ mô
 macro_manual = "config/macro_manual.toml" # số vĩ mô Việt Nam nhập tay (CPI, tín dụng, PMI...)
 screen_dir = "data/screen"                # kết quả sàng lọc toàn thị trường (lệnh screen), mỗi lượt một CSV
+trades = "data/portfolio/trades.csv"      # SỔ LỆNH thật (lệnh portfolio). KHÔNG đưa lên Git: repo đang công khai
 
 # Đơn vị giá trong file CSV: "auto" | "dong" | "nghin"
 # auto: nếu trung vị giá đóng cửa < 1000 thì coi là nghìn đồng và nhân 1000.
@@ -196,6 +197,13 @@ lot_size = 100
 max_position_pct = 0.15     # trần tỷ trọng mỗi mã: 15% vốn
 max_adv_pct = 0.10          # vị thế không quá 10% giá trị giao dịch bình quân 20 phiên (thanh khoản)
 # Bước giá theo sàn nằm ở [market.ticks]
+
+[portfolio]
+# Danh mục đang nắm giữ (lệnh portfolio, sổ lệnh ở [data] trades) và giới hạn khi lập kế hoạch mua
+max_sector_pct = 0.30       # tổng giá trị một nhóm ngành tối đa 30% vốn (kể cả lệnh mới)
+corr_sessions = 120         # tương quan lợi suất ngày với các mã đang giữ, 120 phiên gần nhất
+corr_threshold = 0.60       # tương quan cực đại > 0,6: giảm ngân sách rủi ro của lệnh mới
+corr_max_cut = 0.50         # ... giảm tuyến tính, tối đa 50% khi tương quan = 1
 
 [entry]
 # Vùng giá mua khuyến nghị (ta/entry.py) — không lấy thẳng giá đóng cửa làm giá vào

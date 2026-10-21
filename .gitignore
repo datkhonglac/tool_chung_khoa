@@ -13,6 +13,8 @@ __pycache__/
 data/raw/
 data/charts/
 data/screen/
+# sổ lệnh thật — repo công khai, không bao giờ commit (sao lưu sang repo riêng tư hoặc tải về máy)
+data/portfolio/
 data/*.duckdb
 data/*.duckdb.wal
 !data/sample/

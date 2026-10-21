@@ -1022,6 +1022,89 @@ def cmd_history(args) -> int:
     return 0
 
 
+def cmd_portfolio(args) -> int:
+    """Sổ lệnh và danh mục (portfolio.py). Dữ liệu ở [data] trades, KHÔNG đưa lên Git."""
+    import pandas as pd
+
+    from vnsa import portfolio as pf
+
+    file = pf.ledger_path()
+    action = args.action
+    if action in ("buy", "sell", "stop"):
+        side = {"buy": pf.BUY, "sell": pf.SELL, "stop": pf.STOP}[action]
+        if action == "stop":
+            if args.quantity is None:
+                print("Cách dùng: portfolio stop MÃ GIÁ_CẮT_LỖ (đồng)")
+                return 1
+            qty, price = 0, args.quantity
+        else:
+            if args.quantity is None or args.price is None:
+                print(f"Cách dùng: portfolio {action} MÃ SỐ_LƯỢNG GIÁ [--date YYYY-MM-DD] [--fee] [--tax]")
+                return 1
+            qty, price = args.quantity, args.price
+        sym = (args.symbol or "").upper()
+        cal, _, _ = pf.market_context([sym])
+        try:
+            row = pf.add(side, sym, qty, price, args.date, args.fee, args.tax, args.note or "",
+                         calendar=cal)
+        except ValueError as e:
+            print(f"Không ghi: {e}")
+            return 1
+        what = (f"cắt lỗ {sym} {row['price']:,.0f}đ" if side == pf.STOP else
+                f"{side} {row['quantity']:,.0f} {sym} giá {row['price']:,.0f}đ "
+                f"(phí {row['fee']:,.0f}đ, thuế {row['tax']:,.0f}đ)")
+        print(f"Đã ghi {row['date']:%d/%m/%Y}: {what}")
+        print(f"Sổ lệnh: {file} (không đưa lên Git — nhớ sao lưu)")
+        return 0
+    if action == "undo":
+        line = pf.undo()
+        print(f"Đã xoá dòng cuối: {line}" if line else "Sổ lệnh trống.")
+        return 0
+    trades = pf.load()
+    if trades.empty:
+        print(f"Sổ lệnh trống ({file}). Ghi lệnh mua: python -m vnsa.cli portfolio buy FPT 500 98500")
+        return 0
+    if action == "list":
+        print(trades.assign(date=trades["date"].dt.strftime("%d/%m/%Y"))
+              .to_string(index=False, formatters={c: "{:,.0f}".format
+                                                   for c in ("quantity", "price", "fee", "tax")}))
+        return 0
+    syms = sorted(trades["symbol"].unique())
+    cal, prices, groups = pf.market_context(syms)
+    capital = settings()["plan"]["capital"]
+    try:
+        tab = pf.status(trades, prices, groups, capital, calendar=cal)
+        realized = pf.realized_total(trades, calendar=cal)
+    except ValueError as e:
+        print(f"Sổ lệnh có lỗi: {e}. Sửa bằng 'portfolio undo' hoặc mở file {file}.")
+        return 1
+    if tab.empty:
+        print(f"Không còn vị thế nào. Lãi/lỗ đã chốt: {realized:,.0f}đ")
+        return 0
+    fmt = {c: "{:,.0f}".format for c in ("SL", "Bán được", "Giá vốn", "Giá", "Giá trị", "Lãi/lỗ",
+                                          "Cắt lỗ", "Đã chốt")}
+    fmt.update({c: (lambda x: "—" if pd.isna(x) else f"{x:+.1%}") for c in ("Lãi/lỗ %", "Cách cắt lỗ")})
+    fmt["Tỷ trọng"] = lambda x: "—" if pd.isna(x) else f"{x:.1%}"
+    print(f"DANH MỤC — vốn tham chiếu {capital:,.0f}đ ([plan] capital)")
+    print(tab.to_string(index=False, formatters=fmt))
+    total = tab["Giá trị"].sum()
+    print(f"\nTổng giá trị {total:,.0f}đ ({total / capital:.1%} vốn) · lãi/lỗ tạm tính "
+          f"{tab['Lãi/lỗ'].sum():+,.0f}đ · đã chốt {realized:+,.0f}đ")
+    by_group = tab.groupby("Nhóm ngành")["Giá trị"].sum() / capital
+    cap = settings().get("portfolio", {}).get("max_sector_pct", 0.30)
+    over = by_group[by_group > cap]
+    if not over.empty:
+        print("Cảnh báo tập trung ngành (> {:.0%} vốn): ".format(cap)
+              + ", ".join(f"{g} {w:.0%}" for g, w in over.items()))
+    hit = tab[(tab["Cách cắt lỗ"] <= 0)]
+    if not hit.empty:
+        print("ĐÃ CHẠM CẮT LỖ: " + ", ".join(hit["Mã"]))
+    missing = tab[tab["Cắt lỗ"].isna()]["Mã"].tolist()
+    if missing:
+        print("Chưa đặt cắt lỗ: " + ", ".join(missing) + " (portfolio stop MÃ GIÁ)")
+    return 0
+
+
 def cmd_check(args) -> int:
     from vnsa import market
     from vnsa.data.store import Store
@@ -1205,6 +1288,19 @@ def main(argv: list[str] | None = None) -> int:
     ph.add_argument("dir", nargs="?", default="history", help="Thư mục CSV (mặc định history/)")
     ph.add_argument("--git", help="Nạp từ nhánh Git, ví dụ origin/signals (workflow hằng ngày)")
     ph.set_defaults(func=cmd_history)
+
+    ppf = sub.add_parser("portfolio", help="Sổ lệnh và danh mục: buy/sell/stop/list/status/undo")
+    ppf.add_argument("action", nargs="?", default="status",
+                     choices=["status", "buy", "sell", "stop", "list", "undo"])
+    ppf.add_argument("symbol", nargs="?")
+    ppf.add_argument("quantity", nargs="?", type=float,
+                     help="Số lượng (buy/sell) hoặc giá cắt lỗ (stop)")
+    ppf.add_argument("price", nargs="?", type=float, help="Giá khớp, đồng (vd 98500)")
+    ppf.add_argument("--date", help="Ngày khớp YYYY-MM-DD (mặc định hôm nay)")
+    ppf.add_argument("--fee", type=float, help="Phí thật trên sao kê (mặc định theo [backtest] fee)")
+    ppf.add_argument("--tax", type=float, help="Thuế bán thật (mặc định 0,1%% giá trị bán)")
+    ppf.add_argument("--note", help="Ghi chú")
+    ppf.set_defaults(func=cmd_portfolio)
 
     pc = sub.add_parser("check", help="Kiểm tra chất lượng dữ liệu")
     pc.add_argument("symbol")
