@@ -598,6 +598,8 @@ def timing_study(symbols: list[str], split: str = "2022-01-01", start: str = "20
     if not data:
         raise ValueError("không mã nào đủ dữ liệu giá")
     data["__regime__"] = {"series": regime_series(index, settings().get("regime", {}))}
+    data["__regime_early__"] = {"series": regime_series(index, {**settings().get("regime", {}),
+                                                                "early": True})}
     grid = tuple(settings().get("study", {}).get("atr_grid", (2.5, 3.0, 4.0)))
     res = study(data, settings()["backtest"], split, start, grid)
     res.skipped = skipped

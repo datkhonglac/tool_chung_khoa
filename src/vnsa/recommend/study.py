@@ -72,11 +72,12 @@ def run_period(data: dict[str, dict], name: str, k: float, start: pd.Timestamp,
     """(chỉ số của quy tắc `name`, chỉ số mua & giữ) trên danh mục các mã trong `data`.
     data[sym] = {"ind", "score", "band"}; regime chung ở data["__regime__"] nếu có."""
     regime = data.get("__regime__", {}).get("series")
+    regime_early = data.get("__regime_early__", {}).get("series")
     curves, holds, trades, beats, exposures = [], [], [], [], []
     for sym, x in data.items():
         if sym.startswith("__"):
             continue
-        rule = rule_set(x["ind"], x["score"], regime, k, cfg)[name]
+        rule = rule_set(x["ind"], x["score"], regime, k, cfg, regime_early)[name]
         try:
             res = simulate(x["ind"], rule, x["band"], cfg["fee"], cfg["sell_tax"], start, end)
         except ValueError:

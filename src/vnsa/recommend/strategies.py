@@ -26,6 +26,9 @@ Các quy tắc (`rule_set`):
                 (4) phiên xác nhận: đóng cửa > mở cửa và khối lượng > 1,2 × TB 20 phiên. Bán: cắt lỗ
                 động k ATR, hoặc đóng cửa dưới MA50 với khối lượng > 1,5 × TB 20 phiên.
                 Tham số đặt TRƯỚC khi chạy kiểm định, không chỉnh theo kết quả.
+- breakout_early: phá nền 55 phiên, chỉ MUA MỚI khi VNINDEX không "giảm" theo trạng thái CÓ cảnh báo
+                sớm (ta/regime.early_warning: phiên phân phối, biến động tăng vọt) — đề xuất v2.1.
+                Cùng cách bán như breakout.
 """
 
 from __future__ import annotations
@@ -150,12 +153,14 @@ def _regime_on(df: pd.DataFrame, regime: pd.Series | None) -> pd.Series:
 
 
 def rule_set(ind: pd.DataFrame, score: pd.Series, regime: pd.Series | None, atr_k: float,
-             cfg: dict) -> dict[str, Rule]:
-    """Các quy tắc thời điểm trên cùng bảng chỉ báo. cfg = mục [backtest]."""
+             cfg: dict, regime_early: pd.Series | None = None) -> dict[str, Rule]:
+    """Các quy tắc thời điểm trên cùng bảng chỉ báo. cfg = mục [backtest]. regime_early: trạng thái
+    VNINDEX có cảnh báo sớm (regime_series với early = true) cho quy tắc breakout_early."""
     d = ind.reset_index(drop=True)
     s = pd.Series(score.to_numpy(float), index=d.index)
     reg = _regime_on(d, regime)
     bear = reg == "giảm"
+    bear_early = (_regime_on(d, regime_early) == "giảm") if regime_early is not None else bear
     one = pd.Series(1.0, index=d.index)
     entry_score, exit_score = cfg["entry_score"], cfg["exit_score"]
     sma50, sma200 = d["sma50"], d["sma200"]
@@ -192,10 +197,13 @@ def rule_set(ind: pd.DataFrame, score: pd.Series, regime: pd.Series | None, atr_
                              below_200.fillna(False), one, "trail", atr_k),
         "vcp_pullback": Rule("vcp_pullback", vcp.fillna(False), vcp_exit.fillna(False), one,
                              "trail", atr_k),
+        "breakout_early": Rule("breakout_early", (breakout & ~bear_early).fillna(False),
+                               below_200.fillna(False), one, "trail", atr_k),
     }
 
 
 NAMES = {"ta": "Điểm TA (hiện tại)", "ta_vni": "Điểm TA + VNINDEX",
          "trend": "Theo xu hướng MA200", "breakout": "Phá nền 55 phiên",
          "trend_vni": "Xu hướng + VNINDEX", "breakout_vni": "Phá nền + VNINDEX",
-         "vcp_pullback": "Nền chặt + điều chỉnh (VCP)", "hold": "Mua & giữ"}
+         "vcp_pullback": "Nền chặt + điều chỉnh (VCP)",
+         "breakout_early": "Phá nền + cảnh báo sớm", "hold": "Mua & giữ"}
