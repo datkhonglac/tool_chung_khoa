@@ -625,6 +625,12 @@ with tab_pf:
             c2.metric("Lãi/lỗ tạm tính", f"{tab['Lãi/lỗ'].sum() if not tab.empty else 0:+,.0f}đ")
             c3.metric("Lãi/lỗ đã chốt + cổ tức", f"{realized:+,.0f}đ")
             if not tab.empty:
+                heat = float(tab["Rủi ro mở"].sum())
+                cap_heat = settings().get("portfolio", {}).get("max_heat", 0.05)
+                (st.warning if heat > cap_heat * capital else st.caption)(
+                    f"Rủi ro mở (lỗ thêm nếu mọi mã về cắt lỗ): {heat:,.0f}đ = {heat / capital:.1%}"
+                    f" vốn, trần {cap_heat:.0%} ([portfolio] max_heat)")
+            if not tab.empty:
                 view = tab.assign(**{c: tab[c] * 100 for c in ("Lãi/lỗ %", "Tỷ trọng",
                                                                  "Cách cắt lỗ")})
                 p1 = st.column_config.NumberColumn(format="%+.1f%%")

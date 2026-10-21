@@ -262,6 +262,7 @@ def status(trades: pd.DataFrame, prices: dict[str, float], groups: dict[str, str
                      "Tỷ trọng": value / capital if capital > 0 else float("nan"),
                      "Cắt lỗ": p.stop,
                      "Cách cắt lỗ": px / p.stop - 1 if p.stop > 0 else float("nan"),
+                     "Rủi ro mở": open_risk(p, px, _cfg().get("default_risk_pct", 0.10))[0],
                      "Cổ tức nhận": p.dividends, "Đã chốt": p.realized})
     return pd.DataFrame(rows)
 
@@ -270,6 +271,29 @@ def realized_total(trades: pd.DataFrame, as_of=None, calendar=None, actions=None
     """Lãi/lỗ đã chốt + cổ tức tiền đã nhận (kể cả mã đã bán hết)."""
     return float(sum(p.realized + p.dividends
                      for p in positions(trades, as_of, calendar, actions).values()))
+
+
+def open_risk(p: Position, price: float, default_pct: float = 0.10) -> tuple[float, bool]:
+    """(số tiền lỗ thêm nếu giá về mức cắt lỗ, có đặt cắt lỗ không). Chưa đặt cắt lỗ thì tính
+    `default_pct` giá trị vị thế (thận trọng). Đã qua cắt lỗ thì 0 (lỗ đã nằm trong giá)."""
+    if p.quantity <= 0 or pd.isna(price):
+        return 0.0, True
+    if pd.isna(p.stop) or p.stop <= 0:
+        return p.quantity * price * default_pct, False
+    return p.quantity * max(price - p.stop, 0.0), True
+
+
+def portfolio_heat(pos: dict[str, Position], prices: dict[str, float], cfg: dict | None = None
+                   ) -> tuple[float, list[str]]:
+    """(tổng rủi ro mở bằng đồng, các mã chưa đặt cắt lỗ) — "nhiệt danh mục" (v2.1, bước 5)."""
+    cfg = {**_cfg(), **(cfg or {})}
+    total, missing = 0.0, []
+    for sym, p in pos.items():
+        r, has_stop = open_risk(p, prices.get(sym, p.avg_cost), cfg.get("default_risk_pct", 0.10))
+        total += r
+        if p.quantity > 0 and not has_stop:
+            missing.append(sym)
+    return total, missing
 
 
 def corporate_actions(symbols: list[str]) -> dict[str, pd.DataFrame]:
@@ -331,7 +355,9 @@ def sizing_limits(symbol: str, prices: pd.DataFrame, capital: float, cfg: dict |
                   trades: pd.DataFrame | None = None, context=None
                   ) -> tuple[tuple[float, str] | None, list[tuple[float, str]]]:
     """Giới hạn khối lượng của lệnh mua mới `symbol` theo danh mục đang giữ:
-    (risk_adjust cho trade_plan hoặc None, extra_caps). Sổ lệnh trống thì không đổi gì.
+    (risk_adjust cho trade_plan hoặc None, extra_caps). extra_caps: [("value", đồng, lý do)] chặn giá
+    trị vị thế, [("risk", đồng, lý do)] chặn số tiền rủi ro (nhiệt danh mục `[portfolio] max_heat`).
+    Sổ lệnh trống thì không đổi gì.
     context: (lịch, giá gần nhất, nhóm ngành, {mã: bảng giá}) để test; mặc định đọc kho."""
     cfg = {**settings().get("portfolio", {}), **(cfg or {})}
     trades = load() if trades is None else trades
@@ -360,12 +386,21 @@ def sizing_limits(symbol: str, prices: pd.DataFrame, capital: float, cfg: dict |
         adjust = (factor, f"tương quan {rho:.2f} với {who} đang giữ: rủi ro lệnh này còn "
                           f"{factor:.0%} (tránh đa dạng hoá giả)")
     caps = []
+    heat, _ = portfolio_heat({s: p for s, p in held.items() if s != symbol}, last, cfg)
+    if symbol in held:                              # mã đang giữ: tính cả phần đã có
+        heat += open_risk(held[symbol], last.get(symbol, held[symbol].avg_cost),
+                          cfg.get("default_risk_pct", 0.10))[0]
+    max_heat = cfg.get("max_heat", 0.05)
+    if max_heat:
+        room = max(0.0, capital * max_heat - heat)
+        caps.append(("risk", room, f"tổng rủi ro mở của danh mục ≤ {max_heat:.0%} vốn (đang "
+                                   f"{heat / capital:.1%})"))
     group = groups.get(symbol, "")
     max_pct = cfg.get("max_sector_pct", 0.30)
     if group and max_pct:
         used = sum(p.quantity * last.get(s, p.avg_cost) for s, p in held.items()
                    if groups.get(s) == group)
-        caps.append((max(0.0, capital * max_pct - used),
+        caps.append(("value", max(0.0, capital * max_pct - used),
                      f"trần nhóm {group} {max_pct:.0%} vốn (đang giữ {used / capital:.0%})"))
     return adjust, caps
 

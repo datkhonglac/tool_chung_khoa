@@ -101,10 +101,11 @@ def test_sizing_limits_correlation_and_sector(tmp_path):
     adj, caps = pf.sizing_limits("TCB", _px(base + rng.normal(0, 0.003, 150)), 100_000_000,
                                  trades=pf.load(f), context=ctx)
     assert adj is not None and 0.5 <= adj[0] < 0.6 and "VCB" in adj[1]
-    assert caps[0][0] == pytest.approx(0.30 * 100_000_000 - 200 * 100_000)
+    sector = [c for c in caps if c[0] == "value"][0]
+    assert sector[1] == pytest.approx(0.30 * 100_000_000 - 200 * 100_000)
     # mã khác ngành, không tương quan: không giảm rủi ro, trần nhóm còn nguyên 30%
     adj, caps = pf.sizing_limits("FPT", hist["FPT"], 100_000_000, trades=pf.load(f), context=ctx)
-    assert adj is None and caps[0][0] == pytest.approx(30_000_000)
+    assert adj is None and [c for c in caps if c[0] == "value"][0][1] == pytest.approx(30_000_000)
 
 
 def test_sizing_limits_empty_ledger():
@@ -194,3 +195,31 @@ def test_backup_refuses_tool_repo_and_needs_config(monkeypatch):
     assert slug == "datkhonglac/so-lenh" and url.endswith("github.com/datkhonglac/so-lenh.git")
     with pytest.raises(pf.BackupError, match="repo của tool"):
         pf._check_private("datkhonglac/tool_chung_khoa", None)
+
+
+def test_portfolio_heat_limits_new_risk(tmp_path):
+    """v2.1: tổng lỗ nếu mọi mã về cắt lỗ ≤ 5% vốn; mã chưa đặt cắt lỗ tính 10% giá trị."""
+    f = tmp_path / "trades.csv"
+    _add(f, pf.BUY, "VCB", 1_000, 90_000, "2026-10-01", fee=0)
+    _add(f, pf.STOP, "VCB", 0, 87_000, "2026-10-02")               # rủi ro 1.000 × 3.000 = 3 tr
+    _add(f, pf.BUY, "FPT", 200, 100_000, "2026-10-01", fee=0)      # chưa cắt lỗ: 10% × 20 tr = 2 tr
+    pos = pf.positions(pf.load(f), "2026-10-08", CAL)
+    heat, missing = pf.portfolio_heat(pos, {"VCB": 90_000, "FPT": 100_000})
+    assert heat == pytest.approx(5_000_000) and missing == ["FPT"]
+    ctx = (CAL, {"VCB": 90_000, "FPT": 100_000}, {}, {})
+    _, caps = pf.sizing_limits("HPG", _px([0.001] * 150), 200_000_000, trades=pf.load(f),
+                               context=ctx)
+    risk = [c for c in caps if c[0] == "risk"][0]
+    assert risk[1] == pytest.approx(0.05 * 200_000_000 - 5_000_000)
+
+
+def test_trade_plan_risk_cap_from_heat():
+    from vnsa.ta.plan import trade_plan
+
+    cfg = {"atr_stop": 2.0, "support_buffer_atr": 0.5, "max_stop_atr": 3.0, "min_stop_atr": 1.0,
+           "reward_multiples": [2.0, 3.0], "capital": 100_000_000, "risk_per_trade": 0.01,
+           "lot_size": 100, "max_position_pct": 0.5}
+    full = trade_plan(50_000, 1_000, [], [], cfg)                  # rủi ro 1 tr, R = 2.000 -> 500 cp
+    hot = trade_plan(50_000, 1_000, [], [], cfg, extra_caps=[("risk", 400_000, "nhiệt danh mục")])
+    assert full.shares == 500 and hot.shares == 200
+    assert any("nhiệt danh mục" in n for n in hot.notes)

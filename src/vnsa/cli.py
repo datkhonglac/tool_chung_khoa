@@ -1135,7 +1135,7 @@ def cmd_portfolio(args) -> int:
         print(f"Không còn vị thế nào. Lãi/lỗ đã chốt: {realized:,.0f}đ")
         return 0
     fmt = {c: "{:,.0f}".format for c in ("SL", "Bán được", "Giá vốn", "Giá", "Giá trị", "Lãi/lỗ",
-                                          "Cắt lỗ", "Cổ tức nhận", "Đã chốt")}
+                                          "Cắt lỗ", "Rủi ro mở", "Cổ tức nhận", "Đã chốt")}
     fmt.update({c: (lambda x: "—" if pd.isna(x) else f"{x:+.1%}") for c in ("Lãi/lỗ %", "Cách cắt lỗ")})
     fmt["Tỷ trọng"] = lambda x: "—" if pd.isna(x) else f"{x:.1%}"
     print(f"DANH MỤC — vốn tham chiếu {capital:,.0f}đ ([plan] capital)")
@@ -1147,6 +1147,11 @@ def cmd_portfolio(args) -> int:
         print("Sự kiện quyền đã tính (giá vốn, số lượng, cắt lỗ đã điều chỉnh):")
         for n in events:
             print(f"  · {n}")
+    heat_cap = settings().get("portfolio", {}).get("max_heat", 0.05)
+    heat = tab["Rủi ro mở"].sum()
+    print(f"Rủi ro mở (lỗ thêm nếu mọi mã về cắt lỗ): {heat:,.0f}đ = {heat / capital:.1%} vốn "
+          f"(trần {heat_cap:.0%})" + (" — VƯỢT TRẦN: không mở thêm vị thế" if heat > heat_cap * capital
+                                    else ""))
     by_group = tab.groupby("Nhóm ngành")["Giá trị"].sum() / capital
     cap = settings().get("portfolio", {}).get("max_sector_pct", 0.30)
     over = by_group[by_group > cap]
