@@ -71,3 +71,54 @@ def test_rejects_price_in_thousands_and_undo(tmp_path):
     _add(f, pf.BUY, "FPT", 100, 99_000, "2026-10-02")
     assert "99000" in pf.undo(f)
     assert len(pf.load(f)) == 1
+
+
+def test_correlation_factor():
+    assert pf.correlation_factor(0.5) == 1.0
+    assert pf.correlation_factor(0.8) == pytest.approx(0.75)
+    assert pf.correlation_factor(1.0) == pytest.approx(0.5)
+
+
+def _px(rets, start=100_000.0):
+    import numpy as np
+
+    close = start * np.cumprod(1 + np.asarray(rets))
+    return pd.DataFrame({"date": pd.bdate_range("2026-03-02", periods=len(close)), "close": close})
+
+
+def test_sizing_limits_correlation_and_sector(tmp_path):
+    import numpy as np
+
+    f = tmp_path / "trades.csv"
+    _add(f, pf.BUY, "VCB", 200, 90_000, "2026-10-01", fee=0)
+    rng = np.random.default_rng(1)
+    base = rng.normal(0, 0.02, 150)
+    hist = {"VCB": _px(base), "FPT": _px(rng.normal(0, 0.02, 150))}
+    ctx = (CAL, {"VCB": 100_000}, {"VCB": "Ngân hàng", "TCB": "Ngân hàng", "FPT": "Công nghệ"},
+           hist)
+    # mã mới đi gần như cùng VCB (tương quan cao) và cùng nhóm ngân hàng
+    adj, caps = pf.sizing_limits("TCB", _px(base + rng.normal(0, 0.003, 150)), 100_000_000,
+                                 trades=pf.load(f), context=ctx)
+    assert adj is not None and 0.5 <= adj[0] < 0.6 and "VCB" in adj[1]
+    assert caps[0][0] == pytest.approx(0.30 * 100_000_000 - 200 * 100_000)
+    # mã khác ngành, không tương quan: không giảm rủi ro, trần nhóm còn nguyên 30%
+    adj, caps = pf.sizing_limits("FPT", hist["FPT"], 100_000_000, trades=pf.load(f), context=ctx)
+    assert adj is None and caps[0][0] == pytest.approx(30_000_000)
+
+
+def test_sizing_limits_empty_ledger():
+    assert pf.sizing_limits("FPT", _px([0.01] * 10), 1e8, trades=pd.DataFrame(columns=pf.COLUMNS)) \
+        == (None, [])
+
+
+def test_trade_plan_applies_portfolio_limits():
+    from vnsa.ta.plan import trade_plan
+
+    cfg = {"atr_stop": 2.0, "support_buffer_atr": 0.5, "max_stop_atr": 3.0, "min_stop_atr": 1.0,
+           "reward_multiples": [2.0, 3.0], "capital": 100_000_000, "risk_per_trade": 0.01,
+           "lot_size": 100, "max_position_pct": 0.15}
+    base = trade_plan(50_000, 1_000, [], [], cfg)
+    cut = trade_plan(50_000, 1_000, [], [], cfg, risk_adjust=(0.5, "tương quan cao"),
+                     extra_caps=[(5_000_000, "trần nhóm")])
+    assert base.shares == 300 and cut.shares == 100
+    assert "tương quan cao" in cut.notes and any("trần nhóm" in n for n in cut.notes)

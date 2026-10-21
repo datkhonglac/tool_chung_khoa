@@ -227,3 +227,72 @@ def market_context(symbols: list[str]) -> tuple[pd.DatetimeIndex, dict[str, floa
             groups[s] = industry_group(store.company(s), mapping)
     cal = pd.DatetimeIndex(pd.to_datetime(idx["date"])) if not idx.empty else pd.DatetimeIndex([])
     return cal, prices, groups
+
+
+def correlation_factor(rho: float, threshold: float = 0.60, max_cut: float = 0.50) -> float:
+    """Hệ số ngân sách rủi ro theo tương quan cực đại ρ với các mã đang giữ (bước 5.2):
+    ρ ≤ ngưỡng: 1; trên ngưỡng giảm tuyến tính, ρ = 1 thì còn 1 − max_cut."""
+    if pd.isna(rho) or rho <= threshold:
+        return 1.0
+    return 1.0 - min((rho - threshold) / (1.0 - threshold), 1.0) * max_cut
+
+
+def max_correlation(returns: pd.Series, held: dict[str, pd.Series],
+                    sessions: int = 120) -> tuple[float, str | None]:
+    """(ρ cực đại, mã) giữa lợi suất ngày của mã mới và từng mã đang giữ, `sessions` phiên chung
+    gần nhất (cần ≥ 60 phiên chung)."""
+    best, who = float("nan"), None
+    for sym, r in held.items():
+        both = pd.concat([returns, r], axis=1, join="inner").dropna().tail(sessions)
+        if len(both) < 60:
+            continue
+        rho = float(both.iloc[:, 0].corr(both.iloc[:, 1]))
+        if not pd.isna(rho) and (pd.isna(best) or rho > best):
+            best, who = rho, sym
+    return best, who
+
+
+def _returns(prices: pd.DataFrame) -> pd.Series:
+    s = prices.set_index(pd.to_datetime(prices["date"]))["close"].astype(float)
+    return s.pct_change()
+
+
+def sizing_limits(symbol: str, prices: pd.DataFrame, capital: float, cfg: dict | None = None,
+                  trades: pd.DataFrame | None = None, context=None
+                  ) -> tuple[tuple[float, str] | None, list[tuple[float, str]]]:
+    """Giới hạn khối lượng của lệnh mua mới `symbol` theo danh mục đang giữ:
+    (risk_adjust cho trade_plan hoặc None, extra_caps). Sổ lệnh trống thì không đổi gì.
+    context: (lịch, giá gần nhất, nhóm ngành, {mã: bảng giá}) để test; mặc định đọc kho."""
+    cfg = {**settings().get("portfolio", {}), **(cfg or {})}
+    trades = load() if trades is None else trades
+    if trades.empty:
+        return None, []
+    symbol = symbol.upper()
+    syms = sorted(set(trades["symbol"]) | {symbol})
+    if context is None:
+        cal, last, groups = market_context(syms)
+        from vnsa.data.store import Store
+
+        with Store(path("warehouse")) as store:
+            hist = {s: store.prices(s) for s in syms if s != symbol}
+    else:
+        cal, last, groups, hist = context
+    held = {s: p for s, p in positions(trades, calendar=cal).items() if p.quantity > 0}
+    if not held:
+        return None, []
+    others = {s: _returns(hist[s]) for s in held if s != symbol and s in hist and len(hist[s])}
+    rho, who = max_correlation(_returns(prices), others, int(cfg.get("corr_sessions", 120)))
+    factor = correlation_factor(rho, cfg.get("corr_threshold", 0.60), cfg.get("corr_max_cut", 0.50))
+    adjust = None
+    if factor < 1:
+        adjust = (factor, f"tương quan {rho:.2f} với {who} đang giữ: rủi ro lệnh này còn "
+                          f"{factor:.0%} (tránh đa dạng hoá giả)")
+    caps = []
+    group = groups.get(symbol, "")
+    max_pct = cfg.get("max_sector_pct", 0.30)
+    if group and max_pct:
+        used = sum(p.quantity * last.get(s, p.avg_cost) for s, p in held.items()
+                   if groups.get(s) == group)
+        caps.append((max(0.0, capital * max_pct - used),
+                     f"trần nhóm {group} {max_pct:.0%} vốn (đang giữ {used / capital:.0%})"))
+    return adjust, caps

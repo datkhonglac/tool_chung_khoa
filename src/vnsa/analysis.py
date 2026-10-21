@@ -494,10 +494,25 @@ def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | N
         fair_value, fa_score = _value_anchor(sym) if sym else (float("nan"), float("nan"))
     zone = entry_zone(ind, sup, settings()["entry"], ticks, fair_value,
                       float("nan") if fa_score is None else fa_score)
+    adjust, caps = _portfolio_limits(sym, ind)
     p = trade_plan(zone.entry, float(last["atr"]), sup, res, settings()["plan"], ticks,
-                   adv_value=adv_value(ind), risk_scale=risk_scale)
+                   adv_value=adv_value(ind), risk_scale=risk_scale, risk_adjust=adjust,
+                   extra_caps=caps)
     p.zone = zone
     return p
+
+
+def _portfolio_limits(sym: str | None, ind: pd.DataFrame):
+    """Tương quan với mã đang giữ và trần nhóm ngành (portfolio.sizing_limits); sổ lệnh trống hoặc
+    lỗi đọc thì không giới hạn thêm (kế hoạch vẫn tính được)."""
+    if not sym:
+        return None, []
+    from vnsa import portfolio
+
+    try:
+        return portfolio.sizing_limits(sym, ind[["date", "close"]], settings()["plan"]["capital"])
+    except Exception:  # noqa: BLE001 - sổ lệnh lỗi không được chặn phân tích
+        return None, []
 
 
 def timing_study(symbols: list[str], split: str = "2022-01-01", start: str = "2016-01-01"):
