@@ -159,7 +159,8 @@ def add(side: str, symbol: str, quantity: float, price: float, date=None,
     trades = load(file)
     if side == STOP and symbol not in set(trades.loc[trades["side"] == BUY, "symbol"]):
         raise ValueError(f"chưa có lệnh mua {symbol} trong sổ")
-    trial = pd.concat([trades, pd.DataFrame([row])], ignore_index=True)
+    trial = (pd.DataFrame([row]) if trades.empty
+             else pd.concat([trades, pd.DataFrame([row])], ignore_index=True))
     positions(trial, max(date, pd.Timestamp.today().normalize()), calendar)   # báo lỗi T+2 nếu có
     file.parent.mkdir(parents=True, exist_ok=True)
     new = not file.exists()

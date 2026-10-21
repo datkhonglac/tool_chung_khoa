@@ -165,13 +165,17 @@ def rule_set(ind: pd.DataFrame, score: pd.Series, regime: pd.Series | None, atr_
     hh55 = d["high"].shift(1).rolling(55).max()
     breakout = ((d["close"] > hh55) & (d["volume"] > 1.5 * d["vol_ma20"])
                 & (d["close"] > sma200))
-    sma20 = d["sma20"] if "sma20" in d else d["close"].rolling(20).mean()
-    tight = (d["bb_width_pct"] < 0.40) if "bb_width_pct" in d else pd.Series(False, index=d.index)
-    vcp = ((d["close"] > sma200) & (sma50 > sma200)
-           & (tight | ((d["close"] - sma20).abs() <= 1.0 * d["atr"]))
-           & d["rsi"].between(45, 62)
-           & (d["close"] > d["open"]) & (d["volume"] > 1.2 * d["vol_ma20"]))
-    vcp_exit = (d["close"] < sma50) & (d["volume"] > 1.5 * d["vol_ma20"])
+    no = pd.Series(False, index=d.index)
+    if {"rsi", "atr", "open"} <= set(d.columns):
+        sma20 = d["sma20"] if "sma20" in d else d["close"].rolling(20).mean()
+        tight = (d["bb_width_pct"] < 0.40) if "bb_width_pct" in d else no
+        vcp = ((d["close"] > sma200) & (sma50 > sma200)
+               & (tight | ((d["close"] - sma20).abs() <= 1.0 * d["atr"]))
+               & d["rsi"].between(45, 62)
+               & (d["close"] > d["open"]) & (d["volume"] > 1.2 * d["vol_ma20"]))
+        vcp_exit = (d["close"] < sma50) & (d["volume"] > 1.5 * d["vol_ma20"])
+    else:                                   # bảng chỉ báo rút gọn (test cũ): quy tắc không kích hoạt
+        vcp, vcp_exit = no, no
     extra = cfg.get("bear_entry_extra", 10)
     bear_size = cfg.get("bear_position", 0.5)
     return {
