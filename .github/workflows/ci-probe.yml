@@ -1,0 +1,32 @@
+name: tam-do-v3
+on:
+  push:
+    branches: [nang-cap-v3]
+    paths: [".github/workflows/ci-probe.yml", "scripts/probe_vnstock.py"]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: "1"
+      VNSTOCK_TELEMETRY: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+      - run: |
+          set +e
+          python scripts/probe_vnstock.py --board FPT DIG HPG > out.txt 2>&1
+          python scripts/probe_vnstock.py --grep 'receiv|inventor|fixed_asset|tangible|depreciat|amortiz|selling|admin|advance|unearned|prepa|construction|long_term_rec|other_rec' FPT DIG >> out.txt 2>&1
+          python scripts/probe_vnstock.py --news DIG HPG FPT >> out.txt 2>&1
+          true
+      - run: |
+          python - <<'PY'
+          t = open("out.txt", encoding="utf-8", errors="ignore").read()
+          n = 3500
+          for i in range(0, min(len(t), n * 9), n):
+              m = t[i:i + n].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::notice title=log {i // n:02d}::{m}")
+          PY

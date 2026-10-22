@@ -91,6 +91,78 @@ def foreign(symbols: list[str]) -> int:
     return 0
 
 
+def board(symbols: list[str]) -> int:
+    """--board: bảng giá trong phiên (Trading.price_board) và Quote.intraday — cho lệnh monitor."""
+    from vnstock import Quote, Trading
+
+    t = Trading(source="VCI")
+    try:
+        df = _call_plain(t.price_board, symbols)
+        cols = list(df.columns)
+        print(f"price_board shape={df.shape}")
+        print(f"columns ({len(cols)}): {cols}")
+        with pd.option_context("display.max_rows", 300):
+            print(df.head(len(symbols)).T.to_string()[:12000])
+    except Exception as e:  # noqa: BLE001
+        print(f"price_board LỖI: {type(e).__name__}: {e}")
+    time.sleep(2)
+    try:
+        q = Quote(source="VCI", symbol=symbols[0])
+        df = q.intraday(page_size=5)
+        print(f"\nintraday {symbols[0]}: columns={list(df.columns)}")
+        print(df.tail(5).to_string())
+    except Exception as e:  # noqa: BLE001
+        print(f"intraday LỖI: {type(e).__name__}: {e}")
+    return 0
+
+
+def _call_plain(fn, *args, **kwargs):
+    return fn(*args, **kwargs)
+
+
+def items_grep(symbols: list[str], pattern: str) -> int:
+    """--grep MẪU MÃ...: chỉ in item_id/tên khoản mục BCTC năm khớp MẪU (regex, không phân biệt hoa
+    thường) kèm số năm gần nhất — để ánh xạ khoản mục mới (phải thu, tồn kho, khấu hao...)."""
+    import re
+
+    from vnstock import Finance
+
+    rx = re.compile(pattern, re.IGNORECASE)
+    for sym in symbols:
+        fin = Finance(source="VCI", symbol=sym)
+        for name in ("income_statement", "balance_sheet", "cash_flow"):
+            try:
+                df = getattr(fin, name)(period="year")
+            except Exception as e:  # noqa: BLE001
+                print(f"{sym} {name}: LỖI {e}")
+                continue
+            last = [c for c in df.columns if str(c)[:4].isdigit()][:1]
+            print(f"== {sym} {name} ({len(df)} dòng, cột {last})")
+            for _, r in df.iterrows():
+                if rx.search(str(r["item_id"])) or rx.search(str(r["item"])):
+                    v = r[last[0]] if last else ""
+                    print(f"  {r['item_id']} | {str(r['item'])[:70]} | {v}")
+            time.sleep(2)
+    return 0
+
+
+def news(symbols: list[str]) -> int:
+    """--news: tiêu đề tin (Company.news) để soạn bộ từ khoá phân loại tin."""
+    from vnstock import Company
+
+    for sym in symbols:
+        try:
+            df = Company(source="VCI", symbol=sym).news()
+            print(f"== {sym} news columns={list(df.columns)}")
+            col = next((c for c in ("news_title", "title") if c in df.columns), df.columns[0])
+            for x in df[col].head(25):
+                print(f"  - {str(x)[:140]}")
+        except Exception as e:  # noqa: BLE001
+            print(f"{sym} news LỖI: {e}")
+        time.sleep(2)
+    return 0
+
+
 def limits(n: int = 45) -> int:
     """Giới hạn số lần gọi của vnstock (vnai): in cấu hình trong mã nguồn vnai rồi gọi liên tục
     `n` lần một hàm nhẹ, ghi thời gian và kiểu lỗi (kể cả SystemExit) để biết khi vượt giới hạn thì
@@ -134,6 +206,12 @@ def main() -> int:
 
     if sys.argv[1:2] == ["--items"]:
         return items([s.upper() for s in sys.argv[2:]])
+    if sys.argv[1:2] == ["--board"]:
+        return board([s.upper() for s in sys.argv[2:]] or ["FPT", "VCB"])
+    if sys.argv[1:2] == ["--grep"]:
+        return items_grep([s.upper() for s in sys.argv[3:]] or ["FPT"], sys.argv[2])
+    if sys.argv[1:2] == ["--news"]:
+        return news([s.upper() for s in sys.argv[2:]] or ["FPT"])
     if sys.argv[1:2] == ["--foreign"]:
         return foreign([s.upper() for s in sys.argv[2:]] or ["FPT"])
     for sym in [s.upper() for s in sys.argv[1:]] or ["FPT", "VCB"]:
