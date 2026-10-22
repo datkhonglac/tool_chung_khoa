@@ -2,7 +2,7 @@ name: tam-do-v3
 on:
   push:
     branches: [nang-cap-v3]
-    paths: [".github/workflows/ci-probe.yml", "src/vnsa/fa/forensic.py"]
+    paths: [".github/workflows/ci-probe.yml", "tests/test_autofetch.py"]
 jobs:
   probe:
     runs-on: ubuntu-latest
