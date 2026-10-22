@@ -453,9 +453,11 @@ def test_trading_status_blocks_buying(empty_db):
                                  "trading_date": [pd.Timestamp("2026-10-09")] * len(symbols)})
 
     vn = WithBoard()
-    rep = updater(vn=vn).ensure("DEMO_A")
+    now = datetime(2026, 10, 9, 16, 0, tzinfo=VN_TZ)
+    up = lambda: Updater(FakeCafeF(), vn, {**AUTO, "status": True}, now=lambda: now)  # noqa: E731
+    rep = up().ensure("DEMO_A")
     assert {s.what: s for s in rep.steps}["trạng thái"].detail == "TRADING_RESTRICTION_ACTIVATED"
-    rep = updater(vn=vn).ensure("DEMO_A")                     # còn mới: không gọi lại
+    rep = up().ensure("DEMO_A")                               # còn mới: không gọi lại
     assert vn.calls == 1 and {s.what: s for s in rep.steps}["trạng thái"].status == "skip"
     nc = analysis.news_check("DEMO_A")
     assert nc is not None and "hạn chế giao dịch" in nc.blocked
