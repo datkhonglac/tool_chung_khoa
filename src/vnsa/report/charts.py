@@ -129,3 +129,45 @@ def sensitivity_heatmap(table: pd.DataFrame, price: float):
         colorbar={"title": "% so với giá"}))
     fig.update_layout(height=360, margin={"t": 30}, template="plotly_white")
     return fig
+
+
+QUADRANT_COLORS = {"Dẫn dắt": "#16a34a", "Suy yếu": "#d97706", "Tụt hậu": "#dc2626",
+                   "Cải thiện": "#2563eb"}
+
+
+def rrg_chart(tails: pd.DataFrame):
+    """RRG: mỗi nhóm một đuôi (các tuần gần nhất), điểm cuối to hơn, màu theo góc phần tư."""
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+    if tails.empty:
+        return fig
+    lo_x, hi_x = tails["ratio"].min(), tails["ratio"].max()
+    lo_y, hi_y = tails["momentum"].min(), tails["momentum"].max()
+    pad_x, pad_y = max(1.0, (hi_x - lo_x) * 0.1), max(1.0, (hi_y - lo_y) * 0.1)
+    x0, x1 = min(lo_x, 100) - pad_x, max(hi_x, 100) + pad_x
+    y0, y1 = min(lo_y, 100) - pad_y, max(hi_y, 100) + pad_y
+    for (xa, xb, ya, yb, name) in [(100, x1, 100, y1, "Dẫn dắt"), (100, x1, y0, 100, "Suy yếu"),
+                                    (x0, 100, y0, 100, "Tụt hậu"), (x0, 100, 100, y1, "Cải thiện")]:
+        fig.add_shape(type="rect", x0=xa, x1=xb, y0=ya, y1=yb, line_width=0,
+                      fillcolor=QUADRANT_COLORS[name], opacity=0.06, layer="below")
+        fig.add_annotation(x=(xa + xb) / 2, y=yb if yb > 100 else ya, text=name, showarrow=False,
+                           font={"color": QUADRANT_COLORS[name]}, yshift=-12 if yb > 100 else 12)
+    for g, x in tails.groupby("group"):
+        last = x.iloc[-1]
+        color = QUADRANT_COLORS.get(last["quadrant"], "#64748b")
+        fig.add_trace(go.Scatter(
+            x=x["ratio"], y=x["momentum"], mode="lines+markers", name=g,
+            line={"color": color, "width": 1.5}, marker={"size": [4] * (len(x) - 1) + [11],
+                                                          "color": color},
+            text=[f"{g} · {d:%d/%m}" for d in x["date"]],
+            hovertemplate="%{text}<br>RS-Ratio %{x:.1f} · RS-Mom %{y:.1f}<extra></extra>"))
+        fig.add_annotation(x=last["ratio"], y=last["momentum"], text=g, showarrow=False,
+                           yshift=12, font={"size": 11})
+    fig.add_hline(y=100, line_color="#94a3b8", line_width=1)
+    fig.add_vline(x=100, line_color="#94a3b8", line_width=1)
+    fig.update_layout(height=620, template="plotly_white", showlegend=False,
+                      xaxis={"title": "RS-Ratio (sức mạnh so với VNINDEX)", "range": [x0, x1]},
+                      yaxis={"title": "RS-Momentum (tăng tốc)", "range": [y0, y1]},
+                      margin={"t": 30})
+    return fig

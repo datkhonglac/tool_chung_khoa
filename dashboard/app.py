@@ -603,6 +603,19 @@ with tab_screen:
                     view = view[view["group_name"] == g]
                 st.dataframe(_show(view.sort_values("score", ascending=False), stock_cols),
                              hide_index=True, width="stretch", column_config=fmt)
+    with st.expander("Xoay vòng ngành (RRG, tham khảo — chưa kiểm định)", expanded=False):
+        try:
+            from vnsa.screen import rrg
+
+            tails = rrg.load()
+        except Exception as e:  # noqa: BLE001
+            st.caption(f"Chưa tính được RRG: {e}")
+            tails = pd.DataFrame()
+        if tails.empty:
+            st.caption("Chưa đủ dữ liệu (cần giá tuần của ≥ 3 mã mỗi nhóm; chạy sàng lọc trước).")
+        else:
+            st.plotly_chart(charts.rrg_chart(tails), width="stretch")
+            st.text(rrg.format_rrg(tails))
 
 with tab_pf:
     from vnsa import portfolio as pf

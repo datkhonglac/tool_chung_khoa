@@ -32,7 +32,7 @@ import pandas as pd
 from vnsa.data.cleaning import repair_ohlc
 from vnsa.data.providers.base import DataProvider
 from vnsa.data.providers.csv_provider import normalize_prices
-from vnsa.fa.ratios import FIELDS, SECTOR_FIELDS
+from vnsa.fa.ratios import FIELDS, FORENSIC_FIELDS, SECTOR_FIELDS
 
 # Khoản mục chuẩn -> (báo cáo, các item_id có thể gặp, mẫu tên tiếng Anh dự phòng).
 # Lấy dòng đầu tiên khớp và có số liệu.
@@ -103,9 +103,25 @@ SECTOR_MAPPING: dict[str, tuple[str, list[str]]] = {
     "brokerage_revenue": ("income_statement", ["revenue_in_brokerage_services"]),
     "operating_revenue": ("income_statement", ["operating_sales"]),
 }
+# Khoản mục kiểm tra chất lượng BCTC (v3): chỉ khớp item_id (đã dò thật FPT, DIG qua
+# scripts/probe_vnstock.py --grep).
+FORENSIC_MAPPING: dict[str, tuple[str, list[str]]] = {
+    "receivables": ("balance_sheet", ["trade_accounts_receivable"]),
+    "other_receivables": ("balance_sheet", ["other_receivables"]),
+    "other_receivables_lt": ("balance_sheet", ["other_long_term_receivables"]),
+    "inventory": ("balance_sheet", ["inventories_net", "inventories"]),
+    "ppe": ("balance_sheet", ["tangible_fixed_assets"]),
+    "depreciation": ("cash_flow", ["depreciation_and_amortization"]),
+    "selling_expenses": ("income_statement", ["selling_expenses"]),
+    "admin_expenses": ("income_statement", ["general_and_admin_expenses"]),
+    "customer_advances": ("balance_sheet", ["advances_from_customers"]),
+    "customer_advances_lt": ("balance_sheet", ["long_term_advances_from_customers"]),
+}
+EXTRA_MAPPING = {**SECTOR_MAPPING, **FORENSIC_MAPPING}
 # VCI ghi chi phí/khoản chi bằng số âm; lưu số dương cho dễ dùng.
 POSITIVE = {"tax_expense", "interest_expense", "capex", "equity_issued", "bank_opex",
-            "credit_provision", "loan_loss_reserve"}
+            "credit_provision", "loan_loss_reserve", "selling_expenses", "admin_expenses",
+            "depreciation"}
 STATEMENTS = ["income_statement", "balance_sheet", "cash_flow"]
 
 
@@ -153,8 +169,8 @@ def standardize(statements: dict[str, pd.DataFrame], symbol: str,
             continue
         values.index = values.index.astype(str)
         out[field] = out["period"].map(values.abs() if field in POSITIVE else values)
-    for field in SECTOR_FIELDS:                     # không báo thiếu (doanh nghiệp thường không có)
-        stmt, ids = SECTOR_MAPPING[field]
+    for field in SECTOR_FIELDS + FORENSIC_FIELDS:   # không báo thiếu (tuỳ loại doanh nghiệp)
+        stmt, ids = EXTRA_MAPPING[field]
         values = _pick(statements[stmt], ids, None, quarterly) if stmt in statements else None
         if values is None:
             out[field] = np.nan
@@ -554,3 +570,7 @@ class VnstockProvider(DataProvider):
 
     def news(self, symbol: str) -> pd.DataFrame:
         return standardize_news(self.get_company(symbol, "news"), symbol)
+
+    def board(self, symbols: list[str]) -> pd.DataFrame:
+        """Bảng giá trong phiên (giá, trần/sàn, trạng thái giao dịch) — price_board."""
+        return price_board(symbols)

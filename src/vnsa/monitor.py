@@ -93,8 +93,11 @@ def check(positions: dict, board: pd.DataFrame, zones: pd.DataFrame, watch: list
         return float(v) if not isinstance(v, str) and not pd.isna(v) else float("nan")
 
     def status_alert(sym, q, held):
+        from vnsa.news import STATUS_NAMES
+
         ts, ss = str(q.get("trading_status") or ""), str(q.get("security_status") or "")
-        bad = [x for x in (ts if ts and ts not in (NORMAL_TRADING, "None", "nan") else "",
+        name = f"{STATUS_NAMES[ts]} — {ts}" if ts in STATUS_NAMES else ts
+        bad = [x for x in (name if ts and ts not in (NORMAL_TRADING, "None", "nan") else "",
                            f"mã trạng thái {ss}" if ss not in ("", "N", "None", "nan") else "") if x]
         if bad:
             alerts.append(Alert(WATCH, sym, "trang_thai",

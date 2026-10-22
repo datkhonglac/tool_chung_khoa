@@ -423,8 +423,9 @@ def screen_market(top_industries: int | None = None, group: str | None = None) -
     điểm 0–100 (động lượng giá, độ rộng, tăng trưởng lợi nhuận, định giá, chất lượng, vĩ mô — mỗi phần
     là thứ hạng giữa các nhóm) và các mã được chọn trong những nhóm dẫn đầu (MUA/KHẢ QUAN, FA đạt,
     không cờ đỏ) kèm giá trị hợp lý, lợi nhuận kỳ vọng, vùng mua, cắt lỗ; thêm mã MUA ngoài nhóm dẫn
-    đầu. `group`: chỉ trả các mã của một nhóm (tên nhóm như trong bảng). Chỉ diễn giải các số có ở
-    đây, nêu ngày phiên (`as_of`); đây là sàng lọc theo quy tắc, chưa kiểm định quá khứ."""
+    đầu; kèm xoay vòng ngành RRG theo tuần (`rrg`, tham khảo). `group`: chỉ trả các mã của một nhóm
+    (tên nhóm như trong bảng). Chỉ diễn giải các số có ở đây, nêu ngày phiên (`as_of`); đây là sàng
+    lọc theo quy tắc, chưa kiểm định quá khứ."""
     from vnsa.screen.run import latest, outside_picks, screen_cfg
 
     table, ind = latest()
@@ -449,6 +450,17 @@ def screen_market(top_industries: int | None = None, group: str | None = None) -
         return out
     out["picks"] = table[table["stage"] >= 4][cols].sort_values(["group_name", "pick_rank"])
     out["outside_top_industries"] = outside_picks(table)[cols]
+    try:
+        from vnsa.screen import rrg
+
+        tails = rrg.load()
+        if len(tails):
+            out["rrg"] = rrg.latest(tails)[["group", "members", "date", "ratio", "momentum",
+                                            "quadrant", "prev_quadrant"]]
+            out["rrg_note"] = ("Xoay vòng ngành theo tuần so với VNINDEX (RS-Ratio, RS-Momentum quanh "
+                               "100; prev_quadrant = 4 tuần trước) — chỉ tham khảo, chưa kiểm định.")
+    except Exception:  # noqa: BLE001 - RRG chỉ tham khảo
+        pass
     return out
 
 

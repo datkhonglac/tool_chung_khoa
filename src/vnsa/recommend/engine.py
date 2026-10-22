@@ -60,6 +60,7 @@ class Inputs:
     rule_state: dict | None = None      # trạng thái quy tắc thời điểm đã kiểm định (strategies)
     macro_industry: float = float("nan")  # điểm vĩ mô ngành −1..+1 (chỉ lưu và chấm lại, chưa vào điểm)
     macro_market: float = float("nan")    # điểm bối cảnh Việt Nam −1..+1
+    blocked: str = ""                   # lý do chặn mua (diện kiểm soát, đình chỉ... — news.py)
 
 
 @dataclass
@@ -100,6 +101,8 @@ def timing(x: Inputs, cfg: dict) -> str:
     - tên quy tắc trong strategies (vd "trend"): đang trong lệnh của quy tắc thì "Vào được", chưa
       thì chờ tín hiệu — chỉ dùng quy tắc đã ĐẠT kiểm định (lệnh study-timing);
     - "none": chỉ quản trị rủi ro (vùng mua + cắt lỗ), không đoán điểm vào."""
+    if x.blocked:
+        return "Không mua (trạng thái giao dịch đặc biệt)"
     if x.zone_status == "CHỜ GIÁ":
         return "Chờ giá về vùng mua"
     rule = cfg.get("timing_rule", "ta")
@@ -152,6 +155,9 @@ def recommend(x: Inputs, cfg: dict, notes: list[str] | None = None) -> Recommend
         if not pd.isna(x.z_em) and x.z_em < 1.1 and level < 2:
             level = 2
             reasons.append(f"Altman Z'' {x.z_em:.2f} vùng nguy cơ: tối đa NẮM GIỮ")
+        if x.blocked and level < 2:
+            level = 2
+            reasons.append(f"chặn mua ({x.blocked}): tối đa NẮM GIỮ")
         action = RATINGS[level]
     if not pd.isna(x.fa_score):
         reasons.append(f"điểm FA {x.fa_score:.0f}/100 ({_fa_rating(x.fa_score)})")

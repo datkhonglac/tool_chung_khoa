@@ -2,7 +2,7 @@ name: tam-do-v3
 on:
   push:
     branches: [nang-cap-v3]
-    paths: [".github/workflows/ci-probe.yml", "src/vnsa/monitor.py"]
+    paths: [".github/workflows/ci-probe.yml", "src/vnsa/news.py"]
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -18,14 +18,14 @@ jobs:
       - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - run: |
           set +e
-          git fetch --depth=1 origin signals:refs/remotes/origin/signals
-          python -m vnsa.cli monitor --public --force DIG > out.txt 2>&1
+          python -m vnsa.cli analyze DGC DIG > out.txt 2>&1
           echo "exit $?" >> out.txt
           true
       - run: |
           python - <<'PY'
           t = open("out.txt", encoding="utf-8", errors="ignore").read()
           n = 3500
+          t = t[t.find('DGC —'):] if 'DGC —' in t else t
           for i in range(0, min(len(t), n * 9), n):
               m = t[i:i + n].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
               print(f"::notice title=log {i // n:02d}::{m}")

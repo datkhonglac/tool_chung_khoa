@@ -103,9 +103,16 @@ def fetch_all(symbols: list[str], updater=None, log: Callable[[str], None] | Non
     from vnsa.data.autofetch import Updater
 
     if updater is None:
-        cfg = {**settings()["auto"], "news": False, "flows": False}
+        cfg = {**settings()["auto"], "news": False, "flows": False, "status": False}
         updater = Updater(cfg=cfg)
     errors: dict[str, str] = {}
+    try:          # trạng thái giao dịch cả rổ trong vài lượt gọi (thay vì mỗi mã một lượt)
+        n = updater.statuses(symbols)
+        if log and n:
+            log(f"  … trạng thái giao dịch {n} mã (bảng giá VCI)")
+    except Exception as e:  # noqa: BLE001
+        if log:
+            log(f"  ! không lấy được trạng thái giao dịch: {e}")
     if workers > 1 and symbols:
         years = updater.cfg.get("years", 5)
         t_px = time.monotonic()

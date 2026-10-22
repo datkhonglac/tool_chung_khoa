@@ -1213,6 +1213,15 @@ def cmd_monitor(args) -> int:
     return 0
 
 
+def cmd_rrg(args) -> int:
+    """Xoay vòng ngành RRG theo tuần (screen/rrg.py) — tham khảo, chưa vào điểm."""
+    from vnsa.screen import rrg
+
+    tails = rrg.load(c={"tail": args.tail} if args.tail else None)
+    print(rrg.format_rrg(tails))
+    return 0
+
+
 def cmd_check(args) -> int:
     from vnsa import market
     from vnsa.data.store import Store
@@ -1428,6 +1437,10 @@ def main(argv: list[str] | None = None) -> int:
                      help="nhật ký công khai: không in cảnh báo mã đang giữ (chỉ gửi Telegram)")
     pmo.add_argument("--force", action="store_true", help="chạy cả ngày nghỉ (thử)")
     pmo.set_defaults(func=cmd_monitor)
+
+    prg = sub.add_parser("rrg", help="Xoay vòng ngành (RRG) theo tuần so với VNINDEX — tham khảo")
+    prg.add_argument("--tail", type=int, help="số tuần của đuôi (mặc định [rrg] tail)")
+    prg.set_defaults(func=cmd_rrg)
 
     pc = sub.add_parser("check", help="Kiểm tra chất lượng dữ liệu")
     pc.add_argument("symbol")
