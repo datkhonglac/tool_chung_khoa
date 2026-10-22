@@ -338,9 +338,21 @@ def get_portfolio() -> dict:
     capital = settings()["plan"]["capital"]
     acts = pf.corporate_actions(sorted(trades["symbol"].unique()))
     tab = pf.status(trades, prices, groups, capital, calendar=cal, actions=acts)
+    from vnsa import journal
+
+    j = journal.load_journal()
+    report = None
+    if j is not None:
+        report = {"twr_invested": j.twr, "vnindex": j.vni, "trade_stats": j.stats,
+                  "discipline_score": j.discipline.score,
+                  "discipline_parts": {k: {"rate": v[0], "ok": v[1], "n": v[2]}
+                                       for k, v in j.discipline.parts.items()},
+                  "discipline_notes": j.discipline.notes[-10:]}
     return {"capital": capital, "positions": tab,
             "realized_and_dividends": pf.realized_total(trades, calendar=cal, actions=acts),
-            "note": "Lãi/lỗ % và tỷ trọng dạng thập phân; giá bằng đồng."}
+            "journal": report,
+            "note": "Lãi/lỗ %, TWR, tỷ lệ dạng thập phân; giá bằng đồng. TWR chỉ đo phần vốn đã "
+                    "giải ngân (sổ lệnh không ghi tiền mặt)."}
 
 
 def _reading(r) -> dict:

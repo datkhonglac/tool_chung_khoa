@@ -2,7 +2,7 @@ name: tam-do-v3
 on:
   push:
     branches: [nang-cap-v3]
-    paths: [".github/workflows/ci-probe.yml", "scripts/probe_vnstock.py"]
+    paths: [".github/workflows/ci-probe.yml", "src/vnsa/monitor.py"]
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -18,9 +18,9 @@ jobs:
       - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - run: |
           set +e
-          python scripts/probe_vnstock.py --board FPT DIG HPG > out.txt 2>&1
-          python scripts/probe_vnstock.py --grep 'receiv|inventor|fixed_asset|tangible|depreciat|amortiz|selling|admin|advance|unearned|prepa|construction|long_term_rec|other_rec' FPT DIG >> out.txt 2>&1
-          python scripts/probe_vnstock.py --news DIG HPG FPT >> out.txt 2>&1
+          git fetch --depth=1 origin signals:refs/remotes/origin/signals
+          python -m vnsa.cli monitor --public --force DIG > out.txt 2>&1
+          echo "exit $?" >> out.txt
           true
       - run: |
           python - <<'PY'

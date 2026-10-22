@@ -436,6 +436,62 @@ def _vnstock_history(symbol: str, start: str, end: str) -> pd.DataFrame:
         start=start, end=end, interval="1D"))
 
 
+# Bảng giá trong phiên (Trading.price_board, nguồn VCI; đã dò thật: cột MultiIndex
+# (listing|match|bid_ask, tên), giá tính bằng đồng) — dùng cho lệnh monitor.
+BOARD_COLUMNS = {
+    "symbol": [("listing", "symbol")],
+    "price": [("match", "match_price")],
+    "ref": [("listing", "ref_price"), ("match", "reference_price")],
+    "ceiling": [("listing", "ceiling"), ("match", "ceiling_price")],
+    "floor": [("listing", "floor"), ("match", "floor_price")],
+    "open": [("match", "open_price")],
+    "high": [("match", "highest")],
+    "low": [("match", "lowest")],
+    "volume": [("match", "accumulated_volume")],
+    "exchange": [("listing", "exchange")],
+    "trading_status": [("listing", "trading_status")],
+    "security_status": [("listing", "security_status")],
+    "trading_date": [("listing", "trading_date")],
+}
+
+
+def standardize_board(raw: pd.DataFrame) -> pd.DataFrame:
+    """Bảng giá VCI -> một dòng mỗi mã với các cột BOARD_COLUMNS (thiếu cột thì NaN). Chấp nhận cả
+    cột phẳng (chỉ tên cuối) phòng khi vnstock đổi cấu trúc."""
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=list(BOARD_COLUMNS))
+    flat = {(c[-1] if isinstance(c, tuple) else c): c for c in raw.columns}
+    out = {}
+    for name, keys in BOARD_COLUMNS.items():
+        col = next((k for k in keys if k in raw.columns), None)
+        if col is None:
+            col = next((flat[k[1]] for k in keys if k[1] in flat), None)
+        out[name] = raw[col].to_numpy() if col is not None else [None] * len(raw)
+    df = pd.DataFrame(out)
+    for c in ("price", "ref", "ceiling", "floor", "open", "high", "low", "volume"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["symbol"] = df["symbol"].astype(str).str.upper()
+    # chưa khớp lệnh nào trong phiên: giá khớp = 0 -> dùng giá tham chiếu
+    df["price"] = df["price"].where(df["price"] > 0, df["ref"])
+    df["trading_date"] = pd.to_datetime(df["trading_date"], errors="coerce")
+    return df
+
+
+def _vnstock_board(symbols: list[str]) -> pd.DataFrame:
+    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
+    from vnstock import Trading
+
+    return _call(lambda: Trading(source="VCI").price_board([s.upper() for s in symbols]))
+
+
+def price_board(symbols: list[str], fetch: Callable[[list[str]], pd.DataFrame] = _vnstock_board,
+                chunk: int = 50) -> pd.DataFrame:
+    """Giá trong phiên của nhiều mã (mỗi lượt gọi tối đa `chunk` mã)."""
+    frames = [standardize_board(fetch(symbols[i:i + chunk])) for i in range(0, len(symbols), chunk)]
+    frames = [f for f in frames if not f.empty]
+    return pd.concat(frames, ignore_index=True) if frames else standardize_board(None)
+
+
 INDEX_SYMBOLS = {"VNINDEX", "VN30", "HNXINDEX", "HNX30", "UPCOMINDEX"}
 
 

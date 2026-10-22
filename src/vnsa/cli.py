@@ -1119,6 +1119,19 @@ def cmd_portfolio(args) -> int:
     if trades.empty:
         print(f"Sổ lệnh trống ({file}). Ghi lệnh mua: python -m vnsa.cli portfolio buy FPT 500 98500")
         return 0
+    if action == "report":
+        from vnsa import journal
+
+        try:
+            j = journal.load_journal()
+        except ValueError as e:
+            print(f"Sổ lệnh có lỗi: {e}. Sửa bằng 'portfolio undo' hoặc mở file {file}.")
+            return 1
+        if j is None:
+            print("Sổ lệnh trống.")
+            return 0
+        print(journal.format_journal(j))
+        return 0
     if action == "list":
         print(trades.assign(date=trades["date"].dt.strftime("%d/%m/%Y"))
               .to_string(index=False, formatters={c: "{:,.0f}".format
@@ -1169,6 +1182,34 @@ def cmd_portfolio(args) -> int:
     missing = tab[tab["Cắt lỗ"].isna()]["Mã"].tolist()
     if missing:
         print("Chưa đặt cắt lỗ: " + ", ".join(missing) + " (portfolio stop MÃ GIÁ)")
+    return 0
+
+
+def cmd_monitor(args) -> int:
+    """Theo dõi trong phiên: cắt lỗ, vùng mua, mục tiêu -> in ra và gửi Telegram (monitor.py)."""
+    from vnsa import monitor, notify
+
+    try:
+        res = monitor.run(extra_watch=[s.upper() for s in args.symbols], force=args.force)
+    except Exception as e:  # noqa: BLE001
+        print(f"Không theo dõi được: {type(e).__name__}: {e}")
+        return 1
+    print(monitor.format_alerts(res, public=args.public))
+    if args.send:
+        if not res.trading_day:
+            return 0
+        if not notify.configured():
+            print("\n(Chưa cấu hình TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID — không gửi.)")
+            return 0
+        if not res.alerts and not args.always:
+            print("\nKhông có cảnh báo — không gửi Telegram.")
+            return 0
+        try:
+            n = notify.send_telegram(monitor.format_alerts(res))
+            print(f"\nĐã gửi Telegram ({n} tin).")
+        except notify.NotifyError as e:
+            print(f"\nGửi Telegram lỗi: {e}")
+            return 1
     return 0
 
 
@@ -1362,9 +1403,11 @@ def main(argv: list[str] | None = None) -> int:
     ph.add_argument("--git", help="Nạp từ nhánh Git, ví dụ origin/signals (workflow hằng ngày)")
     ph.set_defaults(func=cmd_history)
 
-    ppf = sub.add_parser("portfolio", help="Sổ lệnh và danh mục: buy/sell/stop/list/status/undo/backup/restore")
+    ppf = sub.add_parser("portfolio", help="Sổ lệnh và danh mục: buy/sell/stop/list/status/report/"
+                                          "undo/backup/restore")
     ppf.add_argument("action", nargs="?", default="status",
-                     choices=["status", "buy", "sell", "stop", "list", "undo", "backup", "restore"])
+                     choices=["status", "buy", "sell", "stop", "list", "report", "undo", "backup",
+                              "restore"])
     ppf.add_argument("symbol", nargs="?")
     ppf.add_argument("quantity", nargs="?", type=float,
                      help="Số lượng (buy/sell) hoặc giá cắt lỗ (stop)")
@@ -1376,6 +1419,15 @@ def main(argv: list[str] | None = None) -> int:
     ppf.add_argument("--force", action="store_true",
                      help="restore: thay sổ lệnh trên máy bằng bản sao lưu (giữ bản cũ .bak)")
     ppf.set_defaults(func=cmd_portfolio)
+
+    pmo = sub.add_parser("monitor", help="Theo dõi trong phiên: cắt lỗ, vùng mua, mục tiêu; gửi Telegram")
+    pmo.add_argument("symbols", nargs="*", help="mã theo dõi thêm (ngoài sổ lệnh và [signals] daily)")
+    pmo.add_argument("--send", action="store_true", help="gửi Telegram khi có cảnh báo")
+    pmo.add_argument("--always", action="store_true", help="gửi cả khi không có cảnh báo")
+    pmo.add_argument("--public", action="store_true",
+                     help="nhật ký công khai: không in cảnh báo mã đang giữ (chỉ gửi Telegram)")
+    pmo.add_argument("--force", action="store_true", help="chạy cả ngày nghỉ (thử)")
+    pmo.set_defaults(func=cmd_monitor)
 
     pc = sub.add_parser("check", help="Kiểm tra chất lượng dữ liệu")
     pc.add_argument("symbol")

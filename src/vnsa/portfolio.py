@@ -99,6 +99,7 @@ class Position:
     stop: float                   # mức cắt lỗ đang đặt (NaN nếu chưa), đã điều chỉnh theo sự kiện quyền
     dividends: float = 0.0        # cổ tức tiền đã nhận (sau thuế) từ khi bắt đầu giữ
     events: list = None           # mô tả các sự kiện quyền đã áp dụng
+    sales: list = None            # mỗi lệnh bán: (ngày, SL, giá, lãi/lỗ đồng, giá vốn phần bán, mua đầu)
 
 
 def positions(trades: pd.DataFrame, as_of: pd.Timestamp | None = None,
@@ -119,6 +120,7 @@ def positions(trades: pd.DataFrame, as_of: pd.Timestamp | None = None,
         qty = cost = realized = divs = 0.0
         stop, first, last = float("nan"), None, None
         notes: list[str] = []
+        sales: list[tuple] = []
         ev = (actions or {}).get(sym)
         events = []
         if ev is not None and not ev.empty and len(rows):
@@ -162,7 +164,9 @@ def positions(trades: pd.DataFrame, as_of: pd.Timestamp | None = None,
                     raise ValueError(f"{sym} ngày {r.date:%d/%m/%Y}: bán {r.quantity:,.0f} cp nhưng "
                                      f"chỉ có {ready:,.0f} cp đã về tài khoản (T+2)")
                 avg = cost / qty
-                realized += r.quantity * r.price - r.fee - r.tax - avg * r.quantity
+                pnl = r.quantity * r.price - r.fee - r.tax - avg * r.quantity
+                sales.append((r.date, r.quantity, r.price, pnl, avg * r.quantity, first))
+                realized += pnl
                 cost -= avg * r.quantity
                 qty -= r.quantity
                 left = r.quantity                          # trừ vào lô đã về, lô cũ trước
@@ -174,12 +178,12 @@ def positions(trades: pd.DataFrame, as_of: pd.Timestamp | None = None,
                         lots[i], left = (d, q - take, w), left - take
                 lots = [(d, q, w) for d, q, w in lots if q > 1e-9]
                 if qty <= 1e-9:
-                    qty, cost, stop = 0.0, 0.0, float("nan")
+                    qty, cost, stop, first = 0.0, 0.0, float("nan"), None
             elif r.side == STOP:
                 stop = r.price
         sellable = sum(q for d, q, w in lots if sessions_after(d, as_of, cal) >= w)
         out[sym] = Position(sym, qty, sellable, cost / qty if qty > 0 else float("nan"), cost,
-                            realized, first, last, stop, divs, notes)
+                            realized, first, last, stop, divs, notes, sales)
     return out
 
 
