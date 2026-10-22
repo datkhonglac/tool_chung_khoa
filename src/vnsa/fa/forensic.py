@@ -48,6 +48,11 @@ class Forensic:
     info: list[str] = field(default_factory=list)
 
 
+def _n(x: float, digits: int = 2) -> str:
+    """Số kiểu Việt Nam: dấu phẩy thập phân, dấu trừ in."""
+    return f"{x:.{digits}f}".replace(".", ",").replace("-", "−")
+
+
 def _v(row: pd.Series, key: str) -> float:
     x = row.get(key, np.nan)
     try:
@@ -119,14 +124,14 @@ def analyze(fin: pd.DataFrame, market_cap: float = float("nan"), real_estate: bo
     if not pd.isna(out.mscore):
         top = sorted(((k, v) for k, v in out.components.items() if k in REQUIRED),
                      key=lambda kv: -COEF[kv[0]] * (kv[1] - (0 if kv[0] == "tata" else 1)))[:2]
-        why = ", ".join(f"{k.upper()} {v:.2f}" for k, v in top)
+        why = ", ".join(f"{k.upper()} {_n(v)}" for k, v in top)
         if out.mscore > thr:
             out.warnings.append(
-                f"Beneish M-Score {out.mscore:.2f} > {thr:.2f} năm {out.year}: có dấu hiệu làm đẹp "
+                f"Beneish M-Score {_n(out.mscore)} > {_n(thr)} năm {out.year}: có dấu hiệu làm đẹp "
                 f"lợi nhuận (nổi bật: {why})" + ("; BĐS ghi nhận doanh thu theo đợt bàn giao nên "
                                                   "dễ báo nhầm" if real_estate else ""))
         else:
-            out.info.append(f"Beneish M-Score {out.mscore:.2f} (ngưỡng {thr:.2f}): chưa thấy dấu "
+            out.info.append(f"Beneish M-Score {_n(out.mscore)} (ngưỡng {_n(thr)}): chưa thấy dấu "
                             "hiệu làm đẹp lợi nhuận")
     eq = _v(cur, "equity")
     other = _sum(_v(cur, "other_receivables"), _v(cur, "other_receivables_lt"))
@@ -143,8 +148,8 @@ def analyze(fin: pd.DataFrame, market_cap: float = float("nan"), real_estate: bo
             out.backlog_prev = _div(_sum(_v(p, "customer_advances"), _v(p, "customer_advances_lt")),
                                     _v(p, "revenue"))
         if not pd.isna(out.backlog):
-            out.info.append(f"Người mua trả trước = {out.backlog:.2f} lần doanh thu năm"
-                            + (f" (năm trước {out.backlog_prev:.2f})"
+            out.info.append(f"Người mua trả trước = {_n(out.backlog)} lần doanh thu năm"
+                            + (f" (năm trước {_n(out.backlog_prev)})"
                                if not pd.isna(out.backlog_prev) else "")
                             + ": doanh thu chờ bàn giao")
     debt = _sum(_v(cur, "short_debt"), _v(cur, "long_debt"))
@@ -152,5 +157,5 @@ def analyze(fin: pd.DataFrame, market_cap: float = float("nan"), real_estate: bo
     if not pd.isna(cash) and not pd.isna(market_cap) and market_cap > 0:
         out.net_cash = (cash - (0 if pd.isna(debt) else debt)) / market_cap
         out.info.append(f"Tiền ròng {'(tiền − vay) ' if out.net_cash >= 0 else '(âm: vay > tiền) '}"
-                        f"{out.net_cash:+.0%} vốn hoá")
+                        f"{out.net_cash:+.0%} vốn hoá".replace("-", "−"))
     return out

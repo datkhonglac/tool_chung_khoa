@@ -2,7 +2,7 @@ name: tam-do-v3
 on:
   push:
     branches: [nang-cap-v3]
-    paths: [".github/workflows/ci-probe.yml", "src/vnsa/news.py"]
+    paths: [".github/workflows/ci-probe.yml", "src/vnsa/fa/forensic.py"]
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -18,14 +18,15 @@ jobs:
       - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - run: |
           set +e
-          python -m vnsa.cli analyze DGC DIG > out.txt 2>&1
+          pip install -e ".[dev,mcp,dashboard]" > /dev/null 2>&1
+          pytest -q -p no:cacheprovider --tb=short 2>&1 | grep -v "^\.\|Warning\|warn" > out.txt
           echo "exit $?" >> out.txt
           true
       - run: |
           python - <<'PY'
           t = open("out.txt", encoding="utf-8", errors="ignore").read()
           n = 3500
-          t = t[t.find('DGC —'):] if 'DGC —' in t else t
+          t = t[t.find('FAILURES'):] if 'FAILURES' in t else t
           for i in range(0, min(len(t), n * 9), n):
               m = t[i:i + n].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
               print(f"::notice title=log {i // n:02d}::{m}")

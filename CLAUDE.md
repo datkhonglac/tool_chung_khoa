@@ -148,6 +148,17 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   `portfolio backup/restore` (`VNSA_BACKUP_REPO`, `VNSA_BACKUP_TOKEN`, chặn repo công khai), nhiệt danh mục
   `portfolio_heat` (`[portfolio] max_heat`; extra_caps dạng ("risk"|"value", đồng, lý do)). Quy tắc
   `breakout_early` (`rule_set(..., regime_early)`, `data["__regime_early__"]`).
+- Nâng cấp v3.0 (nhánh `nang-cap-v3`): `monitor.py` (lệnh `monitor [--send] [--public]`, workflow
+  `monitor.yml` 02:47/06:47 UTC, secrets TELEGRAM_BOT_TOKEN/CHAT_ID + VNSA_BACKUP_*): giá trong phiên
+  `vnstock_provider.price_board` (cột MultiIndex VCI, `standardize_board`), vùng/cắt lỗ từ signals (kho
+  hoặc `origin/signals`), `--public` ẩn mã đang giữ (repo công khai); `notify.send_telegram` (che token).
+  `journal.py` (`portfolio report`, tab Danh mục, MCP `get_portfolio.journal`): TWR phần vốn giải ngân,
+  `Position.sales`, điểm kỷ luật `[journal]`. `fa/forensic.py` (Beneish 8 biến, phải thu khác, backlog
+  BĐS, tiền ròng) dùng `FORENSIC_FIELDS` (`FORENSIC_MAPPING` item_id VCI; kho cũ tải lại BCTC một lần
+  qua `Store.forensic_missing`) — chỉ cảnh báo (`Card.warnings`, `card.quality_warnings` giảm tin cậy
+  mỗi nguồn một bậc). `news.py`: phân loại tiêu đề theo từ khoá `[news]`; trạng thái giao dịch bảng
+  giá (bảng `trading_status`, `autofetch._status`, screen `Updater.statuses`) hoặc tin diện kiểm soát/
+  đình chỉ → `Inputs.blocked` → tối đa NẮM GIỮ. `screen/rrg.py` (lệnh `rrg`, `[rrg]`, chỉ hiển thị).
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
 - `python -m vnsa.cli load [--sample]` · `check FPT` · `list` · `chart FPT`
 
