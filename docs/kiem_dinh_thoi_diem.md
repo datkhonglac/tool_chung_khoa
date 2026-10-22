@@ -84,4 +84,73 @@ Tham số được đặt **trước** khi chạy. Kiểm định dùng cùng r�
 - Trục thời điểm giữ nguyên `timing_rule = "none"`.
 - Các quy tắc cũ chạy lại với dữ liệu thêm đến 21/10/2026 cho kết luận như lần trước. Phá nền 55 phiên vẫn gần đạt nhất.
 
+## Bổ sung 22/10/2026: phá nền 55 phiên + cảnh báo sớm VNINDEX (nâng cấp v2.1)
+
+Quy tắc `breakout_early` giống "Phá nền 55 phiên", nhưng chỉ MUA MỚI khi VNINDEX không ở trạng thái "giảm". Trạng thái này tính **có** cảnh báo sớm (`ta/regime.early_warning`), kích hoạt khi có một trong hai điều kiện:
+
+- ≥ 5 phiên phân phối trong 20 phiên, đóng cửa dưới MA50;
+- ATR/giá vượt phân vị 85% của 250 phiên, đóng cửa dưới MA20.
+
+Cùng rổ 45 mã, cùng tiêu chí "đạt". Kho giá được tải lại từ đầu, dữ liệu đến 21/10/2026.
+
+| Quy tắc | Giai đoạn | k ATR | CAGR | Sharpe | Sụt giảm tối đa | Thời gian cầm cp |
+|---|---|---|---|---|---|---|
+| Phá nền + cảnh báo sớm | 2016–2021 | 3 | 6,0% | 1,06 | −12,6% | 14% |
+| | 2022–10/2026 | 3 | 0,9% | 0,21 | −6,5% | 14% |
+| Phá nền + VNINDEX (MA) | 2022–10/2026 | 3 | 0,9% | 0,20 | −6,3% | 14% |
+| Phá nền 55 phiên | 2022–10/2026 | 2,5 | 0,9% | 0,23 | −5,8% | 13% |
+| **Mua & giữ** | 2016–2021 | | 30,2% | 1,36 | −49,7% | 100% |
+| | 2022–10/2026 | | 5,1% | 0,33 | −46,4% | 100% |
+
+**Kết luận: không đạt.**
+
+- Cảnh báo sớm gần như không đổi kết quả so với bộ lọc MA50/MA200 cũ: Sharpe 0,21 so với 0,20.
+- Cả hai đều thấp hơn mua & giữ ở cả hai giai đoạn.
+- Giữ nguyên `[regime] early = false` và `timing_rule = "none"`.
+
+Một lưu ý quan trọng: lần chạy này tải lại kho giá từ đầu, và "Phá nền 55 phiên" chọn k = 2,5 thay cho k = 4. Kết quả giai đoạn kiểm tra vì thế đổi từ Sharpe 0,36 xuống 0,23. Chỉ khác dữ liệu một chút mà kết quả đã dịch chuyển như vậy, tức là lợi thế "gần đạt" của quy tắc này mong manh. Đó thêm một lý do để không bật trục thời điểm.
+
+## Bổ sung 22/10/2026: kiểm định ĐIỂM MUA — vùng cũ so với thang mua 3 lớp (v2.1)
+
+Câu hỏi: vùng mua cũ chỉ cách giá 0–2%; đặt lệnh sâu hơn (thang 3 lớp 30% / 40% / 30%) có tốt hơn không?
+
+Cách làm (lệnh `study-entry`, `src/vnsa/recommend/entry_study.py`, workflow "Kiểm định điểm mua"):
+
+- Rổ 45 mã, 10 năm. Cứ 5 phiên lại lập vùng mua một lần, chỉ dùng dữ liệu đến phiên đó.
+- Lệnh LO chờ khớp 20 phiên. Kết quả đo sau 60 phiên; phần vốn không khớp giữ tiền mặt.
+- Không có trần giá trị hợp lý (BCTC không có theo ngày công bố). Phần này giống nhau ở mọi cách nên không làm lệch so sánh.
+
+| Giai đoạn | Cách | Khớp vốn | Giá vốn so với giá lúc lập vùng | Lãi trên vốn đã khớp | **Lãi trên tổng vốn** |
+|---|---|---|---|---|---|
+| 2016–2021 | Mua ngay (mở cửa phiên sau) | 100% | 0,0% | +7,2% | **+7,2%** |
+| | Vùng cũ | 82% | −1,6% | +7,1% | **+5,3%** |
+| | Thang 3 lớp | 43% | −4,2% | +8,4% | **+2,7%** |
+| 2022–10/2026 | Mua ngay | 100% | +0,2% | +1,7% | **+1,7%** |
+| | Vùng cũ | 84% | −1,5% | +1,8% | **+1,1%** |
+| | Thang 3 lớp | 43% | −4,1% | +3,4% | **+0,8%** |
+
+Từng lệnh (toàn kỳ, ~18.800 lần lập vùng):
+
+| Lệnh | Độ sâu trung vị | Khớp trong 20 phiên | Lãi 60 phiên khi khớp |
+|---|---|---|---|
+| Vùng cũ — đỉnh | −0,6% | 87% | +3,8% |
+| Vùng cũ — đáy | −1,7% | 78% | +3,6% |
+| Thang — lớp 1 | −1,9% | 76% | +3,5% |
+| Thang — lớp 2 | −7,0% | 38% | +4,0% |
+| Thang — lớp 3 | −12,8% | 16% | +5,5% |
+
+**Kết luận.**
+
+1. **Mua sâu cho giá vốn tốt hơn thật.** Thang mua rẻ hơn khoảng 4%, và phần vốn khớp được lãi nhiều hơn (+5,6% so với +4,2% toàn kỳ). Lớp 3 khớp được thì lãi +5,5%.
+2. **Nhưng lớp càng sâu càng ít khớp.** Lớp 2 chỉ khớp 38%, lớp 3 chỉ 16%. Thang 3 lớp chỉ giải ngân được 43% vốn, nên **lãi trên tổng vốn thấp hơn vùng cũ ở cả hai giai đoạn**. Đây là cái giá của việc lỡ mua: những mã không lùi về vùng sâu thường là những mã tăng tiếp.
+3. **Chính vùng cũ cũng kém "mua ngay"** (+3,0% so với +4,2% trên tổng vốn toàn kỳ). Chờ giá lùi luôn tốn một phần lợi nhuận. Lợi ích của vùng mua nằm ở chỗ khác: điểm cắt lỗ rõ ràng và tránh mua đuổi sau phiên tăng mạnh.
+
+**Quyết định:**
+
+- `[entry] ladder = false`: kế hoạch mua và khối lượng tiếp tục dùng vùng cũ.
+- `ladder_show = true`: thẻ báo cáo, lệnh `plan` và dashboard in thêm lớp 2, lớp 3 thành **"mức mua thêm nếu giá giảm sâu (tham khảo)"**, kèm xác suất khớp.
+- Ai ưu tiên giá vốn thấp hơn số lần mua được thì đặt `ladder = true`. Lúc đó cắt lỗ đặt dưới lớp 3 và khối lượng tính theo giá vốn bình quân của 3 lớp.
+
+Hạn chế: rổ là mã lớn hiện tại (thiên lệch sống sót); giá điều chỉnh; chưa trừ phí và thuế (như nhau ở mọi cách); khớp theo giá thấp nhất trong ngày là lạc quan, nhưng lạc quan như nhau cho mọi lệnh LO.
+
 Trục **xếp hạng** (giá trị hợp lý) không kiểm định được theo cách này, vì BCTC miễn phí chỉ có 4 năm. Thay vào đó, workflow hằng ngày lưu khuyến nghị vào nhánh `signals`, và lệnh `review-signals` chấm kết quả thật sau 5/20/60 phiên.

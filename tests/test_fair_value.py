@@ -315,3 +315,55 @@ def test_valuation_group_weights(warehouse):
     fair = analysis.general_fair_value(d, v)
     assert "dcf" not in fair.weights and fair.methods["dcf"] > 0
     assert any("quỹ đất" in n for n in fair.notes)
+
+
+LADDER = {**ENTRY, "ladder": True, "ladder_weights": [0.3, 0.4, 0.3], "l2_range_atr": 4.0,
+          "l3_range_atr": 7.0, "ladder_gap_atr": 0.75, "ladder_fallback_atr": 1.5,
+          "ladder_stop_atr": 1.0}
+
+
+def test_ladder_uses_strong_supports_deeper_than_old_zone():
+    """v2.1: lớp 1 = neo cũ; lớp 2/3 = hỗ trợ chạm nhiều lần sâu hơn; cắt lỗ dưới lớp 3."""
+    ind = _ind(close=30_000, sma20=29_500, atr=500).assign(sma50=28_800.0, sma200=26_000.0)
+    sup = [Level(29_600, 1, pd.Timestamp("2026-01-05")),     # gần nhưng mới chạm 1 lần
+           Level(28_400, 3, pd.Timestamp("2026-01-06")),     # mạnh: lớp 2
+           Level(27_000, 2, pd.Timestamp("2026-01-07"))]     # lớp 3
+    old = entry_zone(ind, sup, ENTRY, TICKS)
+    z = entry_zone(ind, sup, LADDER, TICKS)
+    assert [t.price for t in z.tiers] == [30_000, 28_400, 27_000]
+    assert "3 lần chạm" in z.tiers[1].source and z.tiers[2].depth == pytest.approx(-0.10)
+    assert z.low == 27_000 and z.high == z.tiers[0].price and z.low < old.low
+    assert z.mid == pytest.approx(round((30_000 * .3 + 28_400 * .4 + 27_000 * .3) / 50) * 50)
+    assert z.stop_cap == pytest.approx(26_500)                    # lớp 3 − 1 ATR
+
+
+def test_ladder_fallback_and_value_cap():
+    ind = _ind(close=30_000, sma20=29_500, atr=500)
+    z = entry_zone(ind, [], LADDER, TICKS)                        # không có hỗ trợ nào
+    p = [t.price for t in z.tiers]
+    assert p[1] == pytest.approx(p[0] - 750) and p[2] == pytest.approx(p[1] - 750)
+    # giá cao hơn trần giá trị (25.500): thang mua bắt đầu từ mức đỡ dưới trần, không phải một số
+    sup = [Level(25_200, 2, pd.Timestamp("2026-01-05")), Level(23_500, 3, pd.Timestamp("2026-01-06"))]
+    wait = entry_zone(ind, sup, LADDER, TICKS, fair_value=30_000)
+    assert wait.status == "CHỜ GIÁ"
+    assert [t.price for t in wait.tiers][:2] == [25_200, 23_500]
+    assert all(t.price <= 25_500 for t in wait.tiers)
+
+
+def test_trade_plan_stop_below_deepest_tier():
+    from vnsa.ta.plan import trade_plan
+
+    cfg = {"atr_stop": 2.0, "support_buffer_atr": 0.5, "max_stop_atr": 3.0, "min_stop_atr": 1.0,
+           "reward_multiples": [2.0, 3.0], "capital": 100_000_000, "risk_per_trade": 0.01,
+           "lot_size": 100, "max_position_pct": 0.15}
+    p = trade_plan(28_500, 500, [], [], cfg, TICKS, max_stop=26_500)
+    assert p.stop <= 26_500 and "lớp" in p.stop_source
+
+
+def test_ladder_show_keeps_old_zone_for_plan():
+    """Mặc định sau kiểm định: kế hoạch dùng vùng cũ, thang mua chỉ để tham khảo."""
+    ind = _ind(close=30_000, sma20=29_500, atr=500)
+    old = entry_zone(ind, [], ENTRY, TICKS)
+    show = entry_zone(ind, [], {**LADDER, "ladder": False, "ladder_show": True}, TICKS)
+    assert (show.low, show.high, show.mid) == (old.low, old.high, old.mid)
+    assert not show.tiers and len(show.ref_tiers) == 3 and pd.isna(show.stop_cap)

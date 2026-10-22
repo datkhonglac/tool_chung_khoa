@@ -45,6 +45,14 @@ class Simulation:
         final = self.paths[:, day if day is not None else -1]
         return float(np.mean(final > (level if level is not None else self.start_price)))
 
+    def prob_touch(self, level: float, day: int | None = None) -> float:
+        """Xác suất giá ĐÓNG CỬA chạm ≤ `level` ở ít nhất một phiên trong `day` phiên tới (lệnh mua
+        giới hạn khớp). Theo giá đóng cửa nên thấp hơn thực tế (giá thấp nhất trong phiên sâu hơn)."""
+        if level >= self.start_price:
+            return 1.0
+        end = (day if day is not None else self.paths.shape[1] - 1) + 1
+        return float(np.mean(self.paths[:, 1:end].min(axis=1) <= level))
+
     def var(self, q: float = 0.95, day: int | None = None) -> float:
         ret = self.paths[:, day if day is not None else -1] / self.start_price - 1
         return float(-np.percentile(ret, (1 - q) * 100))

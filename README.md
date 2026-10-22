@@ -49,13 +49,36 @@ python -m vnsa.cli portfolio sell FPT 200 105000                    # từ chố
 python -m vnsa.cli portfolio                                        # danh mục: lãi/lỗ, tỷ trọng, cắt lỗ
 python -m vnsa.cli portfolio list                                   # toàn bộ sổ lệnh
 python -m vnsa.cli portfolio undo                                   # xoá dòng vừa nhập nhầm
+python -m vnsa.cli portfolio backup                                 # sao lưu sang repo riêng tư
 ```
 
-Sổ lệnh nằm ở `data/portfolio/trades.csv` và **không đưa lên Git** (repo này công khai). Đây là dữ
-liệu không tải lại được: tải file về máy định kỳ, hoặc đặt biến môi trường `VNSA_TRADES` trỏ vào thư
-mục của một repo **riêng tư**. Khi sổ lệnh có vị thế, `analyze`/`plan` tự giảm khối lượng gợi ý nếu
-mã mới đi cùng chiều mã đang giữ, và chặn tổng một nhóm ngành ở 30% vốn. Claude Desktop đọc được
-danh mục qua công cụ `get_portfolio`.
+Sổ lệnh nằm ở `data/portfolio/trades.csv` và **không đưa lên Git** (repo này công khai). Khi sổ
+lệnh có vị thế, `analyze`/`plan` tự giảm khối lượng gợi ý nếu mã mới đi cùng chiều mã đang giữ, chặn
+tổng một nhóm ngành ở 30% vốn và chặn **tổng rủi ro mở** (lỗ thêm nếu mọi mã cùng về cắt lỗ) ở 5%
+vốn. Cổ tức tiền, cổ tức/thưởng cổ phiếu được tự tính theo ngày GDKHQ (số lượng, giá vốn, mức cắt
+lỗ). Claude Desktop đọc được danh mục qua công cụ `get_portfolio`.
+
+**Sao lưu sổ lệnh** (dữ liệu không tải lại được — Codespace bị xoá là mất):
+
+1. Tạo một repo **Private** trống trên GitHub, ví dụ `so-lenh`.
+2. Tạo token: GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token;
+   Repository access: *Only select repositories* → `so-lenh`; Permissions → Contents: *Read and write*.
+3. GitHub → Settings → Codespaces → Secrets: thêm `VNSA_BACKUP_REPO` = `ten_ban/so-lenh` và
+   `VNSA_BACKUP_TOKEN` = token vừa tạo, cho phép repo `tool_chung_khoa` dùng; khởi động lại Codespace.
+4. `python -m vnsa.cli portfolio backup` (từ đó mỗi lệnh buy/sell/stop tự sao lưu);
+   Codespace mới: `python -m vnsa.cli portfolio restore`.
+
+Tool từ chối sao lưu lên repo công khai hoặc lên chính repo tool.
+
+## Nâng cấp v2.1 (10/2026)
+
+| Hạng mục | Thay đổi | Dùng thế nào |
+|---|---|---|
+| Thang mua 3 lớp | 3 lệnh LO: lớp 1 thăm dò 30% (mức đỡ gần), lớp 2 chính 40% (hỗ trợ chạm nhiều lần / MA50, trung vị −7%), lớp 3 sâu 30% (trung vị −13%); xác suất khớp 20 phiên. Kiểm định 10 năm: giá vốn rẻ hơn ~4% nhưng chỉ khớp 43% vốn nên lãi trên tổng vốn **thấp hơn** vùng cũ → mặc định kế hoạch giữ vùng cũ, lớp 2–3 hiện thành "mức mua thêm nếu giá giảm sâu" | `[entry] ladder` (tắt), `ladder_show` (bật); `study-entry` |
+| Sự kiện quyền trong sổ lệnh | Cổ tức tiền (sau thuế 5%) hạ mức cắt lỗ đúng bằng cổ tức; cổ phiếu thưởng cộng số lượng, giảm giá vốn | tự động |
+| Phá nền + cảnh báo sớm | Quy tắc `breakout_early` kiểm định 10 năm: **không đạt** (Sharpe 0,21 so với mua & giữ 0,33) → giữ tắt | `study-timing` |
+| Sao lưu sổ lệnh | Sang repo riêng tư | `portfolio backup` / `restore` |
+| Nhiệt danh mục | Tổng rủi ro mở ≤ 5% vốn, lệnh mới tự giảm | `[portfolio] max_heat` |
 
 ## Phân tích một mã bất kỳ (tự lấy dữ liệu)
 

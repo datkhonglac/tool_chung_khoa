@@ -1,5 +1,6 @@
-"""Sổ lệnh: giá vốn bình quân, T+2 theo lịch giao dịch, lãi đã chốt, cắt lỗ."""
+"""Sổ lệnh: giá vốn bình quân, T+2 theo lịch giao dịch, lãi đã chốt, cắt lỗ, sự kiện quyền."""
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -100,10 +101,11 @@ def test_sizing_limits_correlation_and_sector(tmp_path):
     adj, caps = pf.sizing_limits("TCB", _px(base + rng.normal(0, 0.003, 150)), 100_000_000,
                                  trades=pf.load(f), context=ctx)
     assert adj is not None and 0.5 <= adj[0] < 0.6 and "VCB" in adj[1]
-    assert caps[0][0] == pytest.approx(0.30 * 100_000_000 - 200 * 100_000)
+    sector = [c for c in caps if c[0] == "value"][0]
+    assert sector[1] == pytest.approx(0.30 * 100_000_000 - 200 * 100_000)
     # mã khác ngành, không tương quan: không giảm rủi ro, trần nhóm còn nguyên 30%
     adj, caps = pf.sizing_limits("FPT", hist["FPT"], 100_000_000, trades=pf.load(f), context=ctx)
-    assert adj is None and caps[0][0] == pytest.approx(30_000_000)
+    assert adj is None and [c for c in caps if c[0] == "value"][0][1] == pytest.approx(30_000_000)
 
 
 def test_sizing_limits_empty_ledger():
@@ -122,3 +124,102 @@ def test_trade_plan_applies_portfolio_limits():
                      extra_caps=[(5_000_000, "trần nhóm")])
     assert base.shares == 300 and cut.shares == 100
     assert "tương quan cao" in cut.notes and any("trần nhóm" in n for n in cut.notes)
+
+
+def _acts(**rows):
+    return {sym: pd.DataFrame([{"exright_date": pd.Timestamp(d), "cash_per_share": c,
+                                "stock_ratio": r} for d, c, r in evs])
+            for sym, evs in rows.items()}
+
+
+def test_cash_dividend_adjusts_stop_and_counts_income(tmp_path):
+    """v2.1: cổ tức tiền — nhận tiền sau thuế 5%, cắt lỗ hạ đúng bằng cổ tức, giá vốn giữ nguyên."""
+    f = tmp_path / "trades.csv"
+    _add(f, pf.BUY, "VNM", 1_000, 60_000, "2026-10-01", fee=0)
+    _add(f, pf.STOP, "VNM", 0, 56_000, "2026-10-02")
+    acts = _acts(VNM=[("2026-10-08", 2_000, np.nan)])
+    p = pf.positions(pf.load(f), "2026-10-12", CAL, acts)["VNM"]
+    assert p.stop == pytest.approx(54_000) and p.avg_cost == pytest.approx(60_000)
+    assert p.dividends == pytest.approx(1_000 * 2_000 * 0.95)
+    # giá sau GDKHQ 57.500 (đã trừ cổ tức): KHÔNG báo chạm cắt lỗ
+    tab = pf.status(pf.load(f), {"VNM": 57_500}, {}, 1e8, "2026-10-12", CAL, acts)
+    assert tab.iloc[0]["Cách cắt lỗ"] > 0 and tab.iloc[0]["Cổ tức nhận"] == pytest.approx(1.9e6)
+
+
+def test_stock_dividend_adds_shares_and_lowers_cost(tmp_path):
+    f = tmp_path / "trades.csv"
+    _add(f, pf.BUY, "FPT", 1_050, 100_000, "2026-10-01", fee=0)
+    _add(f, pf.STOP, "FPT", 0, 90_000, "2026-10-02")
+    acts = _acts(FPT=[("2026-10-08", np.nan, 0.10)])
+    p = pf.positions(pf.load(f), "2026-10-12", CAL, acts)["FPT"]
+    assert p.quantity == 1_155                                  # floor(1.050 × 10%) = 105
+    assert p.avg_cost == pytest.approx(105_000_000 / 1_155)
+    assert p.stop == pytest.approx(90_000 / 1.1)
+    assert p.sellable == 1_050                                  # cp thưởng chưa niêm yết
+
+
+def test_dividend_only_for_shares_held_before_exdate(tmp_path):
+    f = tmp_path / "trades.csv"
+    _add(f, pf.BUY, "HPG", 1_000, 25_000, "2026-10-01", fee=0)
+    _add(f, pf.BUY, "HPG", 500, 25_000, "2026-10-08", fee=0)     # mua đúng ngày GDKHQ: không hưởng
+    acts = _acts(HPG=[("2026-10-08", 500, np.nan)])
+    p = pf.positions(pf.load(f), "2026-10-12", CAL, acts)["HPG"]
+    assert p.dividends == pytest.approx(1_000 * 500 * 0.95)
+
+
+def test_backup_and_restore_with_private_repo(tmp_path, monkeypatch):
+    """v2.1: sao lưu sổ lệnh sang repo khác (ở đây là repo git cục bộ) và lấy về."""
+    import subprocess
+
+    remote = tmp_path / "so-lenh.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    f = tmp_path / "trades.csv"
+    _add(f, pf.BUY, "FPT", 100, 98_500, "2026-10-01")
+    assert "đã sao lưu" in pf.backup(f, str(remote))
+    assert "giống" in pf.backup(f, str(remote))                  # không đổi: không commit thừa
+    other = tmp_path / "may-moi" / "trades.csv"
+    assert "đã lấy" in pf.restore(other, str(remote))
+    assert other.read_text() == f.read_text()
+    _add(other, pf.BUY, "HPG", 100, 25_000, "2026-10-02")         # máy mới có thêm lệnh
+    with pytest.raises(pf.BackupError, match="--force"):
+        pf.restore(other, str(remote))
+    pf.restore(other, str(remote), force=True)
+    assert other.with_suffix(".csv.bak").exists() and len(pf.load(other)) == 1
+
+
+def test_backup_refuses_tool_repo_and_needs_config(monkeypatch):
+    monkeypatch.delenv("VNSA_BACKUP_REPO", raising=False)
+    with pytest.raises(pf.BackupError, match="VNSA_BACKUP_REPO"):
+        pf._backup_target("")
+    url, slug, _ = pf._backup_target("datkhonglac/so-lenh")
+    assert slug == "datkhonglac/so-lenh" and url.endswith("github.com/datkhonglac/so-lenh.git")
+    with pytest.raises(pf.BackupError, match="repo của tool"):
+        pf._check_private("datkhonglac/tool_chung_khoa", None)
+
+
+def test_portfolio_heat_limits_new_risk(tmp_path):
+    """v2.1: tổng lỗ nếu mọi mã về cắt lỗ ≤ 5% vốn; mã chưa đặt cắt lỗ tính 10% giá trị."""
+    f = tmp_path / "trades.csv"
+    _add(f, pf.BUY, "VCB", 1_000, 90_000, "2026-10-01", fee=0)
+    _add(f, pf.STOP, "VCB", 0, 87_000, "2026-10-02")               # rủi ro 1.000 × 3.000 = 3 tr
+    _add(f, pf.BUY, "FPT", 200, 100_000, "2026-10-01", fee=0)      # chưa cắt lỗ: 10% × 20 tr = 2 tr
+    pos = pf.positions(pf.load(f), "2026-10-08", CAL)
+    heat, missing = pf.portfolio_heat(pos, {"VCB": 90_000, "FPT": 100_000})
+    assert heat == pytest.approx(5_000_000) and missing == ["FPT"]
+    ctx = (CAL, {"VCB": 90_000, "FPT": 100_000}, {}, {})
+    _, caps = pf.sizing_limits("HPG", _px([0.001] * 150), 200_000_000, trades=pf.load(f),
+                               context=ctx)
+    risk = [c for c in caps if c[0] == "risk"][0]
+    assert risk[1] == pytest.approx(0.05 * 200_000_000 - 5_000_000)
+
+
+def test_trade_plan_risk_cap_from_heat():
+    from vnsa.ta.plan import trade_plan
+
+    cfg = {"atr_stop": 2.0, "support_buffer_atr": 0.5, "max_stop_atr": 3.0, "min_stop_atr": 1.0,
+           "reward_multiples": [2.0, 3.0], "capital": 100_000_000, "risk_per_trade": 0.01,
+           "lot_size": 100, "max_position_pct": 0.5}
+    full = trade_plan(50_000, 1_000, [], [], cfg)                  # rủi ro 1 tr, R = 2.000 -> 500 cp
+    hot = trade_plan(50_000, 1_000, [], [], cfg, extra_caps=[("risk", 400_000, "nhiệt danh mục")])
+    assert full.shares == 500 and hot.shares == 200
+    assert any("nhiệt danh mục" in n for n in hot.notes)

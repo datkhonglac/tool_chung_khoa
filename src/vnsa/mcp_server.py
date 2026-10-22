@@ -336,9 +336,10 @@ def get_portfolio() -> dict:
         return {"positions": [], "note": "Sổ lệnh trống (python -m vnsa.cli portfolio buy MÃ SL GIÁ)."}
     cal, prices, groups = pf.market_context(sorted(trades["symbol"].unique()))
     capital = settings()["plan"]["capital"]
-    tab = pf.status(trades, prices, groups, capital, calendar=cal)
+    acts = pf.corporate_actions(sorted(trades["symbol"].unique()))
+    tab = pf.status(trades, prices, groups, capital, calendar=cal, actions=acts)
     return {"capital": capital, "positions": tab,
-            "realized": pf.realized_total(trades, calendar=cal),
+            "realized_and_dividends": pf.realized_total(trades, calendar=cal, actions=acts),
             "note": "Lãi/lỗ % và tỷ trọng dạng thập phân; giá bằng đồng."}
 
 

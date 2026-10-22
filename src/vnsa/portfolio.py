@@ -18,6 +18,16 @@ Quy ước tính:
   lịch giao dịch = các ngày có giá VNINDEX trong kho, sau ngày cuối cùng thì đếm ngày thường (thứ
   Hai–Sáu; chưa trừ ngày lễ chưa có trong kho).
 - Lệnh bán vượt số lượng bán được tại ngày đó bị từ chối.
+
+Sự kiện quyền (nâng cấp v2.1, bảng `dividends` trong kho, theo ngày GDKHQ): người đang giữ cổ phiếu
+hết phiên TRƯỚC ngày GDKHQ được hưởng.
+- Cổ tức tiền: ghi nhận tiền nhận = số cp × cổ tức/cp × (1 − thuế TNCN `[portfolio] dividend_tax`,
+  5%); giá vốn không đổi; mức cắt lỗ đặt trước ngày GDKHQ hạ đúng bằng cổ tức/cp (giá thị trường điều
+  chỉnh giảm bằng chừng ấy — không thì báo chạm cắt lỗ giả).
+- Cổ tức/thưởng bằng cổ phiếu tỷ lệ r: nhận thêm floor(số cp × r) cp (phần lẻ bị bỏ như thực tế),
+  tổng giá vốn không đổi nên giá vốn/cp giảm; mức cắt lỗ chia (1 + r). Cổ phiếu mới coi như bán được
+  sau `[portfolio] bonus_sellable_sessions` phiên (thời gian chờ niêm yết bổ sung, ước lượng).
+- Chưa xử lý: quyền mua phát hành thêm (cần nhập lệnh MUA thật khi thực hiện quyền).
 """
 
 from __future__ import annotations
@@ -69,6 +79,13 @@ def sessions_after(start: pd.Timestamp, end: pd.Timestamp, calendar: pd.Datetime
     return n
 
 
+def _cfg() -> dict:
+    try:
+        return settings().get("portfolio", {})
+    except Exception:  # noqa: BLE001 - test không có settings đầy đủ
+        return {}
+
+
 @dataclass
 class Position:
     symbol: str
@@ -79,28 +96,68 @@ class Position:
     realized: float               # lãi/lỗ đã chốt (sau phí, thuế)
     first_buy: pd.Timestamp | None
     last_buy: pd.Timestamp | None
-    stop: float                   # mức cắt lỗ đang đặt (NaN nếu chưa)
+    stop: float                   # mức cắt lỗ đang đặt (NaN nếu chưa), đã điều chỉnh theo sự kiện quyền
+    dividends: float = 0.0        # cổ tức tiền đã nhận (sau thuế) từ khi bắt đầu giữ
+    events: list = None           # mô tả các sự kiện quyền đã áp dụng
 
 
 def positions(trades: pd.DataFrame, as_of: pd.Timestamp | None = None,
-              calendar: pd.DatetimeIndex | None = None) -> dict[str, Position]:
+              calendar: pd.DatetimeIndex | None = None,
+              actions: dict[str, pd.DataFrame] | None = None) -> dict[str, Position]:
     """Vị thế từng mã tại ngày `as_of` (mặc định hôm nay), kể cả mã đã bán hết (để có lãi đã chốt).
+    actions: {mã: bảng cổ tức (exright_date, cash_per_share, stock_ratio)} — sự kiện quyền.
     ValueError nếu có lệnh bán vượt số lượng bán được lúc đó."""
     as_of = pd.Timestamp(as_of or pd.Timestamp.today()).normalize()
     cal = calendar if calendar is not None else pd.DatetimeIndex([])
+    cfg = _cfg()
+    tax_rate = float(cfg.get("dividend_tax", 0.05))
+    wait_bonus = int(cfg.get("bonus_sellable_sessions", 15))
     out: dict[str, Position] = {}
     for sym, rows in trades[trades["date"] <= as_of].groupby("symbol", sort=True):
-        lots: list[tuple[pd.Timestamp, float]] = []      # (ngày mua, số lượng còn) để tính T+2
-        qty = cost = realized = 0.0
+        # lô: (ngày, số lượng còn, số phiên chờ trước khi bán được)
+        lots: list[tuple[pd.Timestamp, float, int]] = []
+        qty = cost = realized = divs = 0.0
         stop, first, last = float("nan"), None, None
-        for r in rows.itertuples(index=False):
+        notes: list[str] = []
+        ev = (actions or {}).get(sym)
+        events = []
+        if ev is not None and not ev.empty and len(rows):
+            start = rows["date"].min()
+            ev = ev[(ev["exright_date"] > start) & (ev["exright_date"] <= as_of)]
+            events = [("ACT", r.exright_date, r) for r in ev.itertuples(index=False)]
+        # sự kiện quyền ngày D xử lý TRƯỚC lệnh cùng ngày D (hưởng quyền = giữ hết phiên D − 1)
+        seq = sorted([("ACT", d, r) for _, d, r in events]
+                     + [("TRD", r.date, r) for r in rows.itertuples(index=False)],
+                     key=lambda x: (x[1], 0 if x[0] == "ACT" else 1))
+        for kind, day, r in seq:
+            if kind == "ACT":
+                if qty <= 0:
+                    continue
+                cash = getattr(r, "cash_per_share", float("nan"))
+                ratio = getattr(r, "stock_ratio", float("nan"))
+                if not pd.isna(cash) and cash > 0:
+                    got = qty * cash * (1 - tax_rate)
+                    divs += got
+                    if not pd.isna(stop):
+                        stop -= cash
+                    notes.append(f"{day:%d/%m/%Y}: cổ tức tiền {cash:,.0f}đ/cp → nhận {got:,.0f}đ")
+                if not pd.isna(ratio) and ratio > 0:
+                    new = float(np.floor(qty * ratio))
+                    if new > 0:
+                        qty += new
+                        lots.append((day, new, wait_bonus))
+                    if not pd.isna(stop):
+                        stop /= 1 + ratio
+                    notes.append(f"{day:%d/%m/%Y}: cổ tức/thưởng cổ phiếu {ratio:.0%} → thêm "
+                                 f"{new:,.0f} cp")
+                continue
             if r.side == BUY:
                 qty += r.quantity
                 cost += r.quantity * r.price + r.fee
-                lots.append((r.date, r.quantity))
+                lots.append((r.date, r.quantity, 2))
                 first, last = first or r.date, r.date
             elif r.side == SELL:
-                ready = sum(q for d, q in lots if sessions_after(d, r.date, cal) >= 2)
+                ready = sum(q for d, q, w in lots if sessions_after(d, r.date, cal) >= w)
                 if r.quantity > ready + 1e-9:
                     raise ValueError(f"{sym} ngày {r.date:%d/%m/%Y}: bán {r.quantity:,.0f} cp nhưng "
                                      f"chỉ có {ready:,.0f} cp đã về tài khoản (T+2)")
@@ -109,20 +166,20 @@ def positions(trades: pd.DataFrame, as_of: pd.Timestamp | None = None,
                 cost -= avg * r.quantity
                 qty -= r.quantity
                 left = r.quantity                          # trừ vào lô đã về, lô cũ trước
-                for i, (d, q) in enumerate(lots):
+                for i, (d, q, w) in enumerate(lots):
                     if left <= 0:
                         break
-                    if sessions_after(d, r.date, cal) >= 2:
+                    if sessions_after(d, r.date, cal) >= w:
                         take = min(q, left)
-                        lots[i], left = (d, q - take), left - take
-                lots = [(d, q) for d, q in lots if q > 1e-9]
+                        lots[i], left = (d, q - take, w), left - take
+                lots = [(d, q, w) for d, q, w in lots if q > 1e-9]
                 if qty <= 1e-9:
                     qty, cost, stop = 0.0, 0.0, float("nan")
             elif r.side == STOP:
                 stop = r.price
-        sellable = sum(q for d, q in lots if sessions_after(d, as_of, cal) >= 2)
+        sellable = sum(q for d, q, w in lots if sessions_after(d, as_of, cal) >= w)
         out[sym] = Position(sym, qty, sellable, cost / qty if qty > 0 else float("nan"), cost,
-                            realized, first, last, stop)
+                            realized, first, last, stop, divs, notes)
     return out
 
 
@@ -137,7 +194,8 @@ def _costs(side: str, quantity: float, price: float, fee: float | None,
 
 def add(side: str, symbol: str, quantity: float, price: float, date=None,
         fee: float | None = None, tax: float | None = None, note: str = "",
-        file: Path | None = None, calendar: pd.DatetimeIndex | None = None) -> dict:
+        file: Path | None = None, calendar: pd.DatetimeIndex | None = None,
+        actions: dict[str, pd.DataFrame] | None = None) -> dict:
     """Ghi một lệnh vào sổ (kiểm tra trước: số lượng > 0, bán không vượt số bán được). Trả dòng đã ghi."""
     side = side.upper()
     if side not in SIDES:
@@ -161,7 +219,7 @@ def add(side: str, symbol: str, quantity: float, price: float, date=None,
         raise ValueError(f"chưa có lệnh mua {symbol} trong sổ")
     trial = (pd.DataFrame([row]) if trades.empty
              else pd.concat([trades, pd.DataFrame([row])], ignore_index=True))
-    positions(trial, max(date, pd.Timestamp.today().normalize()), calendar)   # báo lỗi T+2 nếu có
+    positions(trial, max(date, pd.Timestamp.today().normalize()), calendar, actions)   # lỗi T+2
     file.parent.mkdir(parents=True, exist_ok=True)
     new = not file.exists()
     with file.open("a", newline="", encoding="utf-8") as f:
@@ -187,11 +245,12 @@ def undo(file: Path | None = None) -> str | None:
 
 def status(trades: pd.DataFrame, prices: dict[str, float], groups: dict[str, str],
            capital: float, as_of: pd.Timestamp | None = None,
-           calendar: pd.DatetimeIndex | None = None) -> pd.DataFrame:
+           calendar: pd.DatetimeIndex | None = None,
+           actions: dict[str, pd.DataFrame] | None = None) -> pd.DataFrame:
     """Bảng vị thế đang giữ: số lượng, bán được (T+2), giá vốn, giá hiện tại, lãi/lỗ tạm tính,
-    tỷ trọng / vốn, khoảng cách tới cắt lỗ, nhóm ngành."""
+    tỷ trọng / vốn, khoảng cách tới cắt lỗ, cổ tức tiền đã nhận, nhóm ngành."""
     rows = []
-    for sym, p in positions(trades, as_of, calendar).items():
+    for sym, p in positions(trades, as_of, calendar, actions).items():
         if p.quantity <= 0:
             continue
         px = prices.get(sym, float("nan"))
@@ -203,12 +262,46 @@ def status(trades: pd.DataFrame, prices: dict[str, float], groups: dict[str, str
                      "Tỷ trọng": value / capital if capital > 0 else float("nan"),
                      "Cắt lỗ": p.stop,
                      "Cách cắt lỗ": px / p.stop - 1 if p.stop > 0 else float("nan"),
-                     "Đã chốt": p.realized})
+                     "Rủi ro mở": open_risk(p, px, _cfg().get("default_risk_pct", 0.10))[0],
+                     "Cổ tức nhận": p.dividends, "Đã chốt": p.realized})
     return pd.DataFrame(rows)
 
 
-def realized_total(trades: pd.DataFrame, as_of=None, calendar=None) -> float:
-    return float(sum(p.realized for p in positions(trades, as_of, calendar).values()))
+def realized_total(trades: pd.DataFrame, as_of=None, calendar=None, actions=None) -> float:
+    """Lãi/lỗ đã chốt + cổ tức tiền đã nhận (kể cả mã đã bán hết)."""
+    return float(sum(p.realized + p.dividends
+                     for p in positions(trades, as_of, calendar, actions).values()))
+
+
+def open_risk(p: Position, price: float, default_pct: float = 0.10) -> tuple[float, bool]:
+    """(số tiền lỗ thêm nếu giá về mức cắt lỗ, có đặt cắt lỗ không). Chưa đặt cắt lỗ thì tính
+    `default_pct` giá trị vị thế (thận trọng). Đã qua cắt lỗ thì 0 (lỗ đã nằm trong giá)."""
+    if p.quantity <= 0 or pd.isna(price):
+        return 0.0, True
+    if pd.isna(p.stop) or p.stop <= 0:
+        return p.quantity * price * default_pct, False
+    return p.quantity * max(price - p.stop, 0.0), True
+
+
+def portfolio_heat(pos: dict[str, Position], prices: dict[str, float], cfg: dict | None = None
+                   ) -> tuple[float, list[str]]:
+    """(tổng rủi ro mở bằng đồng, các mã chưa đặt cắt lỗ) — "nhiệt danh mục" (v2.1, bước 5)."""
+    cfg = {**_cfg(), **(cfg or {})}
+    total, missing = 0.0, []
+    for sym, p in pos.items():
+        r, has_stop = open_risk(p, prices.get(sym, p.avg_cost), cfg.get("default_risk_pct", 0.10))
+        total += r
+        if p.quantity > 0 and not has_stop:
+            missing.append(sym)
+    return total, missing
+
+
+def corporate_actions(symbols: list[str]) -> dict[str, pd.DataFrame]:
+    """{mã: bảng cổ tức trong kho} cho các mã trong sổ lệnh."""
+    from vnsa.data.store import Store
+
+    with Store(path("warehouse")) as store:
+        return {s: store.dividends(s) for s in symbols}
 
 
 def market_context(symbols: list[str]) -> tuple[pd.DatetimeIndex, dict[str, float], dict[str, str]]:
@@ -262,7 +355,9 @@ def sizing_limits(symbol: str, prices: pd.DataFrame, capital: float, cfg: dict |
                   trades: pd.DataFrame | None = None, context=None
                   ) -> tuple[tuple[float, str] | None, list[tuple[float, str]]]:
     """Giới hạn khối lượng của lệnh mua mới `symbol` theo danh mục đang giữ:
-    (risk_adjust cho trade_plan hoặc None, extra_caps). Sổ lệnh trống thì không đổi gì.
+    (risk_adjust cho trade_plan hoặc None, extra_caps). extra_caps: [("value", đồng, lý do)] chặn giá
+    trị vị thế, [("risk", đồng, lý do)] chặn số tiền rủi ro (nhiệt danh mục `[portfolio] max_heat`).
+    Sổ lệnh trống thì không đổi gì.
     context: (lịch, giá gần nhất, nhóm ngành, {mã: bảng giá}) để test; mặc định đọc kho."""
     cfg = {**settings().get("portfolio", {}), **(cfg or {})}
     trades = load() if trades is None else trades
@@ -278,7 +373,9 @@ def sizing_limits(symbol: str, prices: pd.DataFrame, capital: float, cfg: dict |
             hist = {s: store.prices(s) for s in syms if s != symbol}
     else:
         cal, last, groups, hist = context
-    held = {s: p for s, p in positions(trades, calendar=cal).items() if p.quantity > 0}
+    acts = corporate_actions(syms) if context is None else None
+    held = {s: p for s, p in positions(trades, calendar=cal, actions=acts).items()
+            if p.quantity > 0}
     if not held:
         return None, []
     others = {s: _returns(hist[s]) for s in held if s != symbol and s in hist and len(hist[s])}
@@ -289,11 +386,165 @@ def sizing_limits(symbol: str, prices: pd.DataFrame, capital: float, cfg: dict |
         adjust = (factor, f"tương quan {rho:.2f} với {who} đang giữ: rủi ro lệnh này còn "
                           f"{factor:.0%} (tránh đa dạng hoá giả)")
     caps = []
+    heat, _ = portfolio_heat({s: p for s, p in held.items() if s != symbol}, last, cfg)
+    if symbol in held:                              # mã đang giữ: tính cả phần đã có
+        heat += open_risk(held[symbol], last.get(symbol, held[symbol].avg_cost),
+                          cfg.get("default_risk_pct", 0.10))[0]
+    max_heat = cfg.get("max_heat", 0.05)
+    if max_heat:
+        room = max(0.0, capital * max_heat - heat)
+        caps.append(("risk", room, f"tổng rủi ro mở của danh mục ≤ {max_heat:.0%} vốn (đang "
+                                   f"{heat / capital:.1%})"))
     group = groups.get(symbol, "")
     max_pct = cfg.get("max_sector_pct", 0.30)
     if group and max_pct:
         used = sum(p.quantity * last.get(s, p.avg_cost) for s, p in held.items()
                    if groups.get(s) == group)
-        caps.append((max(0.0, capital * max_pct - used),
+        caps.append(("value", max(0.0, capital * max_pct - used),
                      f"trần nhóm {group} {max_pct:.0%} vốn (đang giữ {used / capital:.0%})"))
     return adjust, caps
+
+
+# ---- sao lưu sổ lệnh sang repo RIÊNG TƯ (v2.1) ----------------------------------------------------
+# Repo chính đang CÔNG KHAI nên sổ lệnh nằm trong .gitignore; Codespace bị xoá là mất. Lệnh
+# `portfolio backup` / `portfolio restore` chép data/portfolio/trades.csv sang/từ một repo riêng tư.
+# Cấu hình bằng biến môi trường (đặt ở GitHub → Settings → Codespaces → Secrets):
+#   VNSA_BACKUP_REPO  = "chu_so_huu/ten_repo" (repo RIÊNG TƯ, tạo trước, có thể trống)
+#   VNSA_BACKUP_TOKEN = token GitHub fine-grained chỉ có quyền Contents: Read and write với repo đó
+#                       (không có thì dùng quyền git sẵn có của máy)
+# Từ chối sao lưu nếu repo đích là repo công khai hoặc chính repo tool.
+
+BACKUP_FILE = "trades.csv"
+
+
+class BackupError(RuntimeError):
+    pass
+
+
+def _backup_target(repo: str | None = None) -> tuple[str, str | None, str | None]:
+    """(URL git, "owner/repo" nếu là GitHub, token)."""
+    import os
+    import re
+
+    repo = (repo or os.environ.get("VNSA_BACKUP_REPO") or _cfg().get("backup_repo") or "").strip()
+    if not repo:
+        raise BackupError("chưa cấu hình repo sao lưu: đặt biến môi trường VNSA_BACKUP_REPO = "
+                          "\"ten_ban/ten_repo_rieng_tu\" (xem README, mục Sổ lệnh)")
+    token = os.environ.get("VNSA_BACKUP_TOKEN") or None
+    m = re.fullmatch(r"(?:https://github\.com/)?([\w.-]+/[\w.-]+?)(?:\.git)?/?", repo)
+    if m and "/" in repo and not Path(repo).exists():
+        slug = m.group(1)
+        auth = f"x-access-token:{token}@" if token else ""
+        return f"https://{auth}github.com/{slug}.git", slug, token
+    return repo, None, token                       # đường dẫn/URL git khác (vd repo nội bộ, test)
+
+
+def _check_private(slug: str, token: str | None) -> None:
+    """Chặn sao lưu lên repo công khai hoặc chính repo của tool (GitHub API)."""
+    import json
+    import subprocess
+    import urllib.error
+    import urllib.request
+
+    origin = subprocess.run(["git", "config", "--get", "remote.origin.url"], capture_output=True,
+                            text=True, cwd=Path(__file__).resolve().parents[2]).stdout
+    if slug.lower() in origin.lower():
+        raise BackupError(f"{slug} là repo của tool (công khai) — chọn một repo RIÊNG TƯ khác")
+    req = urllib.request.Request(f"https://api.github.com/repos/{slug}",
+                                 headers={"Accept": "application/vnd.github+json",
+                                          **({"Authorization": f"Bearer {token}"} if token else {})})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            info = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:          # không thấy: repo riêng tư (không có token) hoặc chưa tạo
+            return
+        raise BackupError(f"không kiểm tra được repo {slug}: HTTP {e.code}") from e
+    except OSError:
+        return                     # không có mạng tới API: để git tự báo lỗi quyền
+    if not info.get("private", False):
+        raise BackupError(f"repo {slug} đang CÔNG KHAI — không sao lưu sổ lệnh lên đó. Đổi repo sang "
+                          "Private (Settings → Danger Zone → Change visibility) rồi chạy lại.")
+
+
+def _git(*args, cwd=None) -> str:
+    import subprocess
+
+    import re
+
+    res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    if res.returncode != 0:
+        msg = (res.stderr or res.stdout).strip().splitlines()
+        text = re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", msg[-1] if msg else "lỗi")
+        raise BackupError(f"git {args[0]}: {text}")   # không in token ra màn hình
+    return res.stdout
+
+
+def _clone(url: str, where: Path) -> None:
+    import shutil
+
+    shutil.rmtree(where, ignore_errors=True)
+    where.parent.mkdir(parents=True, exist_ok=True)
+    _git("clone", "-q", "--depth", "1", url, str(where))
+
+
+def backup(file: Path | None = None, repo: str | None = None) -> str:
+    """Chép sổ lệnh lên repo riêng tư (một commit nếu có thay đổi). Trả mô tả kết quả."""
+    import shutil
+    import tempfile
+
+    file = Path(file or ledger_path())
+    if not file.exists():
+        raise BackupError(f"chưa có sổ lệnh {file}")
+    url, slug, token = _backup_target(repo)
+    if slug:
+        _check_private(slug, token)
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "backup"
+        _clone(url, work)
+        shutil.copyfile(file, work / BACKUP_FILE)
+        _git("add", BACKUP_FILE, cwd=work)
+        if not _git("status", "--porcelain", cwd=work).strip():
+            return "sổ lệnh trên repo sao lưu đã giống bản trên máy — không cần sao lưu"
+        _git("-c", "user.name=vnsa", "-c", "user.email=vnsa@localhost", "commit", "-q", "-m",
+             f"Sao lưu sổ lệnh {pd.Timestamp.now():%d/%m/%Y %H:%M}", cwd=work)
+        _git("push", "-q", "origin", "HEAD", cwd=work)
+    return f"đã sao lưu {file.name} ({len(load(file))} lệnh) lên {slug or 'repo sao lưu'}"
+
+
+def restore(file: Path | None = None, repo: str | None = None, force: bool = False) -> str:
+    """Lấy sổ lệnh từ repo riêng tư về máy. Không ghi đè sổ đang có trừ khi force (bản cũ được giữ
+    thành trades.csv.bak)."""
+    import shutil
+    import tempfile
+
+    file = Path(file or ledger_path())
+    url, slug, token = _backup_target(repo)
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "backup"
+        _clone(url, work)
+        src = work / BACKUP_FILE
+        if not src.exists():
+            raise BackupError(f"repo {slug or url} chưa có {BACKUP_FILE}")
+        if file.exists() and not force:
+            if file.read_bytes() == src.read_bytes():
+                return "sổ lệnh trên máy đã giống bản sao lưu"
+            raise BackupError(f"đã có sổ lệnh {file} khác bản sao lưu — chạy lại với --force để thay "
+                              "(bản trên máy được giữ thành trades.csv.bak)")
+        file.parent.mkdir(parents=True, exist_ok=True)
+        if file.exists():
+            shutil.copyfile(file, file.with_suffix(".csv.bak"))
+        shutil.copyfile(src, file)
+    return f"đã lấy sổ lệnh ({len(load(file))} lệnh) từ {slug or 'repo sao lưu'} về {file}"
+
+
+def auto_backup() -> str | None:
+    """Sao lưu sau mỗi lệnh ghi nếu đã cấu hình VNSA_BACKUP_REPO; lỗi chỉ cảnh báo, không chặn."""
+    import os
+
+    if not (os.environ.get("VNSA_BACKUP_REPO") or _cfg().get("backup_repo")):
+        return None
+    try:
+        return backup()
+    except BackupError as e:
+        return f"chưa sao lưu được: {e}"

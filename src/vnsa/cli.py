@@ -643,13 +643,26 @@ def _print_zone(z) -> None:
     if not _nan(z.fair_value):
         print(f"  Giá trị hợp lý {z.fair_value:,.0f} − biên an toàn {z.margin_of_safety:.0%} "
               f"= trần giá mua {z.value_cap:,.0f}")
-    if z.status == "CHỜ GIÁ":
+    if z.tiers:
+        head = "CHỜ GIÁ — thang mua dưới trần giá trị" if z.status == "CHỜ GIÁ" else "THANG MUA"
+        print(f"  ⇒ {head} (3 lệnh LO):")
+        for t in z.tiers:
+            fill = "" if _nan(t.fill_prob) else f", khớp ~{t.fill_prob:.0%} trong 20 phiên"
+            print(f"    {t.name:<14} {t.price:>9,.0f} ({t.depth:+.1%}) · {t.weight:.0%} vốn lệnh"
+                  f"{fill} — {t.source}")
+        print(f"    Giá vốn bình quân nếu khớp đủ 3 lớp: {z.mid:,.0f}")
+    elif z.status == "CHỜ GIÁ":
         print(f"  ⇒ CHỜ GIÁ: chỉ mua khi giá về ≤ {z.high:,.0f} ({z.discount:+.1%} so với giá hiện tại)")
     else:
         print(f"  ⇒ VÙNG MUA {z.low:,.0f} – {z.high:,.0f} ({z.low / z.close - 1:+.1%} đến "
               f"{z.discount:+.1%} so với giá đóng cửa)")
         print(f"    Gợi ý: 2 lệnh LO, ½ khối lượng ở {z.high:,.0f} và ½ ở {z.low:,.0f} "
               f"→ giá bình quân dự kiến {z.mid:,.0f}")
+    if z.ref_tiers:
+        print("  Mức mua thêm nếu giá giảm sâu (tham khảo, kế hoạch vẫn dùng vùng trên):")
+        for t in z.ref_tiers[1:]:
+            fill = "" if _nan(t.fill_prob) else f", khớp ~{t.fill_prob:.0%} trong 20 phiên"
+            print(f"    {t.name:<14} {t.price:>9,.0f} ({t.depth:+.1%}){fill} — {t.source}")
     for n in z.notes:
         print(f"  ! {n}")
 
@@ -943,6 +956,36 @@ def cmd_study_timing(args) -> int:
     return 0
 
 
+def cmd_study_entry(args) -> int:
+    """Kiểm định điểm mua: vùng cũ vs thang 3 lớp (recommend/entry_study.py)."""
+    from vnsa import analysis
+    from vnsa.recommend.entry_study import format_entry_study
+
+    cfg = settings()["study"]
+    syms = [s.upper() for s in args.symbols] or cfg["universe"]
+    if not args.no_fetch:
+        from vnsa.data.autofetch import Updater
+
+        print(f"Tải giá {args.years or cfg['years']} năm cho {len(syms)} mã + VNINDEX ...")
+        for step in Updater().long_prices(syms, args.years or cfg["years"]):
+            print(step)
+    try:
+        res = analysis.entry_study(syms, cfg["split"], cfg["start"])
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    text = format_entry_study(res)
+    if res.skipped:
+        text += f"\nBỏ qua (thiếu giá): {', '.join(res.skipped)}"
+    print("\n" + text)
+    out = path("warehouse").parent / "study"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "entry_study.txt").write_text(text, encoding="utf-8")
+    res.rows.to_csv(out / "entry_study.csv", index=False)
+    print(f"\nĐã lưu {out / 'entry_study.txt'} và entry_study.csv")
+    return 0
+
+
 def cmd_screen(args) -> int:
     """Sàng lọc toàn thị trường (src/vnsa/screen/): lọc theo tầng, in và lưu kết quả."""
     from vnsa.screen.report import format_industry, format_liquidity, format_picks, format_taxonomy
@@ -1046,7 +1089,7 @@ def cmd_portfolio(args) -> int:
         cal, _, _ = pf.market_context([sym])
         try:
             row = pf.add(side, sym, qty, price, args.date, args.fee, args.tax, args.note or "",
-                         calendar=cal)
+                         calendar=cal, actions=pf.corporate_actions([sym]))
         except ValueError as e:
             print(f"Không ghi: {e}")
             return 1
@@ -1054,11 +1097,23 @@ def cmd_portfolio(args) -> int:
                 f"{side} {row['quantity']:,.0f} {sym} giá {row['price']:,.0f}đ "
                 f"(phí {row['fee']:,.0f}đ, thuế {row['tax']:,.0f}đ)")
         print(f"Đã ghi {row['date']:%d/%m/%Y}: {what}")
-        print(f"Sổ lệnh: {file} (không đưa lên Git — nhớ sao lưu)")
+        saved = pf.auto_backup()
+        print(f"Sổ lệnh: {file} — " + (saved or "chưa cấu hình sao lưu (portfolio backup, xem README)"))
         return 0
     if action == "undo":
         line = pf.undo()
         print(f"Đã xoá dòng cuối: {line}" if line else "Sổ lệnh trống.")
+        if line:
+            saved = pf.auto_backup()
+            if saved:
+                print(saved)
+        return 0
+    if action in ("backup", "restore"):
+        try:
+            print(pf.backup() if action == "backup" else pf.restore(force=args.force))
+        except pf.BackupError as e:
+            print(f"Không {('sao lưu' if action == 'backup' else 'lấy về')} được: {e}")
+            return 1
         return 0
     trades = pf.load()
     if trades.empty:
@@ -1071,10 +1126,13 @@ def cmd_portfolio(args) -> int:
         return 0
     syms = sorted(trades["symbol"].unique())
     cal, prices, groups = pf.market_context(syms)
+    acts = pf.corporate_actions(syms)
     capital = settings()["plan"]["capital"]
     try:
-        tab = pf.status(trades, prices, groups, capital, calendar=cal)
-        realized = pf.realized_total(trades, calendar=cal)
+        tab = pf.status(trades, prices, groups, capital, calendar=cal, actions=acts)
+        realized = pf.realized_total(trades, calendar=cal, actions=acts)
+        events = [n for p in pf.positions(trades, calendar=cal, actions=acts).values()
+                  for n in (p.events or [])]
     except ValueError as e:
         print(f"Sổ lệnh có lỗi: {e}. Sửa bằng 'portfolio undo' hoặc mở file {file}.")
         return 1
@@ -1082,14 +1140,23 @@ def cmd_portfolio(args) -> int:
         print(f"Không còn vị thế nào. Lãi/lỗ đã chốt: {realized:,.0f}đ")
         return 0
     fmt = {c: "{:,.0f}".format for c in ("SL", "Bán được", "Giá vốn", "Giá", "Giá trị", "Lãi/lỗ",
-                                          "Cắt lỗ", "Đã chốt")}
+                                          "Cắt lỗ", "Rủi ro mở", "Cổ tức nhận", "Đã chốt")}
     fmt.update({c: (lambda x: "—" if pd.isna(x) else f"{x:+.1%}") for c in ("Lãi/lỗ %", "Cách cắt lỗ")})
     fmt["Tỷ trọng"] = lambda x: "—" if pd.isna(x) else f"{x:.1%}"
     print(f"DANH MỤC — vốn tham chiếu {capital:,.0f}đ ([plan] capital)")
     print(tab.to_string(index=False, formatters=fmt))
     total = tab["Giá trị"].sum()
     print(f"\nTổng giá trị {total:,.0f}đ ({total / capital:.1%} vốn) · lãi/lỗ tạm tính "
-          f"{tab['Lãi/lỗ'].sum():+,.0f}đ · đã chốt {realized:+,.0f}đ")
+          f"{tab['Lãi/lỗ'].sum():+,.0f}đ · đã chốt + cổ tức {realized:+,.0f}đ")
+    if events:
+        print("Sự kiện quyền đã tính (giá vốn, số lượng, cắt lỗ đã điều chỉnh):")
+        for n in events:
+            print(f"  · {n}")
+    heat_cap = settings().get("portfolio", {}).get("max_heat", 0.05)
+    heat = tab["Rủi ro mở"].sum()
+    print(f"Rủi ro mở (lỗ thêm nếu mọi mã về cắt lỗ): {heat:,.0f}đ = {heat / capital:.1%} vốn "
+          f"(trần {heat_cap:.0%})" + (" — VƯỢT TRẦN: không mở thêm vị thế" if heat > heat_cap * capital
+                                    else ""))
     by_group = tab.groupby("Nhóm ngành")["Giá trị"].sum() / capital
     cap = settings().get("portfolio", {}).get("max_sector_pct", 0.30)
     over = by_group[by_group > cap]
@@ -1258,6 +1325,12 @@ def main(argv: list[str] | None = None) -> int:
     pst.add_argument("--no-fetch", action="store_true", help="Không tải, chỉ dùng giá trong kho")
     pst.set_defaults(func=cmd_study_timing)
 
+    pse = sub.add_parser("study-entry", help="Kiểm định điểm mua: vùng cũ vs thang mua 3 lớp")
+    pse.add_argument("symbols", nargs="*", help="Bỏ trống = [study] universe trong settings")
+    pse.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
+    pse.add_argument("--no-fetch", action="store_true", help="Không tải, chỉ dùng giá trong kho")
+    pse.set_defaults(func=cmd_study_entry)
+
     psc = sub.add_parser("screen", help="Sàng lọc toàn thị trường: nhóm ngành và mã tiềm năng")
     psc.add_argument("--stage", choices=["liquidity", "industry", "pick"], default="pick",
                      help="Chạy đến tầng nào: liquidity = tầng 1 (lọc thanh khoản); industry = "
@@ -1289,9 +1362,9 @@ def main(argv: list[str] | None = None) -> int:
     ph.add_argument("--git", help="Nạp từ nhánh Git, ví dụ origin/signals (workflow hằng ngày)")
     ph.set_defaults(func=cmd_history)
 
-    ppf = sub.add_parser("portfolio", help="Sổ lệnh và danh mục: buy/sell/stop/list/status/undo")
+    ppf = sub.add_parser("portfolio", help="Sổ lệnh và danh mục: buy/sell/stop/list/status/undo/backup/restore")
     ppf.add_argument("action", nargs="?", default="status",
-                     choices=["status", "buy", "sell", "stop", "list", "undo"])
+                     choices=["status", "buy", "sell", "stop", "list", "undo", "backup", "restore"])
     ppf.add_argument("symbol", nargs="?")
     ppf.add_argument("quantity", nargs="?", type=float,
                      help="Số lượng (buy/sell) hoặc giá cắt lỗ (stop)")
@@ -1300,6 +1373,8 @@ def main(argv: list[str] | None = None) -> int:
     ppf.add_argument("--fee", type=float, help="Phí thật trên sao kê (mặc định theo [backtest] fee)")
     ppf.add_argument("--tax", type=float, help="Thuế bán thật (mặc định 0,1%% giá trị bán)")
     ppf.add_argument("--note", help="Ghi chú")
+    ppf.add_argument("--force", action="store_true",
+                     help="restore: thay sổ lệnh trên máy bằng bản sao lưu (giữ bản cũ .bak)")
     ppf.set_defaults(func=cmd_portfolio)
 
     pc = sub.add_parser("check", help="Kiểm tra chất lượng dữ liệu")

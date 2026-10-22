@@ -24,6 +24,25 @@ Công thức (tham số ở mục [entry] trong settings):
 5. Làm tròn theo bước giá của sàn: đáy vùng làm tròn lên, đỉnh vùng làm tròn xuống.
 6. Giải ngân 2 lệnh LO: một nửa ở đỉnh vùng, một nửa ở đáy vùng. Kế hoạch giao dịch (plan.py) dùng
    giá mua bình quân dự kiến = giữa vùng (làm tròn bước giá) để tính cắt lỗ và khối lượng.
+
+THANG MUA 3 LỚP (nâng cấp v2.1, `[entry] ladder = true`): vùng trên chỉ cách giá 0–2% vì neo vào mức
+đỡ GẦN NHẤT và rộng 0,5 ATR. Thang mua chia vốn thành 3 lệnh LO ở 3 độ sâu, tính từ giá tham chiếu
+ref = giá hiện tại (hoặc trần giá trị nếu giá đang cao hơn trần — trường hợp "CHỜ GIÁ"):
+  Lớp 1 thăm dò (30%): điểm neo như trên (mức đỡ gần nhất trong `max_pullback_atr` ATR dưới ref);
+        "CHỜ GIÁ": mức đỡ cao nhất trong 1 ATR dưới trần, không có thì đúng trần.
+  Lớp 2 chính (40%): mức đỡ MẠNH nhất trong khoảng [ref − `l2_range_atr` ATR, lớp 1 − `ladder_gap_atr`
+        ATR]: hỗ trợ chạm ≥ 2 lần (nhiều lần chạm nhất, rồi gần giá nhất), không có thì MA50/MA200
+        cao nhất trong khoảng, không có nữa thì lớp 1 − `ladder_fallback_atr` ATR.
+  Lớp 3 sâu (30%): như lớp 2 trong khoảng [ref − `l3_range_atr` ATR, lớp 2 − `ladder_gap_atr` ATR].
+Mọi lớp ≤ trần giá trị. low = lớp 3, high = lớp 1, mid = giá bình quân có trọng số khi khớp đủ 3 lớp
+(plan.py dùng mid làm giá vào và đặt cắt lỗ DƯỚI lớp 3). Xác suất khớp từng lớp trong 20 phiên tính
+từ Monte Carlo (analysis.risk, theo giá đóng cửa nên thận trọng). Hiệu quả so với vùng cũ: lệnh
+study-entry (recommend/entry_study.py).
+
+KẾT QUẢ KIỂM ĐỊNH (22/10/2026, 45 mã, 10 năm — docs/kiem_dinh_thoi_diem.md): thang mua cho giá vốn
+rẻ hơn ~4% và lãi trên phần vốn khớp cao hơn, nhưng chỉ khớp ~43% vốn trong 20 phiên nên lãi trên TỔNG
+vốn thấp hơn vùng cũ ở cả hai giai đoạn. Vì vậy mặc định `ladder = false` (kế hoạch dùng vùng cũ) và
+`ladder_show = true`: thẻ báo cáo vẫn in lớp 2, lớp 3 làm "mức mua thêm nếu giá giảm sâu" để tham khảo.
 """
 
 from __future__ import annotations
@@ -34,6 +53,16 @@ import pandas as pd
 
 from vnsa.ta.levels import Level
 from vnsa.ta.plan import round_tick
+
+
+@dataclass
+class Tier:
+    name: str                    # "Lớp 1 thăm dò" | "Lớp 2 chính" | "Lớp 3 sâu"
+    price: float                 # giá đặt lệnh LO (đã làm tròn bước giá)
+    weight: float                # phần vốn của lệnh (0–1)
+    source: str                  # hỗ trợ (n lần chạm) | SMA50 | ... | "lớp trên − k ATR" | "trần giá trị"
+    depth: float                 # so với giá hiện tại (âm = thấp hơn)
+    fill_prob: float = float("nan")   # xác suất khớp trong 20 phiên (Monte Carlo), điền ở analysis.risk
 
 
 @dataclass
@@ -48,8 +77,11 @@ class EntryZone:
     value_cap: float             # trần giá trị (NaN nếu không có giá trị hợp lý)
     fair_value: float
     margin_of_safety: float
-    mid: float = float("nan")    # giá mua bình quân dự kiến khi chia 2 lệnh (giữa vùng)
+    mid: float = float("nan")    # giá mua bình quân dự kiến (giữa vùng / bình quân thang mua)
     notes: list[str] = field(default_factory=list)
+    tiers: list[Tier] = field(default_factory=list)   # thang mua 3 lớp (rỗng nếu tắt)
+    ref_tiers: list[Tier] = field(default_factory=list)   # thang mua chỉ để THAM KHẢO (ladder tắt)
+    stop_cap: float = float("nan")     # cắt lỗ phải thấp hơn mức này (dưới lớp sâu nhất)
 
     @property
     def entry(self) -> float:
@@ -67,6 +99,49 @@ def vwap(df: pd.DataFrame, n: int = 20) -> float:
     typical = (tail["high"] + tail["low"] + tail["close"]) / 3
     vol = tail["volume"].astype(float)
     return float((typical * vol).sum() / vol.sum()) if vol.sum() > 0 else float(typical.mean())
+
+
+def _pick(cands: list[tuple[float, str, int]], lo: float, hi: float) -> tuple[float, str] | None:
+    """Mức đỡ mạnh nhất trong [lo, hi]: hỗ trợ ≥ 2 lần chạm (nhiều lần chạm nhất, rồi giá cao nhất),
+    không có thì đường trung bình/VWAP cao nhất trong khoảng."""
+    inside = [(p, src, n) for p, src, n in cands if not pd.isna(p) and lo <= p <= hi]
+    strong = [c for c in inside if c[2] >= 2]
+    if strong:
+        p, src, n = max(strong, key=lambda c: (c[2], c[0]))
+        return p, f"{src} ({n} lần chạm)"
+    lines = [c for c in inside if c[2] == 0]
+    if lines:
+        p, src, _ = max(lines)
+        return p, src
+    return None
+
+
+def build_ladder(ind: pd.DataFrame, supports: list[Level], cfg: dict, ref: float, top: float,
+                 top_source: str, cap: float, ticks) -> tuple[list[Tier], float]:
+    """(3 lớp, mức cắt lỗ tối đa) — xem docstring module."""
+    last = ind.iloc[-1]
+    close, atr = float(last["close"]), float(last["atr"])
+    # lớp 2/3 chỉ neo vào hỗ trợ và MA50/MA200: MA20, VWAP20 là mốc ngắn hạn đã dùng cho lớp 1
+    cands = [(s.price, "hỗ trợ", s.touches) for s in supports]
+    for col, name in (("sma50", "MA50"), ("sma200", "MA200")):
+        if col in ind:
+            cands.append((float(last[col]), name, 0))
+    gap, fb = cfg.get("ladder_gap_atr", 0.75) * atr, cfg.get("ladder_fallback_atr", 1.5) * atr
+    p1 = top
+    got = _pick(cands, ref - cfg.get("l2_range_atr", 4.0) * atr, p1 - gap)
+    p2, s2 = got if got else (p1 - fb, f"lớp 1 − {cfg.get('ladder_fallback_atr', 1.5):g} ATR")
+    got = _pick(cands, ref - cfg.get("l3_range_atr", 7.0) * atr, p2 - gap)
+    p3, s3 = got if got else (p2 - fb, f"lớp 2 − {cfg.get('ladder_fallback_atr', 1.5):g} ATR")
+    w = cfg.get("ladder_weights", [0.3, 0.4, 0.3])
+    names = ("Lớp 1 thăm dò", "Lớp 2 chính", "Lớp 3 sâu")
+    tiers = []
+    for name, price, weight, src in zip(names, (p1, p2, p3), w, (top_source, s2, s3), strict=True):
+        if not pd.isna(cap):
+            price = min(price, cap)
+        price = round_tick(max(price, 0.0), "down", ticks)
+        tiers.append(Tier(name, price, float(weight), src, price / close - 1))
+    stop_cap = tiers[-1].price - cfg.get("ladder_stop_atr", 1.0) * atr
+    return tiers, stop_cap
 
 
 def entry_zone(ind: pd.DataFrame, supports: list[Level], cfg: dict,
@@ -112,6 +187,22 @@ def entry_zone(ind: pd.DataFrame, supports: list[Level], cfg: dict,
     low, high = round_tick(low, "up", ticks), round_tick(high, "down", ticks)
     low = min(low, high)          # vùng hẹp hơn 1 bước giá: còn một mức giá
     mid = round_tick((low + high) / 2, "nearest", ticks)
-    return EntryZone(status=status, low=low, high=high, anchor=anchor, anchor_source=source,
+    zone = EntryZone(status=status, low=low, high=high, anchor=anchor, anchor_source=source,
                      close=close, vwap20=vw, value_cap=cap, fair_value=fair_value,
                      margin_of_safety=mos, mid=mid, notes=notes)
+    if cfg.get("ladder", False) or cfg.get("ladder_show", False):
+        if status == "CHỜ GIÁ":
+            under = [(p, src) for p, src in [(s.price, "hỗ trợ") for s in supports]
+                     + [(vw, "VWAP20"), (sma20, "MA20")] if not pd.isna(p) and cap - atr <= p <= cap]
+            ref, (top, top_src) = cap, (max(under) if under else (cap, "trần giá trị"))
+        else:
+            ref, top, top_src = close, anchor, source
+        tiers, stop_cap = build_ladder(ind, supports, cfg, ref, top, top_src, cap, ticks)
+        if not cfg.get("ladder", False):            # chỉ hiển thị mức mua sâu, kế hoạch giữ vùng cũ
+            zone.ref_tiers = tiers
+            return zone
+        zone.tiers, zone.stop_cap = tiers, stop_cap
+        zone.high, zone.low = tiers[0].price, tiers[-1].price
+        total = sum(t.weight for t in tiers)
+        zone.mid = round_tick(sum(t.price * t.weight for t in tiers) / total, "nearest", ticks)
+    return zone

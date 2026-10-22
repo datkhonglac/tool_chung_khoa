@@ -194,12 +194,28 @@ with tab_ta:
             c[0].metric("Chờ giá về", f"≤ {z.high:,.0f}", fmt_pct(z.discount))
         else:
             c[0].metric("Vùng mua", f"{z.low:,.0f} – {z.high:,.0f}", fmt_pct(z.discount))
-        c[1].metric("Giá bình quân dự kiến (2 lệnh LO)", fmt_num(z.mid))
+        c[1].metric("Giá bình quân dự kiến" + (" (khớp đủ 3 lớp)" if z.tiers else " (2 lệnh LO)"),
+                    fmt_num(z.mid))
         c[2].metric(f"Neo kỹ thuật ({z.anchor_source})", fmt_num(z.anchor))
         c[3].metric(f"Trần giá trị (hợp lý − {z.margin_of_safety:.0%})", fmt_num(z.value_cap))
         st.caption(f"Giá đóng cửa {z.close:,.0f} · VWAP20 {z.vwap20:,.0f} · giá trị hợp lý "
                    f"{fmt_num(z.fair_value)}. Vùng mua neo theo hỗ trợ / VWAP20 / SMA20 và không "
                    "vượt giá trị hợp lý trừ biên an toàn (config [entry]).")
+        if z.tiers or z.ref_tiers:
+            if not z.tiers:
+                st.caption("Mức mua sâu hơn (tham khảo — kế hoạch vẫn dùng vùng mua trên; bật "
+                           "[entry] ladder = true để chia vốn theo 3 lớp):")
+            st.dataframe(pd.DataFrame([{"Lớp": t.name, "Giá đặt LO": t.price,
+                                        "So với giá": t.depth * 100, "Phần vốn": t.weight * 100,
+                                        "Khớp trong 20 phiên": t.fill_prob * 100,
+                                        "Căn cứ": t.source} for t in (z.tiers or z.ref_tiers)]),
+                         hide_index=True, width="stretch",
+                         column_config={"Giá đặt LO": st.column_config.NumberColumn(format="localized"),
+                                        "So với giá": st.column_config.NumberColumn(format="%+.1f%%"),
+                                        "Phần vốn": st.column_config.NumberColumn(format="%.0f%%"),
+                                        "Khớp trong 20 phiên": st.column_config.NumberColumn(
+                                            format="%.0f%%")})
+            st.caption("Xác suất khớp ước tính bằng Monte Carlo theo giá đóng cửa (thận trọng).")
         for n in z.notes:
             st.caption(f"! {n}")
     if plan:
@@ -600,8 +616,9 @@ with tab_pf:
         try:
             cal, last_px, grp = pf.market_context(sorted(trades["symbol"].unique()))
             capital = settings()["plan"]["capital"]
-            tab = pf.status(trades, last_px, grp, capital, calendar=cal)
-            realized = pf.realized_total(trades, calendar=cal)
+            acts = pf.corporate_actions(sorted(trades["symbol"].unique()))
+            tab = pf.status(trades, last_px, grp, capital, calendar=cal, actions=acts)
+            realized = pf.realized_total(trades, calendar=cal, actions=acts)
         except ValueError as e:
             st.error(f"Sổ lệnh có lỗi: {e}")
         else:
@@ -609,7 +626,13 @@ with tab_pf:
             total = float(tab["Giá trị"].sum()) if not tab.empty else 0.0
             c1.metric("Giá trị đang giữ", f"{total:,.0f}đ", f"{total / capital:.0%} vốn")
             c2.metric("Lãi/lỗ tạm tính", f"{tab['Lãi/lỗ'].sum() if not tab.empty else 0:+,.0f}đ")
-            c3.metric("Lãi/lỗ đã chốt", f"{realized:+,.0f}đ")
+            c3.metric("Lãi/lỗ đã chốt + cổ tức", f"{realized:+,.0f}đ")
+            if not tab.empty:
+                heat = float(tab["Rủi ro mở"].sum())
+                cap_heat = settings().get("portfolio", {}).get("max_heat", 0.05)
+                (st.warning if heat > cap_heat * capital else st.caption)(
+                    f"Rủi ro mở (lỗ thêm nếu mọi mã về cắt lỗ): {heat:,.0f}đ = {heat / capital:.1%}"
+                    f" vốn, trần {cap_heat:.0%} ([portfolio] max_heat)")
             if not tab.empty:
                 view = tab.assign(**{c: tab[c] * 100 for c in ("Lãi/lỗ %", "Tỷ trọng",
                                                                  "Cách cắt lỗ")})

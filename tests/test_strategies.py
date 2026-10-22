@@ -107,3 +107,21 @@ def test_squeeze_percentile_rank():
     s = pd.Series(np.r_[np.linspace(1, 2, 119), 0.5])                # phiên cuối hẹp nhất
     r = percentile_rank(s, 120)
     assert np.isnan(r.iloc[118]) and r.iloc[-1] == pytest.approx(1 / 120)
+
+
+def test_breakout_early_skips_buys_when_early_warning():
+    from vnsa.recommend.strategies import rule_set
+
+    n = 70
+    d = pd.DataFrame({"date": pd.bdate_range("2024-01-01", periods=n), "open": 100.0,
+                      "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1_000.0,
+                      "vol_ma20": 500.0, "atr": 2.0, "sma50": 95.0, "sma200": 90.0, "rsi": 70.0})
+    d.loc[n - 1, ["close", "high", "volume"]] = [110.0, 111.0, 2_000.0]   # phá nền 55 phiên
+    cfg = {"entry_score": 65, "exit_score": 45, "atr_stop": 2.0}
+    score = pd.Series(50.0, index=d.index)
+    calm = pd.Series("trung tính", index=d["date"])
+    warn = calm.copy()
+    warn.iloc[-1] = "giảm"
+    assert rule_set(d, score, calm, 4.0, cfg, calm)["breakout_early"].entry.iloc[-1]
+    assert not rule_set(d, score, calm, 4.0, cfg, warn)["breakout_early"].entry.iloc[-1]
+    assert rule_set(d, score, calm, 4.0, cfg, warn)["breakout"].entry.iloc[-1]   # quy tắc cũ không đổi

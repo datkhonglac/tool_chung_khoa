@@ -1,0 +1,57 @@
+name: Kiểm định điểm mua
+
+# Vùng mua cũ (sát giá) so với thang mua 3 lớp trên rổ [study] universe, 10 năm (lệnh study-entry).
+# Dùng lại kho giá 10 năm của workflow "Kiểm định quy tắc thời điểm" (cache), nên chạy khoảng 10 phút.
+on:
+  push:
+    paths:
+      - ".github/workflows/entry.yml"
+      - "src/vnsa/recommend/entry_study.py"
+      - "src/vnsa/ta/entry.py"
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Các mã (bỏ trống = [study] universe trong settings)"
+        required: false
+        default: ""
+
+jobs:
+  entry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PYTHONUNBUFFERED: "1"
+      VNSTOCK_TELEMETRY: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+      - name: Lấy kho giá của lần kiểm định trước
+        uses: actions/cache/restore@v4
+        with:
+          path: data/warehouse.duckdb
+          key: study-${{ github.run_id }}
+          restore-keys: study-
+      - name: Kiểm định điểm mua
+        run: python -m vnsa.cli study-entry ${{ inputs.symbols }}
+      - name: Tóm tắt kết quả (trang tóm tắt của lần chạy)
+        if: always() && hashFiles('data/study/entry_study.txt') != ''
+        run: |
+          { echo '```'; cat data/study/entry_study.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          msg=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' data/study/entry_study.txt)
+          echo "::notice title=Kết quả kiểm định điểm mua::$msg"
+      - name: Lưu kho giá cho lần sau
+        if: always() && hashFiles('data/warehouse.duckdb') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/warehouse.duckdb
+          key: study-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kiem-dinh-diem-mua
+          path: data/study/
+          if-no-files-found: ignore

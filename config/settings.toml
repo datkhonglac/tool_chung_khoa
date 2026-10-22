@@ -222,6 +222,10 @@ max_sector_pct = 0.30       # tổng giá trị một nhóm ngành tối đa 30%
 corr_sessions = 120         # tương quan lợi suất ngày với các mã đang giữ, 120 phiên gần nhất
 corr_threshold = 0.60       # tương quan cực đại > 0,6: giảm ngân sách rủi ro của lệnh mới
 corr_max_cut = 0.50         # ... giảm tuyến tính, tối đa 50% khi tương quan = 1
+max_heat = 0.05             # tổng số tiền lỗ nếu MỌI mã cùng về cắt lỗ (kể cả lệnh mới) ≤ 5% vốn
+default_risk_pct = 0.10     # mã chưa đặt cắt lỗ: coi rủi ro = 10% giá trị vị thế
+dividend_tax = 0.05         # thuế TNCN trên cổ tức tiền (khấu trừ tại nguồn)
+bonus_sellable_sessions = 15   # cổ phiếu thưởng/cổ tức cp bán được sau ~15 phiên (chờ niêm yết bổ sung)
 
 [entry]
 # Vùng giá mua khuyến nghị (ta/entry.py) — không lấy thẳng giá đóng cửa làm giá vào
@@ -231,6 +235,18 @@ chase_atr = 2.0             # giá cách SMA20 > 2 ATR: cảnh báo không đu�
 vwap_sessions = 20
 margin_of_safety = 0.15     # trần giá mua = giá trị hợp lý × (1 − 15%)
 weak_fa_extra = 0.10        # điểm FA < 50: biên an toàn thêm 10%
+# Thang mua 3 lớp (v2.1, ta/entry.py): 3 lệnh LO ở 3 độ sâu thay cho vùng hẹp sát giá.
+# Kiểm định 10 năm × 45 mã (study-entry, docs/kiem_dinh_thoi_diem.md): giá vốn rẻ hơn ~4% nhưng chỉ khớp
+# ~43% vốn nên lãi trên TỔNG vốn thấp hơn vùng cũ ở cả hai giai đoạn -> mặc định TẮT, chỉ hiển thị
+# lớp 2, 3 làm mức mua thêm tham khảo. Đặt ladder = true nếu bạn ưu tiên giá vốn thấp hơn số lần mua được.
+ladder = false
+ladder_show = true
+ladder_weights = [0.3, 0.4, 0.3]   # lớp 1 thăm dò · lớp 2 chính · lớp 3 sâu
+l2_range_atr = 4.0          # lớp 2 tìm mức đỡ mạnh trong 4 ATR dưới giá
+l3_range_atr = 7.0          # lớp 3 tìm trong 7 ATR dưới giá
+ladder_gap_atr = 0.75       # hai lớp liền nhau cách ít nhất 0,75 ATR
+ladder_fallback_atr = 1.5   # không có mức đỡ: lớp sau = lớp trước − 1,5 ATR
+ladder_stop_atr = 1.0       # cắt lỗ thấp hơn lớp 3 ít nhất 1 ATR
 
 [signals]
 # Lịch sử khuyến nghị: mỗi lần recommend/analyze ghi vào bảng signals và file CSV (đưa lên Git được)

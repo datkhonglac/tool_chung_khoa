@@ -532,9 +532,33 @@ def plan(ind: pd.DataFrame, fair_value: float | None = None, fa_score: float | N
     adjust, caps = _portfolio_limits(sym, ind)
     p = trade_plan(zone.entry, float(last["atr"]), sup, res, settings()["plan"], ticks,
                    adv_value=adv_value(ind), risk_scale=risk_scale, risk_adjust=adjust,
-                   extra_caps=caps)
+                   extra_caps=caps, max_stop=zone.stop_cap if zone.tiers else None)
     p.zone = zone
+    if zone.tiers or zone.ref_tiers:
+        _fill_probs(ind, zone)
     return p
+
+
+def _fill_probs(ind: pd.DataFrame, zone, horizon: int = 20, n_paths: int = 2000) -> None:
+    """Xác suất khớp từng lớp thang mua trong `horizon` phiên (Monte Carlo GARCH, drift như [risk]).
+    analysis.risk tính lại với nhiều đường hơn khi chạy đủ phân tích. Lỗi thì để trống."""
+    from vnsa import market
+    from vnsa.risk.garch import fit_garch, log_returns_pct
+    from vnsa.risk.simulate import simulate
+
+    try:
+        cfg = settings()["risk"]
+        close = ind["close"]
+        fit = fit_garch(log_returns_pct(close.tail(cfg["garch_window"] + 1)))
+        sym = ind["symbol"].iloc[-1] if "symbol" in ind else None
+        drift = None if cfg.get("drift", "zero") == "historical" else 0.0
+        sim = simulate(fit, float(close.iloc[-1]), horizon, n_paths=n_paths,
+                       band=market.band(sym) if sym else market.band(), seed=cfg["seed"],
+                       drift=drift)
+        for t in zone.tiers or zone.ref_tiers:
+            t.fill_prob = sim.prob_touch(t.price, horizon)
+    except Exception:  # noqa: BLE001 - xác suất khớp chỉ để tham khảo
+        pass
 
 
 def _portfolio_limits(sym: str | None, ind: pd.DataFrame):
@@ -574,8 +598,29 @@ def timing_study(symbols: list[str], split: str = "2022-01-01", start: str = "20
     if not data:
         raise ValueError("không mã nào đủ dữ liệu giá")
     data["__regime__"] = {"series": regime_series(index, settings().get("regime", {}))}
+    data["__regime_early__"] = {"series": regime_series(index, {**settings().get("regime", {}),
+                                                                "early": True})}
     grid = tuple(settings().get("study", {}).get("atr_grid", (2.5, 3.0, 4.0)))
     res = study(data, settings()["backtest"], split, start, grid)
+    res.skipped = skipped
+    return res
+
+
+def entry_study(symbols: list[str], split: str = "2022-01-01", start: str = "2016-01-01"):
+    """Kiểm định điểm mua: vùng cũ vs thang 3 lớp vs mua ngay (recommend/entry_study.py)."""
+    from vnsa import market
+    from vnsa.data.store import Store
+    from vnsa.recommend.entry_study import study
+
+    data, skipped = {}, []
+    with Store(path("warehouse")) as store:
+        prices = {s: store.prices(s) for s in symbols}
+    for s in symbols:
+        if len(prices[s]) < 400:
+            skipped.append(s)
+            continue
+        data[s] = {"ind": indicators(prices[s]), "ticks": market.ticks(s)}
+    res = study(data, settings()["entry"], settings()["ta"], split, start)
     res.skipped = skipped
     return res
 
@@ -662,6 +707,10 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
             p = plan(indicators(prices))
         except (ValueError, IndexError):
             p = None
+    if p is not None and getattr(p, "zone", None) is not None and (p.zone.tiers or p.zone.ref_tiers):
+        h = min(20, max(horizons))
+        for t in p.zone.tiers or p.zone.ref_tiers:   # xác suất khớp từng lớp của thang mua
+            t.fill_prob = sim.prob_touch(t.price, h)
     touch = None
     if p and p.targets:
         h = max(horizons)
