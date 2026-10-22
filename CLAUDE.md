@@ -159,6 +159,8 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   mỗi nguồn một bậc). `news.py`: phân loại tiêu đề theo từ khoá `[news]`; trạng thái giao dịch bảng
   giá (bảng `trading_status`, `autofetch._status`, screen `Updater.statuses`) hoặc tin diện kiểm soát/
   đình chỉ → `Inputs.blocked` → tối đa NẮM GIỮ. `screen/rrg.py` (lệnh `rrg`, `[rrg]`, chỉ hiển thị).
+  Dò nguồn: `scripts/probe_vnstock.py --board MÃ...` (bảng giá), `--grep REGEX MÃ...` (khoản mục BCTC),
+  `--news MÃ...` (tiêu đề tin).
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
 - `python -m vnsa.cli load [--sample]` · `check FPT` · `list` · `chart FPT`
 
