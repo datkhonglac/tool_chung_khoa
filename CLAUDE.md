@@ -159,6 +159,9 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   mỗi nguồn một bậc). `news.py`: phân loại tiêu đề theo từ khoá `[news]`; trạng thái giao dịch bảng
   giá (bảng `trading_status`, `autofetch._status`, screen `Updater.statuses`) hoặc tin diện kiểm soát/
   đình chỉ → `Inputs.blocked` → tối đa NẮM GIỮ. `screen/rrg.py` (lệnh `rrg`, `[rrg]`, chỉ hiển thị).
+  Bot Telegram (v3.1) `telegram_bot.py`, lệnh `bot [--once]`, workflow `telegram-bot.yml` (mỗi 10 phút,
+  bước curl kiểm tra tin chờ trước khi cài; cache kho `bot-`): mã trong tin → `analyze_text` (thẻ
+  báo cáo), lệnh /canhbao /danhmuc /nhatky; chỉ chat trong `TELEGRAM_CHAT_ID`; ack bằng offset.
   Dò nguồn: `scripts/probe_vnstock.py --board MÃ...` (bảng giá), `--grep REGEX MÃ...` (khoản mục BCTC),
   `--news MÃ...` (tiêu đề tin).
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
