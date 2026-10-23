@@ -436,3 +436,35 @@ def test_bctc_due_skips_until_new_period():
     # tắt theo mùa: quy tắc cũ 30 ngày
     old = {**cfg, "bctc_season": False}
     assert bctc_due((2026, 2), pd.Timestamp("2026-08-10"), now, old, True) is None
+
+
+def test_trading_status_blocks_buying(empty_db):
+    """v3: trạng thái giao dịch từ bảng giá (hạn chế giao dịch) -> chặn mua; bình thường -> không."""
+    from vnsa import analysis
+    from vnsa.news import apply_status, NewsCheck
+
+    class WithBoard(FakeVnstock):
+        status, calls = "TRADING_RESTRICTION_ACTIVATED", 0
+
+        def board(self, symbols):
+            self.calls += 1
+            return pd.DataFrame({"symbol": symbols, "trading_status": [self.status] * len(symbols),
+                                 "security_status": ["N"] * len(symbols),
+                                 "trading_date": [pd.Timestamp("2026-10-09")] * len(symbols)})
+
+    vn = WithBoard()
+    now = datetime(2026, 10, 9, 16, 0, tzinfo=VN_TZ)
+    up = lambda: Updater(FakeCafeF(), vn, {**AUTO, "status": True}, now=lambda: now)  # noqa: E731
+    rep = up().ensure("DEMO_A")
+    assert {s.what: s for s in rep.steps}["trạng thái"].detail == "TRADING_RESTRICTION_ACTIVATED"
+    rep = up().ensure("DEMO_A")                               # còn mới: không gọi lại
+    assert vn.calls == 1 and {s.what: s for s in rep.steps}["trạng thái"].status == "skip"
+    nc = analysis.news_check("DEMO_A")
+    assert nc is not None and "hạn chế giao dịch" in nc.blocked
+    with Store(empty_db) as store:
+        store.write_status(pd.DataFrame({"symbol": ["DEMO_A"], "trading_status": ["TRADING_ACTIVATED"],
+                                         "security_status": ["N"], "trading_date": ["2026-10-09"]}))
+    assert analysis.news_check("DEMO_A") is None
+    old = {"trading_status": "TRADING_RESTRICTION_ACTIVATED", "security_status": "N",
+           "trading_date": None, "loaded_at": pd.Timestamp("2026-01-01")}
+    assert apply_status(NewsCheck(pd.DataFrame()), old).blocked == ""      # trạng thái quá cũ

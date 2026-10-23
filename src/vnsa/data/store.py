@@ -145,6 +145,15 @@ CREATE TABLE IF NOT EXISTS news (
     loaded_at TIMESTAMP DEFAULT current_timestamp,
     PRIMARY KEY (symbol, date, title)
 );
+-- Trạng thái giao dịch từ bảng giá VCI (v3): TRADING_ACTIVATED = bình thường,
+-- TRADING_RESTRICTION_ACTIVATED = hạn chế giao dịch (đã đối chiếu DGC 10/2026)...
+CREATE TABLE IF NOT EXISTS trading_status (
+    symbol          VARCHAR PRIMARY KEY,
+    trading_status  VARCHAR,
+    security_status VARCHAR,
+    trading_date    DATE,
+    loaded_at       TIMESTAMP DEFAULT current_timestamp
+);
 """
 # Độ sâu lịch sử giá đã yêu cầu ở lần tải toàn bộ gần nhất: phân biệt "kho mới tải ngắn" (sàng lọc
 # chỉ tải 1 năm) với "mã mới niêm yết, nguồn không có hơn" (không tải lại vô ích)
@@ -496,6 +505,14 @@ class Store:
                                                  and np.isnan(profile[c]) else profile[c]
                                                  for c in cols), sym])
 
+    def forensic_missing(self, symbol: str, quarterly: bool = False) -> bool:
+        """Kỳ mới nhất trong kho chưa có khoản mục kiểm tra chất lượng BCTC (kho tải trước v3)."""
+        table = "fundamentals_q" if quarterly else "fundamentals"
+        order = "year DESC, quarter DESC" if quarterly else "year DESC"
+        row = self._first(f"SELECT receivables, inventory, selling_expenses, admin_expenses FROM "
+                          f"{table} WHERE symbol = ? ORDER BY {order} LIMIT 1", [symbol.upper()])
+        return row is not None and all(v is None or pd.isna(v) for v in row)
+
     def write_quarterly(self, df: pd.DataFrame, source: str) -> int:
         """Ghi đè BCTC quý của các mã có trong df. Cột: symbol, year, quarter + FIELDS (đồng)."""
         if df.empty:
@@ -733,6 +750,38 @@ class Store:
         df = self.con.execute(sql + " ORDER BY date DESC LIMIT ?", [*params, limit]).df()
         df["date"] = pd.to_datetime(df["date"])
         return df
+
+    def write_status(self, board: pd.DataFrame) -> int:
+        """Ghi trạng thái giao dịch (bảng giá chuẩn hoá: symbol, trading_status, security_status,
+        trading_date), thay dòng cũ của từng mã."""
+        if board is None or board.empty:
+            return 0
+        frame = board.reindex(columns=["symbol", "trading_status", "security_status",
+                                       "trading_date"]).copy()
+        frame["symbol"] = frame["symbol"].astype(str).str.upper()
+        for c in ("trading_status", "security_status"):
+            frame[c] = frame[c].map(lambda v: None if v is None or pd.isna(v) else str(v))
+        frame["trading_date"] = pd.to_datetime(frame["trading_date"], errors="coerce").dt.date
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute("BEGIN")
+            self.con.execute("DELETE FROM trading_status t USING incoming i WHERE t.symbol = i.symbol")
+            self.con.execute("INSERT INTO trading_status (symbol, trading_status, security_status, "
+                             "trading_date) SELECT symbol, trading_status, security_status, "
+                             "trading_date FROM incoming")
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        finally:
+            self.con.unregister("incoming")
+        return len(frame)
+
+    def trading_status(self, symbol: str) -> dict | None:
+        cols = ["trading_status", "security_status", "trading_date", "loaded_at"]
+        row = self._first(f"SELECT {', '.join(cols)} FROM trading_status WHERE symbol = ?",
+                          [symbol.upper()])
+        return dict(zip(cols, row)) if row else None
 
     def news_loaded_at(self, symbol: str) -> pd.Timestamp | None:
         t = self._first("SELECT MAX(loaded_at) FROM news WHERE symbol = ?",

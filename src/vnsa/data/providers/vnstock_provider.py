@@ -32,7 +32,7 @@ import pandas as pd
 from vnsa.data.cleaning import repair_ohlc
 from vnsa.data.providers.base import DataProvider
 from vnsa.data.providers.csv_provider import normalize_prices
-from vnsa.fa.ratios import FIELDS, SECTOR_FIELDS
+from vnsa.fa.ratios import FIELDS, FORENSIC_FIELDS, SECTOR_FIELDS
 
 # Khoản mục chuẩn -> (báo cáo, các item_id có thể gặp, mẫu tên tiếng Anh dự phòng).
 # Lấy dòng đầu tiên khớp và có số liệu.
@@ -103,9 +103,25 @@ SECTOR_MAPPING: dict[str, tuple[str, list[str]]] = {
     "brokerage_revenue": ("income_statement", ["revenue_in_brokerage_services"]),
     "operating_revenue": ("income_statement", ["operating_sales"]),
 }
+# Khoản mục kiểm tra chất lượng BCTC (v3): chỉ khớp item_id (đã dò thật FPT, DIG qua
+# scripts/probe_vnstock.py --grep).
+FORENSIC_MAPPING: dict[str, tuple[str, list[str]]] = {
+    "receivables": ("balance_sheet", ["trade_accounts_receivable"]),
+    "other_receivables": ("balance_sheet", ["other_receivables"]),
+    "other_receivables_lt": ("balance_sheet", ["other_long_term_receivables"]),
+    "inventory": ("balance_sheet", ["inventories_net", "inventories"]),
+    "ppe": ("balance_sheet", ["tangible_fixed_assets"]),
+    "depreciation": ("cash_flow", ["depreciation_and_amortization"]),
+    "selling_expenses": ("income_statement", ["selling_expenses"]),
+    "admin_expenses": ("income_statement", ["general_and_admin_expenses"]),
+    "customer_advances": ("balance_sheet", ["advances_from_customers"]),
+    "customer_advances_lt": ("balance_sheet", ["long_term_advances_from_customers"]),
+}
+EXTRA_MAPPING = {**SECTOR_MAPPING, **FORENSIC_MAPPING}
 # VCI ghi chi phí/khoản chi bằng số âm; lưu số dương cho dễ dùng.
 POSITIVE = {"tax_expense", "interest_expense", "capex", "equity_issued", "bank_opex",
-            "credit_provision", "loan_loss_reserve"}
+            "credit_provision", "loan_loss_reserve", "selling_expenses", "admin_expenses",
+            "depreciation"}
 STATEMENTS = ["income_statement", "balance_sheet", "cash_flow"]
 
 
@@ -153,8 +169,8 @@ def standardize(statements: dict[str, pd.DataFrame], symbol: str,
             continue
         values.index = values.index.astype(str)
         out[field] = out["period"].map(values.abs() if field in POSITIVE else values)
-    for field in SECTOR_FIELDS:                     # không báo thiếu (doanh nghiệp thường không có)
-        stmt, ids = SECTOR_MAPPING[field]
+    for field in SECTOR_FIELDS + FORENSIC_FIELDS:   # không báo thiếu (tuỳ loại doanh nghiệp)
+        stmt, ids = EXTRA_MAPPING[field]
         values = _pick(statements[stmt], ids, None, quarterly) if stmt in statements else None
         if values is None:
             out[field] = np.nan
@@ -436,6 +452,62 @@ def _vnstock_history(symbol: str, start: str, end: str) -> pd.DataFrame:
         start=start, end=end, interval="1D"))
 
 
+# Bảng giá trong phiên (Trading.price_board, nguồn VCI; đã dò thật: cột MultiIndex
+# (listing|match|bid_ask, tên), giá tính bằng đồng) — dùng cho lệnh monitor.
+BOARD_COLUMNS = {
+    "symbol": [("listing", "symbol")],
+    "price": [("match", "match_price")],
+    "ref": [("listing", "ref_price"), ("match", "reference_price")],
+    "ceiling": [("listing", "ceiling"), ("match", "ceiling_price")],
+    "floor": [("listing", "floor"), ("match", "floor_price")],
+    "open": [("match", "open_price")],
+    "high": [("match", "highest")],
+    "low": [("match", "lowest")],
+    "volume": [("match", "accumulated_volume")],
+    "exchange": [("listing", "exchange")],
+    "trading_status": [("listing", "trading_status")],
+    "security_status": [("listing", "security_status")],
+    "trading_date": [("listing", "trading_date")],
+}
+
+
+def standardize_board(raw: pd.DataFrame) -> pd.DataFrame:
+    """Bảng giá VCI -> một dòng mỗi mã với các cột BOARD_COLUMNS (thiếu cột thì NaN). Chấp nhận cả
+    cột phẳng (chỉ tên cuối) phòng khi vnstock đổi cấu trúc."""
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=list(BOARD_COLUMNS))
+    flat = {(c[-1] if isinstance(c, tuple) else c): c for c in raw.columns}
+    out = {}
+    for name, keys in BOARD_COLUMNS.items():
+        col = next((k for k in keys if k in raw.columns), None)
+        if col is None:
+            col = next((flat[k[1]] for k in keys if k[1] in flat), None)
+        out[name] = raw[col].to_numpy() if col is not None else [None] * len(raw)
+    df = pd.DataFrame(out)
+    for c in ("price", "ref", "ceiling", "floor", "open", "high", "low", "volume"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["symbol"] = df["symbol"].astype(str).str.upper()
+    # chưa khớp lệnh nào trong phiên: giá khớp = 0 -> dùng giá tham chiếu
+    df["price"] = df["price"].where(df["price"] > 0, df["ref"])
+    df["trading_date"] = pd.to_datetime(df["trading_date"], errors="coerce")
+    return df
+
+
+def _vnstock_board(symbols: list[str]) -> pd.DataFrame:
+    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
+    from vnstock import Trading
+
+    return _call(lambda: Trading(source="VCI").price_board([s.upper() for s in symbols]))
+
+
+def price_board(symbols: list[str], fetch: Callable[[list[str]], pd.DataFrame] = _vnstock_board,
+                chunk: int = 50) -> pd.DataFrame:
+    """Giá trong phiên của nhiều mã (mỗi lượt gọi tối đa `chunk` mã)."""
+    frames = [standardize_board(fetch(symbols[i:i + chunk])) for i in range(0, len(symbols), chunk)]
+    frames = [f for f in frames if not f.empty]
+    return pd.concat(frames, ignore_index=True) if frames else standardize_board(None)
+
+
 INDEX_SYMBOLS = {"VNINDEX", "VN30", "HNXINDEX", "HNX30", "UPCOMINDEX"}
 
 
@@ -498,3 +570,7 @@ class VnstockProvider(DataProvider):
 
     def news(self, symbol: str) -> pd.DataFrame:
         return standardize_news(self.get_company(symbol, "news"), symbol)
+
+    def board(self, symbols: list[str]) -> pd.DataFrame:
+        """Bảng giá trong phiên (giá, trần/sàn, trạng thái giao dịch) — price_board."""
+        return price_board(symbols)

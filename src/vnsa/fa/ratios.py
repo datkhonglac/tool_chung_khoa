@@ -73,7 +73,21 @@ SECTOR_FIELDS = [
     "brokerage_revenue",      # doanh thu môi giới
     "operating_revenue",      # doanh thu hoạt động
 ]
-STORED_FIELDS = FIELDS + SECTOR_FIELDS
+# Kiểm tra chất lượng BCTC (v3, fa/forensic.py): Beneish M-Score, người mua trả trước, phải thu
+# khác. Doanh nghiệp thường; không báo thiếu với ngân hàng/CK. Đã dò item_id thật (FPT, DIG).
+FORENSIC_FIELDS = [
+    "receivables",            # phải thu khách hàng ngắn hạn
+    "other_receivables",      # phải thu khác ngắn hạn
+    "other_receivables_lt",   # phải thu dài hạn khác
+    "inventory",              # hàng tồn kho (ròng)
+    "ppe",                    # giá trị còn lại TSCĐ hữu hình
+    "depreciation",           # khấu hao TSCĐ và BĐSĐT (lưu chuyển tiền)
+    "selling_expenses",       # chi phí bán hàng (số dương)
+    "admin_expenses",         # chi phí quản lý doanh nghiệp (số dương)
+    "customer_advances",      # người mua trả tiền trước ngắn hạn
+    "customer_advances_lt",   # người mua trả tiền trước dài hạn
+]
+STORED_FIELDS = FIELDS + SECTOR_FIELDS + FORENSIC_FIELDS
 
 RATIO_COLUMNS = [
     "roe", "roa", "gross_margin", "net_margin", "debt_to_equity",

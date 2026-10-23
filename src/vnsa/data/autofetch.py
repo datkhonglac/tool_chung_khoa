@@ -263,7 +263,12 @@ class Updater:
         loaded = (store.quarterly_loaded_at if quarterly else store.fundamentals_loaded_at)(sym)
         latest = store.latest_period(sym, quarterly) if loaded is not None else None
         now = pd.Timestamp(self.now())
-        return bctc_due(latest, loaded, now.tz_localize(None) if now.tz else now, self.cfg, quarterly)
+        why = bctc_due(latest, loaded, now.tz_localize(None) if now.tz else now, self.cfg, quarterly)
+        # kho tải trước v3 chưa có khoản mục kiểm tra chất lượng BCTC: tải lại một lần
+        if why is not None and pd.Timestamp(loaded) < FORENSIC_SINCE \
+                and store.forensic_missing(sym, quarterly):
+            return None
+        return why
 
     def _fundamentals(self, store: Store, sym: str, refresh: bool) -> Step:
         loaded = store.fundamentals_loaded_at(sym)
@@ -357,6 +362,34 @@ class Updater:
         except Exception as e:  # noqa: BLE001 - không có tin vẫn phân tích được
             return Step("tin tức", "error", f"{e}; bỏ qua tiêu đề tin")
         return Step("tin tức", "ok", f"{n} tiêu đề (vnstock/VCI, chỉ tham khảo)")
+
+    def _status(self, store: Store, sym: str) -> Step | None:
+        """Trạng thái giao dịch (bảng giá VCI: bình thường / hạn chế / tạm ngừng...), tải lại khi cũ
+        hơn `[auto] status_max_age_hours`. Tắt bằng `[auto] status = false`."""
+        get = getattr(self.vn, "board", None)
+        if not self.cfg.get("status", False) or get is None:
+            return None
+        have = store.trading_status(sym)
+        if have is not None and have.get("loaded_at") is not None:
+            age = (pd.Timestamp.now() - pd.Timestamp(have["loaded_at"])).total_seconds() / 3600
+            if age < self.cfg.get("status_max_age_hours", 12):
+                return Step("trạng thái", "skip", f"{have['trading_status']} (tải {age:.0f} giờ trước)")
+        try:
+            board = get([sym])
+            store.write_status(board)
+        except Exception as e:  # noqa: BLE001 - không có trạng thái vẫn phân tích được
+            return Step("trạng thái", "error", f"{e}; bỏ qua trạng thái giao dịch")
+        st = board["trading_status"].iloc[0] if len(board) else "không có"
+        return Step("trạng thái", "ok", str(st))
+
+    def statuses(self, symbols: list[str]) -> int:
+        """Trạng thái giao dịch của nhiều mã một lượt (bảng giá 50 mã/lần gọi) — cho sàng lọc."""
+        get = getattr(self.vn, "board", None)
+        if get is None or not symbols:
+            return 0
+        board = get(list(symbols))
+        with Store(path("warehouse")) as store:
+            return store.write_status(board)
 
     def _macro(self) -> Step | None:
         """Số vĩ mô (lớp vĩ mô): nạp số nhập tay, tải lại chuỗi tự động nếu đã cũ. Tắt bằng
@@ -518,10 +551,16 @@ class Updater:
                 news = self._news(store, sym)
                 if news is not None:
                     rep.steps.append(news)
+                status = self._status(store, sym)
+                if status is not None:
+                    rep.steps.append(status)
         macro = self._macro() if rep.has_prices and sym != self.index else None
         if macro is not None:
             rep.steps.append(macro)
         return rep
+
+
+FORENSIC_SINCE = pd.Timestamp("2026-10-22")   # ngày thêm FORENSIC_FIELDS (v3)
 
 
 def expected_period(now: pd.Timestamp, quarterly: bool, cfg: dict) -> tuple[int, int]:

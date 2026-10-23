@@ -80,6 +80,42 @@ Tool từ chối sao lưu lên repo công khai hoặc lên chính repo tool.
 | Sao lưu sổ lệnh | Sang repo riêng tư | `portfolio backup` / `restore` |
 | Nhiệt danh mục | Tổng rủi ro mở ≤ 5% vốn, lệnh mới tự giảm | `[portfolio] max_heat` |
 
+## Nâng cấp v3.0 (10/2026) — quản trị quỹ cá nhân chủ động
+
+| Hạng mục | Thay đổi | Dùng thế nào |
+|---|---|---|
+| Theo dõi trong phiên + Telegram | Giá trong phiên (bảng giá VCI) so với cắt lỗ trong sổ lệnh và vùng mua của khuyến nghị gần nhất: KHẨN khi chạm/thủng cắt lỗ (kèm số cp bán được theo T+2), nằm sàn, lỗ ≥ 10% chưa đặt cắt lỗ; CHÚ Ý khi sát cắt lỗ, chạm mục tiêu, mã theo dõi vào vùng mua, trạng thái giao dịch bất thường | `monitor`, workflow **Theo dõi trong phiên** (~9:47 và ~13:47) |
+| Nhật ký giao dịch | Lợi suất phần vốn đã giải ngân (TWR) so với VNINDEX, tỷ lệ thắng, payoff, profit factor, **điểm kỷ luật 0–100** (mua trong vùng kế hoạch, đặt cắt lỗ, bán khi thủng cắt lỗ, không dời cắt lỗ xuống) | `portfolio report`, tab Danh mục |
+| Chất lượng BCTC | Beneish M-Score 8 biến, phải thu khác/vốn chủ, người mua trả trước/doanh thu (BĐS), tiền ròng/vốn hoá — **chỉ cảnh báo**, độ tin cậy giảm một bậc, không đổi xếp hạng | thẻ báo cáo, `[forensic]` |
+| Trạng thái giao dịch + tin | Bảng giá báo **hạn chế/tạm ngừng giao dịch** hoặc tin "diện kiểm soát, đình chỉ, huỷ niêm yết" → **chặn mua** (tối đa NẮM GIỮ). Tin tiêu cực (xử phạt, khởi tố, kiểm toán ngoại trừ, giải chấp...) → cảnh báo, giảm độ tin cậy; tin tích cực đánh dấu [+] | `[news]`, tự động |
+| Xoay vòng ngành RRG | RS-Ratio / RS-Momentum theo tuần của các nhóm ngành so với VNINDEX, đuôi 8 tuần — **chỉ tham khảo** | `rrg`, tab Sàng lọc thị trường |
+
+Không làm: quy tắc "tin xấu mà giá tăng → độ tin cậy CAO" (kho chỉ có tiêu đề ~30 ngày, chưa kiểm
+định được); đưa M-Score/RRG vào điểm (chưa kiểm định trên dữ liệu Việt Nam).
+
+```bash
+python -m vnsa.cli monitor                 # theo dõi ngay (in ra màn hình)
+python -m vnsa.cli monitor --send          # ... và gửi Telegram nếu có cảnh báo
+python -m vnsa.cli portfolio report        # nhật ký: TWR, thắng/thua, điểm kỷ luật
+python -m vnsa.cli rrg                     # xoay vòng ngành (cần chạy screen trước)
+```
+
+### Cảnh báo Telegram (cài một lần)
+
+1. Telegram: nhắn **@BotFather** → `/newbot` → đặt tên → nhận **token** dạng `123456:ABC...`.
+2. Nhắn một tin bất kỳ (ví dụ `hi`) cho bot vừa tạo, rồi mở trình duyệt:
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` → tìm `"chat":{"id":123456789` — đó là **chat id**.
+3. GitHub → repo `tool_chung_khoa` → Settings → Secrets and variables → **Actions** → New repository
+   secret: `TELEGRAM_BOT_TOKEN` = token, `TELEGRAM_CHAT_ID` = chat id. (Muốn gửi từ Codespaces thì
+   thêm cả ở Settings → Codespaces → Secrets.)
+4. Để workflow đọc được sổ lệnh: thêm tiếp `VNSA_BACKUP_REPO`, `VNSA_BACKUP_TOKEN` (như mục sao lưu
+   sổ lệnh) vào **Actions** secrets. Không có thì workflow chỉ theo dõi vùng mua các mã `[signals] daily`.
+5. Thử: Actions → **Theo dõi trong phiên** → Run workflow, tick "Gửi Telegram cả khi không có cảnh báo".
+
+Repo công khai nên nhật ký Actions ai cũng xem được: workflow chạy `monitor --public`, **không in
+mã đang giữ** (chỉ gửi qua Telegram). GitHub hay chạy lịch trễ 5–30 phút, nên đây là nhắc việc chứ
+không thay lệnh dừng lỗ đặt sẵn trên app công ty chứng khoán.
+
 ## Phân tích một mã bất kỳ (tự lấy dữ liệu)
 
 ```bash
@@ -512,6 +548,9 @@ config/settings.toml          cấu hình: đường dẫn, đơn vị giá, bi�
 src/vnsa/
   config.py                   đọc và kiểm tra cấu hình (python -m vnsa.config)
   portfolio.py                sổ lệnh, vị thế (T+2, giá vốn), giới hạn theo tương quan và nhóm ngành
+  journal.py                  nhật ký giao dịch: TWR, thắng/thua, điểm kỷ luật (v3)
+  monitor.py, notify.py       theo dõi trong phiên, cảnh báo Telegram (v3)
+  news.py                     phân loại tiêu đề tin theo từ khoá, trạng thái giao dịch chặn mua (v3)
   data/providers/base.py      DataProvider: giao diện chung cho mọi nguồn dữ liệu
   data/providers/csv_provider.py   nguồn CSV thủ công
   data/providers/cafef_provider.py tải giá tự động từ CafeF

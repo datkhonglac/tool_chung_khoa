@@ -52,6 +52,8 @@ flow_sessions = 60          # số phiên giao dịch khối ngoại / tự doan
 macro = true                # cập nhật số vĩ mô (một lần mỗi lượt, khi đã cũ hơn [macro] max_age_hours)
 news = true                 # tải tiêu đề tin theo mã (vnstock/VCI) — chỉ tham khảo, không vào điểm
 news_max_age_hours = 12
+status = true               # trạng thái giao dịch (bảng giá VCI): hạn chế/tạm ngừng -> chặn mua (v3)
+status_max_age_hours = 12
 
 [flows]
 # Dòng tiền khối ngoại / tự doanh: chỉ để THAM KHẢO trên thẻ báo cáo, không vào điểm số
@@ -254,6 +256,45 @@ record = true
 horizons = [5, 20, 60]      # số phiên để chấm lại khuyến nghị (lệnh review-signals)
 # Mã workflow hằng ngày (.github/workflows/daily.yml) phân tích và lưu khuyến nghị vào nhánh `signals`
 daily = ["FPT", "HPG", "MWG", "VNM", "DGC", "VCB", "TCB", "MBB", "SSI", "ACV", "TNG", "GMD"]
+
+[journal]
+# Nhật ký giao dịch (portfolio report, journal.py): điểm kỷ luật 0–100
+plan_days = 7                # lệnh mua "theo kế hoạch" = có khuyến nghị lưu trong 7 ngày trước ...
+zone_tolerance = 0.01        # ... và giá mua ≤ đỉnh vùng mua × (1 + 1%)
+stop_sessions = 2            # đặt cắt lỗ / bán khi thủng cắt lỗ trong 2 phiên
+weights = { plan = 40, stop_set = 20, stop_kept = 40 }
+
+[forensic]
+# Kiểm tra chất lượng BCTC (fa/forensic.py) — chỉ cảnh báo + giảm độ tin cậy một bậc, không đổi xếp hạng
+mscore_threshold = -1.78     # Beneish M-Score 8 biến > −1,78: dấu hiệu làm đẹp lợi nhuận
+other_receivables_max = 0.30 # phải thu khác > 30% vốn chủ: cảnh báo
+
+[news]
+# Phân loại tiêu đề tin theo từ khoá (news.py). Từ khoá mặc định ở DEFAULTS trong news.py; thêm khoá
+# exit / severe / negative / positive / insider_sell ở đây (danh sách biểu thức chính quy) để thay.
+severe_days = 180            # tin diện kiểm soát / đình chỉ / huỷ niêm yết: chặn mua tối đa 180 ngày
+negative_days = 30           # tin tiêu cực 30 ngày gần nhất: cảnh báo, giảm độ tin cậy một bậc
+# Trạng thái giao dịch từ bảng giá VCI chứa một trong các chữ này -> chặn mua (xếp hạng tối đa NẮM
+# GIỮ). TRADING_ACTIVATED = bình thường; TRADING_RESTRICTION_ACTIVATED = hạn chế giao dịch.
+block_status = ["RESTRICT", "SUSPEND", "HALT", "DELIST", "CONTROL", "STOP"]
+status_max_age_days = 5      # trạng thái cũ hơn 5 ngày thì không dùng
+
+[rrg]
+# Xoay vòng ngành (lệnh rrg, screen/rrg.py) — chỉ hiển thị, chưa kiểm định
+ratio_weeks = 10             # RS-Ratio = 100 × RS / EMA(RS, 10 tuần)
+mom_weeks = 4                # RS-Momentum = 100 × RS-Ratio / RS-Ratio 4 tuần trước
+tail = 8                     # số tuần vẽ đuôi
+min_members = 3              # nhóm cần ≥ 3 mã có giá
+history_weeks = 60
+
+[monitor]
+# Theo dõi trong phiên + cảnh báo Telegram (lệnh monitor, workflow monitor.yml ~9:47 và ~13:47 giờ VN).
+# Mã theo dõi = mã đang giữ trong sổ lệnh + [signals] daily + danh sách dưới đây.
+watch = []
+near_stop_pct = 0.02             # còn ≤ 2% tới cắt lỗ: cảnh báo CHÚ Ý
+zone_actions = ["MUA", "KHẢ QUAN"]  # chỉ báo "vào vùng mua" cho mã có xếp hạng này
+max_zone_age_days = 7            # bỏ vùng mua của khuyến nghị cũ hơn 7 ngày
+signals_ref = "origin/signals"   # nhánh Git chứa history/signals.csv khi kho chưa có khuyến nghị
 
 [vnstock]
 # Hạn mức lượt gọi vnstock (thư viện vnai; vượt thì vnai THOÁT chương trình). Chế độ Khách: 20/phút,

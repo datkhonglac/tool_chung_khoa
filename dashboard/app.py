@@ -603,6 +603,19 @@ with tab_screen:
                     view = view[view["group_name"] == g]
                 st.dataframe(_show(view.sort_values("score", ascending=False), stock_cols),
                              hide_index=True, width="stretch", column_config=fmt)
+    with st.expander("Xoay vòng ngành (RRG, tham khảo — chưa kiểm định)", expanded=False):
+        try:
+            from vnsa.screen import rrg
+
+            tails = rrg.load()
+        except Exception as e:  # noqa: BLE001
+            st.caption(f"Chưa tính được RRG: {e}")
+            tails = pd.DataFrame()
+        if tails.empty:
+            st.caption("Chưa đủ dữ liệu (cần giá tuần của ≥ 3 mã mỗi nhóm; chạy sàng lọc trước).")
+        else:
+            st.plotly_chart(charts.rrg_chart(tails), width="stretch")
+            st.text(rrg.format_rrg(tails))
 
 with tab_pf:
     from vnsa import portfolio as pf
@@ -646,6 +659,30 @@ with tab_pf:
                 if (share > cap).any():
                     st.warning("Tập trung ngành vượt {:.0%} vốn: ".format(cap) + ", ".join(
                         f"{g} {w:.0%}" for g, w in share[share > cap].items()))
+            st.subheader("Nhật ký giao dịch")
+            try:
+                from vnsa import journal
+
+                j = journal.load_journal()
+            except Exception as e:  # noqa: BLE001
+                st.caption(f"Chưa tính được nhật ký: {e}")
+                j = None
+            if j is not None:
+                d1, d2, d3, d4 = st.columns(4)
+                d1.metric("TWR phần vốn giải ngân", "—" if pd.isna(j.twr) else f"{j.twr:+.1%}",
+                          None if pd.isna(j.twr) else f"{j.twr - j.vni:+.1%} so với VNINDEX")
+                s = j.stats
+                d2.metric("Tỷ lệ thắng", f"{s['win_rate']:.0%}" if s.get("n") else "—",
+                          f"{s['n']} lệnh bán" if s.get("n") else None)
+                d3.metric("Payoff", "—" if not s.get("n") or pd.isna(s["payoff"])
+                          else f"{s['payoff']:.2f}")
+                d4.metric("Điểm kỷ luật", "—" if pd.isna(j.discipline.score)
+                          else f"{j.discipline.score:.0f}/100")
+                if len(j.curve):
+                    st.line_chart(j.curve.set_index("date")[["twr", "vni"]].rename(
+                        columns={"twr": "Danh mục (TWR)", "vni": "VNINDEX"}) * 100, height=260)
+                with st.expander("Chi tiết nhật ký và kỷ luật"):
+                    st.text(journal.format_journal(j))
             with st.expander("Sổ lệnh"):
                 st.dataframe(trades.assign(date=trades["date"].dt.strftime("%d/%m/%Y")),
                              hide_index=True, width="stretch")

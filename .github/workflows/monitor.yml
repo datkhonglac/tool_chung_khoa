@@ -1,0 +1,58 @@
+name: Theo dõi trong phiên
+
+# Lệnh monitor: giá trong phiên (bảng giá VCI) so với cắt lỗ trong sổ lệnh và vùng mua của khuyến
+# nghị gần nhất (nhánh signals) -> cảnh báo Telegram.
+# Lịch chạy theo giờ UTC (giờ VN = UTC + 7); GitHub thường chạy trễ 5–30 phút so với lịch nên đặt
+# sớm: 02:47 UTC ≈ 9:47 và 06:47 UTC ≈ 13:47 giờ VN (trước phiên ATC 14:30–14:45).
+#
+# Secrets cần đặt (Settings → Secrets and variables → Actions → New repository secret):
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   bắt buộc để gửi tin (xem README, mục Cảnh báo Telegram)
+#   VNSA_BACKUP_REPO, VNSA_BACKUP_TOKEN    để lấy sổ lệnh từ repo sao lưu RIÊNG TƯ (không có thì chỉ
+#                                          theo dõi vùng mua của các mã [signals] daily)
+# Repo công khai: nhật ký chạy ai cũng xem được, nên lệnh chạy với --public (không in mã đang giữ).
+on:
+  schedule:
+    - cron: "47 2 * * 1-5"
+    - cron: "47 6 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Mã theo dõi thêm (cách nhau bằng dấu cách)"
+        required: false
+        default: ""
+      always:
+        description: "Gửi Telegram cả khi không có cảnh báo (để thử kết nối)"
+        type: boolean
+        default: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUNBUFFERED: "1"
+      VNSTOCK_TELEMETRY: "off"
+      VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      VNSA_BACKUP_REPO: ${{ secrets.VNSA_BACKUP_REPO }}
+      VNSA_BACKUP_TOKEN: ${{ secrets.VNSA_BACKUP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+      - name: Lấy khuyến nghị gần nhất (nhánh signals)
+        run: git fetch --depth=1 origin signals:refs/remotes/origin/signals || echo "chưa có nhánh signals"
+      - name: Lấy sổ lệnh từ repo sao lưu riêng tư
+        if: env.VNSA_BACKUP_REPO != ''
+        run: python -m vnsa.cli portfolio restore > /dev/null 2>&1 && echo "đã lấy sổ lệnh" || echo "không lấy được sổ lệnh (kiểm tra VNSA_BACKUP_REPO / VNSA_BACKUP_TOKEN)"
+      - name: Theo dõi và gửi cảnh báo
+        run: |
+          python -m vnsa.cli monitor ${{ inputs.symbols }} --send --public ${{ inputs.always && '--always' || '' }} | tee monitor.txt
+          { echo '```'; cat monitor.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Xoá sổ lệnh khỏi máy chạy
+        if: always()
+        run: rm -rf data/portfolio

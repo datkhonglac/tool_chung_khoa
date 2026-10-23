@@ -93,6 +93,7 @@ class Card:
     basis: str = ""          # kỳ số liệu tài chính: "TTM Q2/2026" | "năm 2025"
     consensus: str = ""      # dòng đối chiếu giá mục tiêu CTCK (VCI tổng hợp)
     macro: list[str] = field(default_factory=list)   # mục VĨ MÔ & NGÀNH (tham khảo)
+    warnings: list[str] = field(default_factory=list)  # chất lượng BCTC + tin tiêu cực (v3, chỉ cảnh báo)
 
 
 def red_flags(fin: pd.DataFrame, financial: bool, z_em: float, f_score: float) -> list[str]:
@@ -235,9 +236,12 @@ def macro_lines(mv, top: int = 4) -> list[str]:
     news = getattr(mv, "news", None)
     if news is not None and len(news):
         lines.append("Tin gần đây (tiêu đề, chỉ tham khảo — hỏi Claude Desktop để tóm tắt):")
+        from vnsa.news import MARK, classify
+
         for r in news.head(3).itertuples():
             title = r.title if len(r.title) <= 90 else r.title[:87] + "…"
-            lines.append(f"  {r.date:%d/%m} {title}")
+            mark = MARK.get(classify(r.title), "")
+            lines.append(f"  {r.date:%d/%m} {mark + ' ' if mark else ''}{title}")
     return lines
 
 
@@ -265,7 +269,8 @@ def build_card(a) -> Card:
     financial = market.financial_note(d.symbol) is not None
     conf, checks = _confidence(a, settings()["report"])
     guard = macro_guard(getattr(a, "macro", None))
-    if guard:
+    warnings, downgrades = quality_warnings(a)
+    for _ in range(int(bool(guard)) + downgrades):
         conf = {"Cao": "Trung bình", "Trung bình": "Thấp"}.get(conf, conf)
     nan = float("nan")
 
@@ -323,6 +328,9 @@ def build_card(a) -> Card:
         flags = red_flags(fin, financial, a.z_em, f_score) + flags
     else:
         fundamentals.append("Chưa có BCTC")
+    fx = getattr(a, "forensic", None)
+    if fx is not None and fx.info:
+        fundamentals.append(" · ".join(fx.info))
     extra = []
     divs = d.dividends if d.dividends is not None else pd.DataFrame()
     if len(divs):
@@ -471,7 +479,30 @@ def build_card(a) -> Card:
         dividend_yield=x.dividend_yield, regime=x.regime,
         fundamentals=fundamentals, red_flags=flags, technical=technical, forecast=forecast,
         plan=plan_lines, notes=notes, consensus=cons_line,
-        macro=macro_lines(getattr(a, "macro", None)))
+        macro=macro_lines(getattr(a, "macro", None)), warnings=warnings)
+
+
+def quality_warnings(a) -> tuple[list[str], int]:
+    """(cảnh báo chất lượng BCTC + tin, số bậc giảm độ tin cậy): mỗi nguồn (BCTC, tin) một bậc.
+    Chỉ cảnh báo, không đổi xếp hạng — riêng tin trạng thái nghiêm trọng đã chặn mua ở engine."""
+    out, steps = [], 0
+    fx = getattr(a, "forensic", None)
+    if fx is not None and fx.warnings:
+        out += [f"BCTC: {w}" for w in fx.warnings]
+        steps += 1
+    nc = getattr(a, "news", None)
+    if nc is not None:
+        if nc.blocked:
+            out.append(f"CHẶN MUA (trạng thái giao dịch): {nc.blocked}")
+        if getattr(nc, "status_note", ""):
+            out.append(f"Lưu ý: {nc.status_note}")
+        if nc.negatives:
+            out.append("Tin tiêu cực 30 ngày: " + " | ".join(nc.negatives[:3])
+                       + (f" (+{len(nc.negatives) - 3} tin)" if len(nc.negatives) > 3 else ""))
+            steps += 1
+    if steps:
+        out.append(f"độ tin cậy giảm {steps} bậc vì các cảnh báo trên (không đổi xếp hạng)")
+    return out, steps
 
 
 def format_card(c: Card) -> str:
@@ -496,6 +527,7 @@ def format_card(c: Card) -> str:
         "CƠ BẢN",
         *[f"  {s}" for s in c.fundamentals],
         "  " + ("Không có cờ đỏ" if not c.red_flags else "Cờ đỏ: " + "; ".join(c.red_flags)),
+        *[f"  ⚠ {w}" for w in c.warnings],
         "",
         "KỸ THUẬT",
         *[f"  {s}" for s in c.technical],

@@ -817,6 +817,38 @@ class Assessment:
     quant: float
     rec: object              # Recommendation
     macro: MacroView | None = None
+    forensic: object = None  # fa.forensic.Forensic | None (doanh nghiệp thường)
+    news: object = None      # news.NewsCheck | None
+
+
+def forensic(d: Data):
+    """Kiểm tra chất lượng BCTC (v3): Beneish M-Score, phải thu khác, backlog BĐS, tiền ròng.
+    None với định chế tài chính hoặc chưa có BCTC."""
+    from vnsa.fa.forensic import analyze
+    from vnsa.market import financial_note
+
+    if d.fin.empty or financial_note(d.symbol):
+        return None
+    shares = (d.profile or {}).get("shares_out")
+    price = float(d.prices["close_raw"].iloc[-1]) if "close_raw" in d.prices and \
+        not pd.isna(d.prices["close_raw"].iloc[-1]) else float(d.prices["close"].iloc[-1])
+    cap = price * float(shares) if shares and not pd.isna(shares) else float("nan")
+    return analyze(d.fin, cap, valuation_group(d.symbol)[0] == "real_estate",
+                   settings().get("forensic", {}))
+
+
+def news_check(symbol: str):
+    """Tin gần đây gắn nhãn theo từ khoá + trạng thái giao dịch từ bảng giá (news.py)."""
+    from vnsa import news as nw
+    from vnsa.data.store import Store
+
+    c = nw.cfg()
+    with Store(path("warehouse")) as store:
+        df = store.news(symbol, limit=100, days=int(c["severe_days"]))
+        status = store.trading_status(symbol)
+    res = nw.check(df, c=c)
+    nw.apply_status(res, status, c)
+    return res if len(df) or res.blocked or res.status_note else None
 
 
 def assess(symbol: str) -> Assessment:
@@ -870,6 +902,16 @@ def assess(symbol: str) -> Assessment:
         zone_status=p.zone.status if p is not None and p.zone is not None else "",
     )
     inputs.rule_state = timing_state(d, ind)
+    try:
+        nc = news_check(d.symbol)
+    except Exception:  # noqa: BLE001 - tin chỉ để cảnh báo, lỗi không chặn phân tích
+        nc = None
+    if nc is not None and nc.blocked:
+        inputs.blocked = nc.blocked
+    try:
+        fx = forensic(d)
+    except Exception:  # noqa: BLE001
+        fx = None
     rec = recommend(inputs, settings()["recommend"], notes)
     try:
         mv = macro_view(d.symbol)
@@ -880,7 +922,7 @@ def assess(symbol: str) -> Assessment:
     except Exception as e:  # noqa: BLE001 - lớp vĩ mô chỉ tham khảo, lỗi không chặn phân tích
         mv = None
         rec.reasons.append(f"không đọc được số vĩ mô ({e})")
-    return Assessment(d, fa_score, fair, pe, pb, z_em, upside, ind, t, p, r, q, rec, mv)
+    return Assessment(d, fa_score, fair, pe, pb, z_em, upside, ind, t, p, r, q, rec, mv, fx, nc)
 
 
 def timing_state(d: Data, ind: pd.DataFrame) -> dict | None:
