@@ -1,0 +1,73 @@
+name: Bot Telegram
+
+# Trả lời tin nhắn gửi cho bot Telegram (lệnh `bot --once`): nhắn mã cổ phiếu -> thẻ báo cáo.
+# Chạy mỗi 10 phút từ 7h đến 23h giờ VN (GitHub hay trễ 5–30 phút). Bước đầu chỉ hỏi Telegram có tin
+# mới không; không có thì dừng ngay (vài giây). Cần secrets TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID;
+# thêm VNSA_BACKUP_REPO / VNSA_BACKUP_TOKEN để /danhmuc, /nhatky đọc được sổ lệnh.
+# Repo công khai: nhật ký chỉ in số tin đã trả lời, không in nội dung.
+on:
+  schedule:
+    - cron: "*/10 0-16 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: telegram-bot
+  cancel-in-progress: false
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUNBUFFERED: "1"
+      VNSTOCK_TELEMETRY: "off"
+      VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      VNSA_BACKUP_REPO: ${{ secrets.VNSA_BACKUP_REPO }}
+      VNSA_BACKUP_TOKEN: ${{ secrets.VNSA_BACKUP_TOKEN }}
+    steps:
+      - name: Có tin nhắn mới không?
+        id: check
+        run: |
+          n=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates" \
+                -H "Content-Type: application/json" -d '{"timeout":0}' \
+              | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('result',[])))" || echo 0)
+          echo "Tin đang chờ: $n"
+          echo "pending=$n" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.pending != '0'
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.pending != '0'
+        with:
+          python-version: "3.12"
+      - if: steps.check.outputs.pending != '0'
+        run: |
+          pip install -q -e .
+          pip install -q -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+      - name: Lấy kho dữ liệu lần trước
+        if: steps.check.outputs.pending != '0'
+        uses: actions/cache/restore@v4
+        with:
+          path: data/warehouse.duckdb
+          key: bot-${{ github.run_id }}
+          restore-keys: bot-
+      - name: Lấy khuyến nghị và sổ lệnh
+        if: steps.check.outputs.pending != '0'
+        run: |
+          git fetch --depth=1 origin signals:refs/remotes/origin/signals || true
+          if [ -n "$VNSA_BACKUP_REPO" ]; then
+            python -m vnsa.cli portfolio restore > /dev/null 2>&1 && echo "đã lấy sổ lệnh" || echo "không lấy được sổ lệnh"
+          fi
+      - name: Trả lời tin nhắn
+        if: steps.check.outputs.pending != '0'
+        run: python -m vnsa.cli bot --once
+      - name: Lưu kho cho lần sau
+        if: always() && steps.check.outputs.pending != '0' && hashFiles('data/warehouse.duckdb') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/warehouse.duckdb
+          key: bot-${{ github.run_id }}
+      - name: Xoá sổ lệnh khỏi máy chạy
+        if: always()
+        run: rm -rf data/portfolio

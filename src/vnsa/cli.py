@@ -1213,6 +1213,13 @@ def cmd_monitor(args) -> int:
     return 0
 
 
+def cmd_bot(args) -> int:
+    """Bot Telegram: nhắn mã cổ phiếu -> trả thẻ báo cáo (telegram_bot.py)."""
+    from vnsa import telegram_bot
+
+    return telegram_bot.run(once=args.once)
+
+
 def cmd_rrg(args) -> int:
     """Xoay vòng ngành RRG theo tuần (screen/rrg.py) — tham khảo, chưa vào điểm."""
     from vnsa.screen import rrg
@@ -1437,6 +1444,11 @@ def main(argv: list[str] | None = None) -> int:
                      help="nhật ký công khai: không in cảnh báo mã đang giữ (chỉ gửi Telegram)")
     pmo.add_argument("--force", action="store_true", help="chạy cả ngày nghỉ (thử)")
     pmo.set_defaults(func=cmd_monitor)
+
+    pbo = sub.add_parser("bot", help="Bot Telegram: nhắn mã cổ phiếu cho bot để nhận thẻ báo cáo")
+    pbo.add_argument("--once", action="store_true",
+                     help="xử lý tin đang chờ rồi thoát (dùng cho GitHub Actions)")
+    pbo.set_defaults(func=cmd_bot)
 
     prg = sub.add_parser("rrg", help="Xoay vòng ngành (RRG) theo tuần so với VNINDEX — tham khảo")
     prg.add_argument("--tail", type=int, help="số tuần của đuôi (mặc định [rrg] tail)")

@@ -112,6 +112,18 @@ python -m vnsa.cli rrg                     # xoay vòng ngành (cần chạy scr
    sổ lệnh) vào **Actions** secrets. Không có thì workflow chỉ theo dõi vùng mua các mã `[signals] daily`.
 5. Thử: Actions → **Theo dõi trong phiên** → Run workflow, tick "Gửi Telegram cả khi không có cảnh báo".
 
+### Hỏi tool qua Telegram (v3.1)
+
+Nhắn mã cổ phiếu cho bot (vd `FPT` hoặc `fpt hpg dgc`, tối đa 3 mã/tin) → bot trả **thẻ báo cáo**
+như lệnh `analyze`. Lệnh: `/canhbao` (theo dõi trong phiên), `/danhmuc`, `/nhatky`, `/help`. Bot chỉ
+trả lời chat id trong `TELEGRAM_CHAT_ID` (nhiều người: cách nhau bằng dấu phẩy).
+
+- Không cần bật máy: workflow **Bot Telegram** kiểm tra tin mới mỗi 10 phút (7h–23h), trả lời chậm
+  5–30 phút; mỗi mã thêm ~1–2 phút tải dữ liệu.
+- Trả lời ngay: chạy `python -m vnsa.cli bot` trong Codespaces/máy tính (tắt là dừng; Codespace tự
+  tắt khi không dùng ~30 phút). Muốn chạy trong Codespaces thì thêm hai secret Telegram ở Settings →
+  Codespaces → Secrets.
+
 Repo công khai nên nhật ký Actions ai cũng xem được: workflow chạy `monitor --public`, **không in
 mã đang giữ** (chỉ gửi qua Telegram). GitHub hay chạy lịch trễ 5–30 phút, nên đây là nhắc việc chứ
 không thay lệnh dừng lỗ đặt sẵn trên app công ty chứng khoán.
