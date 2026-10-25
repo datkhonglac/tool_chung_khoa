@@ -26,6 +26,9 @@ jobs:
       VNSA_BACKUP_REPO: ${{ secrets.VNSA_BACKUP_REPO }}
       VNSA_BACKUP_TOKEN: ${{ secrets.VNSA_BACKUP_TOKEN }}
     steps:
+      # Lưu ý: bước này bị bỏ qua khi chạy từ Worker; output rỗng (null) so với '0' trong biểu thức
+      # GitHub bị đổi thành số 0 = 0 -> các bước sau sẽ bị bỏ qua, nên mọi điều kiện phải kiểm tra
+      # github.event_name == 'repository_dispatch' trước.
       - name: Có tin nhắn mới không?
         id: check
         if: github.event_name != 'repository_dispatch'
@@ -36,26 +39,26 @@ jobs:
           echo "Tin đang chờ: $n"
           echo "pending=$n" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
-        if: steps.check.outputs.pending != '0'
+        if: github.event_name == 'repository_dispatch' || steps.check.outputs.pending != '0'
       - uses: actions/setup-python@v5
-        if: steps.check.outputs.pending != '0'
+        if: github.event_name == 'repository_dispatch' || steps.check.outputs.pending != '0'
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
-      - if: steps.check.outputs.pending != '0'
+      - if: github.event_name == 'repository_dispatch' || steps.check.outputs.pending != '0'
         run: |
           pip install -q -e .
           pip install -q -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - name: Lấy kho dữ liệu lần trước
-        if: steps.check.outputs.pending != '0'
+        if: github.event_name == 'repository_dispatch' || steps.check.outputs.pending != '0'
         uses: actions/cache/restore@v4
         with:
           path: data/warehouse.duckdb
           key: bot-${{ github.run_id }}
           restore-keys: bot-
       - name: Lấy khuyến nghị và sổ lệnh
-        if: steps.check.outputs.pending != '0'
+        if: github.event_name == 'repository_dispatch' || steps.check.outputs.pending != '0'
         run: |
           git fetch --depth=1 origin signals:refs/remotes/origin/signals || true
           if [ -n "$VNSA_BACKUP_REPO" ]; then
@@ -72,7 +75,7 @@ jobs:
         if: github.event_name != 'repository_dispatch' && steps.check.outputs.pending != '0'
         run: python -m vnsa.cli bot --once
       - name: Lưu kho cho lần sau
-        if: always() && steps.check.outputs.pending != '0' && hashFiles('data/warehouse.duckdb') != ''
+        if: always() && (github.event_name == 'repository_dispatch' || steps.check.outputs.pending != '0') && hashFiles('data/warehouse.duckdb') != ''
         uses: actions/cache/save@v4
         with:
           path: data/warehouse.duckdb
