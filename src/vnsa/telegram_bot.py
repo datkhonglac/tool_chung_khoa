@@ -5,10 +5,14 @@ Lệnh khác: /canhbao (theo dõi trong phiên), /danhmuc (danh mục), /nhatky 
 /help. Chỉ trả lời các chat trong TELEGRAM_CHAT_ID (nhiều chat cách nhau bằng dấu phẩy); tin từ
 người lạ bị bỏ qua.
 
-Hai cách chạy:
-- `python -m vnsa.cli bot`         chạy liên tục (Codespaces / máy tính) — trả lời ngay, tắt máy là dừng;
-- `python -m vnsa.cli bot --once`  xử lý các tin đang chờ rồi thoát — workflow GitHub Actions chạy
-                                   mỗi ~10 phút nên trả lời chậm 5–30 phút nhưng không cần bật máy.
+Ba cách chạy:
+- Webhook (khuyên dùng, v3.2): Telegram gửi tin tới Cloudflare Worker (deploy/telegram-worker.js) ->
+  Worker báo "Đã nhận" và gọi GitHub `repository_dispatch` -> workflow telegram-bot.yml chạy NGAY
+  `bot --update FILE` (~2–4 phút, 24/7, không cần bật máy). Lịch chạy định kỳ của GitHub Actions
+  KHÔNG tin được: thực tế cron 10 phút chỉ được chạy mỗi 3–5 giờ.
+- `python -m vnsa.cli bot`         chạy liên tục (Codespaces / máy tính) — trả lời ngay, tắt máy là dừng
+                                   (phải tắt webhook trước: deleteWebhook);
+- `python -m vnsa.cli bot --once`  xử lý tin đang chờ rồi thoát (dự phòng khi chưa có webhook).
 Telegram giữ tin chưa xử lý 24 giờ; sau khi trả lời, bot báo "đã đọc" (offset) để không trả lời lại.
 """
 
@@ -141,8 +145,9 @@ def plan(text: str) -> tuple[str, list[str]]:
     return ("symbols", syms) if syms else ("help", [])
 
 
-def handle(text: str, send, analyze=analyze_text) -> int:
-    """Trả lời một tin nhắn qua send(text); trả về số tin đã gửi."""
+def handle(text: str, send, analyze=analyze_text, announce: bool = True) -> int:
+    """Trả lời một tin nhắn qua send(text); trả về số tin đã gửi. announce=False: không gửi tin
+    "Đang phân tích…" (Cloudflare Worker đã báo "Đã nhận")."""
     kind, items = plan(text)
     if kind == "command":
         try:
@@ -156,9 +161,11 @@ def handle(text: str, send, analyze=analyze_text) -> int:
         return 1
     extra = items[MAX_SYMBOLS:]
     items = items[:MAX_SYMBOLS]
-    send(f"Đang phân tích {', '.join(items)} (~1–2 phút/mã)…"
-         + (f" Bỏ qua {', '.join(extra)} (tối đa {MAX_SYMBOLS} mã/tin)." if extra else ""))
-    n = 1
+    n = 0
+    if announce or extra:
+        send((f"Đang phân tích {', '.join(items)} (~1–2 phút/mã)…" if announce else "")
+             + (f" Bỏ qua {', '.join(extra)} (tối đa {MAX_SYMBOLS} mã/tin)." if extra else ""))
+        n = 1
     for sym in items:
         try:
             reply = analyze(sym)
@@ -170,7 +177,7 @@ def handle(text: str, send, analyze=analyze_text) -> int:
 
 
 def process(updates: list[dict], token: str, chats: set[str], send_fn=None,
-            analyze=analyze_text) -> tuple[int, int | None]:
+            analyze=analyze_text, announce: bool = True) -> tuple[int, int | None]:
     """Xử lý danh sách update; trả (số tin đã trả lời, offset tiếp theo)."""
     send_fn = send_fn or notify.send_telegram
     answered, next_offset = 0, None
@@ -181,9 +188,40 @@ def process(updates: list[dict], token: str, chats: set[str], send_fn=None,
         text = msg.get("text")
         if not text or chat not in chats:
             continue
-        handle(text, lambda t, c=chat: send_fn(t, token=token, chat_id=c), analyze)
+        handle(text, lambda t, c=chat: send_fn(t.strip(), token=token, chat_id=c), analyze, announce)
         answered += 1
     return answered, next_offset
+
+
+WEBHOOK_HINT = ("Bot đang nhận tin qua webhook (Cloudflare Worker) nên không đọc tin kiểu chờ được. "
+                "Muốn chạy bot trên máy: mở https://api.telegram.org/bot<TOKEN>/deleteWebhook "
+                "(bỏ dấu < >); muốn bật lại webhook: mở link /setup của Worker.")
+
+
+def run_update(raw: str, log=print, analyze=analyze_text) -> int:
+    """Trả lời MỘT update do Cloudflare Worker chuyển sang (workflow repository_dispatch).
+    raw: chuỗi JSON hoặc đường dẫn file JSON."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chats = allowed_chats()
+    if not token or not chats:
+        log("Chưa cấu hình TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID.")
+        return 1
+    text = raw
+    if not raw.lstrip().startswith("{") and os.path.exists(raw):
+        with open(raw, encoding="utf-8") as f:
+            text = f.read()
+    try:
+        update = json.loads(text)
+    except json.JSONDecodeError as e:
+        log(f"Update không phải JSON hợp lệ: {e}")
+        return 1
+    try:
+        n, _ = process([update], token, chats, analyze=analyze, announce=False)
+    except notify.NotifyError as e:
+        log(f"Lỗi Telegram: {e}")
+        return 1
+    log(f"Xong: {n} tin nhắn được trả lời.")
+    return 0
 
 
 def run(once: bool = False, log=print, opener=urllib.request.urlopen) -> int:
@@ -206,6 +244,9 @@ def run(once: bool = False, log=print, opener=urllib.request.urlopen) -> int:
             if n:
                 log(f"Đã trả lời {n} tin nhắn.")
         except notify.NotifyError as e:
+            if "webhook" in str(e).lower():
+                log(WEBHOOK_HINT)
+                return 0 if once else 1
             log(f"Lỗi Telegram: {e}")
             if once:
                 return 1

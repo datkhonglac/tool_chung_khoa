@@ -1,18 +1,17 @@
 name: Bot Telegram
 
-# Trả lời tin nhắn gửi cho bot Telegram (lệnh `bot --once`): nhắn mã cổ phiếu -> thẻ báo cáo.
-# Chạy mỗi 10 phút từ 7h đến 23h giờ VN (GitHub hay trễ 5–30 phút). Bước đầu chỉ hỏi Telegram có tin
-# mới không; không có thì dừng ngay (vài giây). Cần secrets TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID;
+# Trả lời tin nhắn gửi cho bot Telegram: nhắn mã cổ phiếu -> thẻ báo cáo.
+# Cách chính (v3.2): Cloudflare Worker (deploy/telegram-worker.js) nhận tin và gọi repository_dispatch
+# -> chạy NGAY `bot --update` (~2–4 phút). Lịch 10 phút chỉ là dự phòng khi chưa có webhook — thực tế
+# GitHub chỉ cho chạy mỗi 3–5 giờ. Cần secrets TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID;
 # thêm VNSA_BACKUP_REPO / VNSA_BACKUP_TOKEN để /danhmuc, /nhatky đọc được sổ lệnh.
 # Repo công khai: nhật ký chỉ in số tin đã trả lời, không in nội dung.
 on:
+  repository_dispatch:
+    types: [telegram]
   schedule:
     - cron: "*/10 0-16 * * *"
   workflow_dispatch:
-
-concurrency:
-  group: telegram-bot
-  cancel-in-progress: false
 
 jobs:
   bot:
@@ -29,6 +28,7 @@ jobs:
     steps:
       - name: Có tin nhắn mới không?
         id: check
+        if: github.event_name != 'repository_dispatch'
         run: |
           n=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates" \
                 -H "Content-Type: application/json" -d '{"timeout":0}' \
@@ -41,6 +41,8 @@ jobs:
         if: steps.check.outputs.pending != '0'
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - if: steps.check.outputs.pending != '0'
         run: |
           pip install -q -e .
@@ -59,8 +61,15 @@ jobs:
           if [ -n "$VNSA_BACKUP_REPO" ]; then
             python -m vnsa.cli portfolio restore > /dev/null 2>&1 && echo "đã lấy sổ lệnh" || echo "không lấy được sổ lệnh"
           fi
-      - name: Trả lời tin nhắn
-        if: steps.check.outputs.pending != '0'
+      - name: Trả lời tin nhắn (từ Cloudflare Worker)
+        if: github.event_name == 'repository_dispatch'
+        env:
+          UPDATE: ${{ toJson(github.event.client_payload.update) }}
+        run: |
+          printf '%s' "$UPDATE" > update.json
+          python -m vnsa.cli bot --update update.json
+      - name: Trả lời tin nhắn đang chờ (dự phòng)
+        if: github.event_name != 'repository_dispatch' && steps.check.outputs.pending != '0'
         run: python -m vnsa.cli bot --once
       - name: Lưu kho cho lần sau
         if: always() && steps.check.outputs.pending != '0' && hashFiles('data/warehouse.duckdb') != ''

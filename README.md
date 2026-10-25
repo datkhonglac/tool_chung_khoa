@@ -118,11 +118,23 @@ Nhắn mã cổ phiếu cho bot (vd `FPT` hoặc `fpt hpg dgc`, tối đa 3 mã/
 như lệnh `analyze`. Lệnh: `/canhbao` (theo dõi trong phiên), `/danhmuc`, `/nhatky`, `/help`. Bot chỉ
 trả lời chat id trong `TELEGRAM_CHAT_ID` (nhiều người: cách nhau bằng dấu phẩy).
 
-- Không cần bật máy: workflow **Bot Telegram** kiểm tra tin mới mỗi 10 phút (7h–23h), trả lời chậm
-  5–30 phút; mỗi mã thêm ~1–2 phút tải dữ liệu.
-- Trả lời ngay: chạy `python -m vnsa.cli bot` trong Codespaces/máy tính (tắt là dừng; Codespace tự
-  tắt khi không dùng ~30 phút). Muốn chạy trong Codespaces thì thêm hai secret Telegram ở Settings →
-  Codespaces → Secrets.
+**Trả lời nhanh 24/7 (v3.2, khuyên dùng):** lịch chạy định kỳ của GitHub Actions không tin được
+(cron 10 phút thực tế chỉ chạy mỗi 3–5 giờ), nên dùng **Cloudflare Worker** miễn phí làm cầu nối:
+Telegram gửi tin tới Worker → Worker báo "Đã nhận" và gọi GitHub chạy ngay → kết quả sau ~2–4 phút.
+
+1. Token GitHub cho Worker: GitHub → Settings → Developer settings → Fine-grained tokens → Generate:
+   *Only select repositories* → `tool_chung_khoa`; Permissions → **Contents: Read and write**.
+2. Tạo tài khoản miễn phí ở dash.cloudflare.com → **Workers & Pages** → **Create** → **Start with
+   Hello World** → đặt tên (vd `vnsa-bot`) → **Deploy** → **Edit code**: xoá hết, dán nội dung file
+   `deploy/telegram-worker.js` → **Deploy**.
+3. Worker → **Settings** → **Variables and Secrets** → **Add**: `TELEGRAM_BOT_TOKEN` (Secret),
+   `TELEGRAM_CHAT_ID` (Text), `GITHUB_REPO` = `datkhonglac/tool_chung_khoa` (Text), `GITHUB_TOKEN`
+   (Secret, token bước 1), `WEBHOOK_SECRET` (Secret, tự đặt chuỗi chữ/số, vd `vnsa_8f3k2m9q`) → Deploy.
+4. Mở `https://vnsa-bot.<tên-tài-khoản>.workers.dev/setup?key=<WEBHOOK_SECRET>` → thấy "Đã bật
+   webhook" là xong. Nhắn `FPT` cho bot.
+
+Dự phòng: chạy `python -m vnsa.cli bot` trong Codespaces/máy tính (trả lời ngay, tắt là dừng; phải tắt
+webhook trước bằng `https://api.telegram.org/bot<TOKEN>/deleteWebhook`, bật lại bằng link `/setup`).
 
 Repo công khai nên nhật ký Actions ai cũng xem được: workflow chạy `monitor --public`, **không in
 mã đang giữ** (chỉ gửi qua Telegram). GitHub hay chạy lịch trễ 5–30 phút, nên đây là nhắc việc chứ
