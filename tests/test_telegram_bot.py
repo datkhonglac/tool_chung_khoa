@@ -87,3 +87,36 @@ def test_run_once_acknowledges_updates(monkeypatch):
 def test_run_requires_config(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     assert tb.run(once=True, log=lambda m: None) == 1
+
+
+def test_run_update_from_worker(monkeypatch, tmp_path):
+    """v3.2: Worker chuyển một update sang -> trả lời, không gửi "Đang phân tích" (Worker đã báo)."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    sent = []
+    monkeypatch.setattr(tb.notify, "send_telegram",
+                        lambda text, token=None, chat_id=None: sent.append((chat_id, text)) or 1)
+    f = tmp_path / "update.json"
+    f.write_text(json.dumps({"update_id": 7, "message": {"chat": {"id": 42}, "text": "fpt"}}),
+                 encoding="utf-8")
+    logs = []
+    assert tb.run_update(str(f), log=logs.append, analyze=lambda s: f"thẻ {s}") == 0
+    assert sent == [("42", "thẻ FPT")] and "Xong: 1" in logs[-1]
+    sent.clear()
+    stranger = json.dumps({"update_id": 8, "message": {"chat": {"id": 7}, "text": "hpg"}})
+    assert tb.run_update(stranger, log=logs.append, analyze=lambda s: f"thẻ {s}") == 0
+    assert sent == []
+    assert tb.run_update("{không phải json", log=logs.append) == 1
+
+
+def test_webhook_conflict_explains(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+
+    def opener(req, timeout):
+        return _Resp(b'{"ok": false, "description": "Conflict: can\'t use getUpdates method while '
+                     b'webhook is active; use deleteWebhook to delete the webhook first"}')
+
+    logs = []
+    assert tb.run(once=True, log=logs.append, opener=opener) == 0
+    assert "deleteWebhook" in logs[-1] and "123:ABC" not in logs[-1]

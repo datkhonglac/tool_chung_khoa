@@ -1217,6 +1217,8 @@ def cmd_bot(args) -> int:
     """Bot Telegram: nhắn mã cổ phiếu -> trả thẻ báo cáo (telegram_bot.py)."""
     from vnsa import telegram_bot
 
+    if args.update:
+        return telegram_bot.run_update(args.update)
     return telegram_bot.run(once=args.once)
 
 
@@ -1447,7 +1449,9 @@ def main(argv: list[str] | None = None) -> int:
 
     pbo = sub.add_parser("bot", help="Bot Telegram: nhắn mã cổ phiếu cho bot để nhận thẻ báo cáo")
     pbo.add_argument("--once", action="store_true",
-                     help="xử lý tin đang chờ rồi thoát (dùng cho GitHub Actions)")
+                     help="xử lý tin đang chờ rồi thoát (dự phòng khi chưa có webhook)")
+    pbo.add_argument("--update", help="trả lời một update JSON (file hoặc chuỗi) do Cloudflare "
+                                      "Worker chuyển sang — workflow telegram-bot.yml dùng")
     pbo.set_defaults(func=cmd_bot)
 
     prg = sub.add_parser("rrg", help="Xoay vòng ngành (RRG) theo tuần so với VNINDEX — tham khảo")

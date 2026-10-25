@@ -162,6 +162,9 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   Bot Telegram (v3.1) `telegram_bot.py`, lệnh `bot [--once]`, workflow `telegram-bot.yml` (mỗi 10 phút,
   bước curl kiểm tra tin chờ trước khi cài; cache kho `bot-`): mã trong tin → `analyze_text` (thẻ
   báo cáo), lệnh /canhbao /danhmuc /nhatky; chỉ chat trong `TELEGRAM_CHAT_ID`; ack bằng offset.
+  v3.2: cron Actions chỉ chạy mỗi 3–5 giờ → webhook qua Cloudflare Worker `deploy/telegram-worker.js`
+  (`/setup?key=` gọi setWebhook, kiểm secret_token + chat id, gọi `repository_dispatch` type telegram)
+  → workflow chạy `bot --update update.json` (`run_update`, không gửi "Đang phân tích").
   Dò nguồn: `scripts/probe_vnstock.py --board MÃ...` (bảng giá), `--grep REGEX MÃ...` (khoản mục BCTC),
   `--news MÃ...` (tiêu đề tin).
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
