@@ -1068,6 +1068,22 @@ def cmd_hrp(args) -> int:
     return 0
 
 
+def cmd_spillover(args) -> int:
+    """Lan truyền biến động giữa các mã (Diebold–Yilmaz) — tham khảo."""
+    from vnsa import analysis
+    from vnsa.ta.spillover import format_spillover
+
+    try:
+        res, missing = analysis.spillover_view([s.upper() for s in args.symbols])
+    except (analysis.DataMissing, ValueError) as e:
+        print(f"  ✗ {e}")
+        return 1
+    print(format_spillover(res))
+    if missing:
+        print(f"\nBỏ qua (thiếu giá trong kho): {', '.join(missing)}")
+    return 0
+
+
 def cmd_study_hrp(args) -> int:
     from vnsa import analysis
     from vnsa.risk.hrp_study import format_hrp_study
@@ -1504,6 +1520,9 @@ def main(argv: list[str] | None = None) -> int:
     phr = sub.add_parser("hrp", help="Tỷ trọng HRP gợi ý cho mã đang giữ + mã nhập thêm (v4)")
     phr.add_argument("symbols", nargs="*", help="mã thêm vào (ngoài sổ lệnh)")
     phr.set_defaults(func=cmd_hrp)
+    psp = sub.add_parser("spillover", help="Mã nào dẫn biến động của nhóm (Diebold–Yilmaz, v4)")
+    psp.add_argument("symbols", nargs="*", help="Bỏ trống = [spillover] symbols / [signals] daily")
+    psp.set_defaults(func=cmd_spillover)
     psr = sub.add_parser("study-hrp", help="Kiểm định HRP vs chia đều vs nghịch biến động (v4)")
     psr.add_argument("symbols", nargs="*", help="Bỏ trống = [study] universe")
     psr.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")

@@ -697,6 +697,27 @@ def hrp_view(symbols: list[str] | None = None, sessions: int = 250):
     return HrpView(hrp_weights(rets), current, top_pairs(tail_dependence(rets, q), 5), len(rets), q)
 
 
+def spillover_view(symbols: list[str] | None = None):
+    """Lan truyền biến động Diebold–Yilmaz giữa các mã (ta/spillover.py); mặc định [spillover]
+    symbols hoặc [signals] daily."""
+    from vnsa.data.store import Store
+    from vnsa.risk.hrp_study import returns_from_prices
+    from vnsa.ta.spillover import spillover
+
+    cfg = settings().get("spillover", {})
+    syms = [x.upper() for x in (symbols or cfg.get("symbols") or settings()["signals"]["daily"])]
+    n = int(cfg.get("sessions", 250))
+    with Store(path("warehouse")) as store:
+        prices = {s: store.prices(s) for s in syms}
+    have = {s: p for s, p in prices.items() if len(p) >= n // 2}
+    missing = sorted(set(syms) - set(have))
+    if len(have) < 3:
+        raise DataMissing("cần giá của ít nhất 3 mã trong kho — chạy analyze/fetch các mã trước")
+    res = spillover(returns_from_prices(have).tail(n), int(cfg.get("lags", 1)),
+                    int(cfg.get("horizon", 10)))
+    return res, missing
+
+
 def hrp_study(symbols: list[str], split: str = "2022-01-01", start: str = "2016-01-01"):
     from vnsa.data.store import Store
     from vnsa.risk.hrp_study import HrpStudy, returns_from_prices, study

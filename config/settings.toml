@@ -309,6 +309,13 @@ risk_factor = 0.5            # ... thì giảm tỷ trọng còn 50% (như rào 
 sessions = 250               # lợi suất ngày 250 phiên gần nhất
 tail_q = 0.05                # phụ thuộc đuôi: 5% ngày tệ nhất của mỗi mã
 
+[spillover]
+# Lan truyền biến động Diebold–Yilmaz (lệnh spillover, ta/spillover.py, v4) — tham khảo
+symbols = []                 # bỏ trống = [signals] daily
+sessions = 250
+lags = 1                     # VAR(1)
+horizon = 10                 # phân rã phương sai dự báo 10 phiên
+
 [monitor]
 # Theo dõi trong phiên + cảnh báo Telegram (lệnh monitor, workflow monitor.yml ~9:47 và ~13:47 giờ VN).
 # Mã theo dõi = mã đang giữ trong sổ lệnh + [signals] daily + danh sách dưới đây.
