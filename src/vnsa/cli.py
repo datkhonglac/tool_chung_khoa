@@ -1033,6 +1033,27 @@ def cmd_study_var(args) -> int:
     return 0
 
 
+def cmd_study_hmm(args) -> int:
+    """Kiểm định siết rủi ro theo HMM trạng thái VNINDEX (recommend/hmm_study.py)."""
+    from vnsa import analysis
+    from vnsa.recommend.hmm_study import format_hmm_study
+
+    cfg = settings()["study"]
+    _study_symbols(args)
+    try:
+        res = analysis.hmm_study(cfg["split"], cfg["start"])
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    text = format_hmm_study(res, settings().get("hmm", {}))
+    view = analysis.hmm_view()
+    if view is not None:
+        text += f"\n\nHiện tại: {view}"
+    print("\n" + text)
+    _save_study("hmm_study", text, None)
+    return 0
+
+
 def cmd_screen(args) -> int:
     """Sàng lọc toàn thị trường (src/vnsa/screen/): lọc theo tầng, in và lưu kết quả."""
     from vnsa.screen.report import format_industry, format_liquidity, format_picks, format_taxonomy
@@ -1442,6 +1463,12 @@ def main(argv: list[str] | None = None) -> int:
     psv.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
     psv.add_argument("--no-fetch", action="store_true", help="Không tải giá, dùng kho")
     psv.set_defaults(func=cmd_study_var)
+
+    psh = sub.add_parser("study-hmm", help="Kiểm định siết rủi ro theo HMM trạng thái VNINDEX (v4)")
+    psh.add_argument("symbols", nargs="*", help="Mã tải kèm (bỏ trống = [study] universe)")
+    psh.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
+    psh.add_argument("--no-fetch", action="store_true", help="Không tải giá, dùng kho")
+    psh.set_defaults(func=cmd_study_hmm)
 
     psc = sub.add_parser("screen", help="Sàng lọc toàn thị trường: nhóm ngành và mã tiềm năng")
     psc.add_argument("--stage", choices=["liquidity", "industry", "pick"], default="pick",

@@ -94,6 +94,7 @@ class Card:
     consensus: str = ""      # dòng đối chiếu giá mục tiêu CTCK (VCI tổng hợp)
     macro: list[str] = field(default_factory=list)   # mục VĨ MÔ & NGÀNH (tham khảo)
     warnings: list[str] = field(default_factory=list)  # chất lượng BCTC + tin tiêu cực (v3, chỉ cảnh báo)
+    hmm: str = ""            # trạng thái HMM VNINDEX (v4, tham khảo)
 
 
 def red_flags(fin: pd.DataFrame, financial: bool, z_em: float, f_score: float) -> list[str]:
@@ -490,7 +491,17 @@ def build_card(a) -> Card:
         dividend_yield=x.dividend_yield, regime=x.regime,
         fundamentals=fundamentals, red_flags=flags, technical=technical, forecast=forecast,
         plan=plan_lines, notes=notes, consensus=cons_line,
-        macro=macro_lines(getattr(a, "macro", None)), warnings=warnings)
+        macro=macro_lines(getattr(a, "macro", None)), warnings=warnings, hmm=_hmm_line(d.index))
+
+
+def _hmm_line(index) -> str:
+    try:
+        from vnsa.analysis import hmm_view
+
+        v = hmm_view(index)
+    except Exception:  # noqa: BLE001
+        return ""
+    return str(v) if v is not None else ""
 
 
 def quality_warnings(a) -> tuple[list[str], int]:
@@ -534,6 +545,7 @@ def format_card(c: Card) -> str:
         "ĐIỂM SỐ (0-100)",
         (f"  FA (chất lượng) {vn_num(c.fa)} · TA (xu hướng) {vn_num(c.ta)} · "
          f"Thị trường: VNINDEX {c.regime}"),
+        *([f"  {c.hmm}"] if c.hmm else []),
         "",
         "CƠ BẢN",
         *[f"  {s}" for s in c.fundamentals],

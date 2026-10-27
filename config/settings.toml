@@ -292,6 +292,18 @@ tail = 8                     # số tuần vẽ đuôi
 min_members = 3              # nhóm cần ≥ 3 mã có giá
 history_weeks = 60
 
+[hmm]
+# Trạng thái ẩn VNINDEX (ta/hmm_regime.py, v4) — chỉ hiển thị; siết rủi ro theo HMM chỉ bật khi
+# study-hmm cho thấy tốt hơn MA200 ở cả hai giai đoạn.
+show = true
+states = 4                   # Suy thoái / Phân phối / Tích lũy / Tăng tốc
+ret_days = 5                 # quan sát: lợi suất 5 phiên ...
+vol_days = 20                # ... và độ biến động 20 phiên
+train_sessions = 1500        # ước lượng trên 1.500 phiên gần nhất (~6 năm)
+seeds = 3
+threshold = 0.70             # kiểm định: P(ngày mai Phân phối/Suy thoái) > 70% ...
+risk_factor = 0.5            # ... thì giảm tỷ trọng còn 50% (như rào chắn MA200 hiện tại)
+
 [monitor]
 # Theo dõi trong phiên + cảnh báo Telegram (lệnh monitor, workflow monitor.yml ~9:47 và ~13:47 giờ VN).
 # Mã theo dõi = mã đang giữ trong sổ lệnh + [signals] daily + danh sách dưới đây.

@@ -625,6 +625,49 @@ def entry_study(symbols: list[str], split: str = "2022-01-01", start: str = "201
     return res
 
 
+_HMM_CACHE: dict = {}
+
+
+def hmm_view(index: pd.DataFrame | None = None):
+    """Trạng thái HMM của VNINDEX (ta/hmm_regime.py) — tính một lần cho mỗi phiên cuối của chỉ số
+    (sàng lọc gọi assess hàng trăm lần). None nếu thiếu dữ liệu hoặc tắt `[hmm] show`."""
+    from vnsa.ta.hmm_regime import current
+
+    cfg = settings().get("hmm", {})
+    if not cfg.get("show", True):
+        return None
+    if index is None:
+        from vnsa.data.store import Store
+
+        with Store(path("warehouse")) as store:
+            index = store.prices(settings()["valuation"]["index"])
+    if index is None or index.empty:
+        return None
+    key = (pd.Timestamp(index["date"].max()), len(index))
+    if key not in _HMM_CACHE:
+        try:
+            _HMM_CACHE[key] = current(index, cfg)
+        except Exception:  # noqa: BLE001 - chỉ tham khảo
+            _HMM_CACHE[key] = None
+    return _HMM_CACHE[key]
+
+
+def hmm_study(split: str = "2022-01-01", start: str = "2016-01-01"):
+    """Kiểm định siết rủi ro theo HMM so với MA200 trên VNINDEX (recommend/hmm_study.py)."""
+    from vnsa.data.store import Store
+    from vnsa.recommend.hmm_study import study
+    from vnsa.ta.regime import regime_series
+
+    with Store(path("warehouse")) as store:
+        index = store.prices(settings()["valuation"]["index"])
+    if len(index) < 1000:
+        raise ValueError("VNINDEX chưa đủ dữ liệu (cần ≥ 1.000 phiên; chạy study-var/study-timing để "
+                         "tải 10 năm)")
+    ma = regime_series(index, settings().get("regime", {}))
+    ma.index = pd.to_datetime(ma.index)
+    return study(index, ma, settings().get("hmm", {}), settings()["backtest"], split, start)
+
+
 def var_study(symbols: list[str], split: str = "2022-01-01", start: str = "2016-01-01"):
     """Kiểm định VaR 1 ngày: lịch sử, GARCH chuẩn/thực nghiệm, bước nhảy (risk/var_study.py)."""
     from vnsa import market
