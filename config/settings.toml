@@ -304,6 +304,11 @@ seeds = 3
 threshold = 0.70             # kiểm định: P(ngày mai Phân phối/Suy thoái) > 70% ...
 risk_factor = 0.5            # ... thì giảm tỷ trọng còn 50% (như rào chắn MA200 hiện tại)
 
+[hrp]
+# Phân bổ cân bằng rủi ro HRP (lệnh hrp, risk/hrp.py, v4) — gợi ý, chưa thay trần [portfolio]
+sessions = 250               # lợi suất ngày 250 phiên gần nhất
+tail_q = 0.05                # phụ thuộc đuôi: 5% ngày tệ nhất của mỗi mã
+
 [monitor]
 # Theo dõi trong phiên + cảnh báo Telegram (lệnh monitor, workflow monitor.yml ~9:47 và ~13:47 giờ VN).
 # Mã theo dõi = mã đang giữ trong sổ lệnh + [signals] daily + danh sách dưới đây.

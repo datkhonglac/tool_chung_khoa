@@ -10,6 +10,8 @@ on:
       - "src/vnsa/risk/var_study.py"
       - "src/vnsa/ta/hmm_regime.py"
       - "src/vnsa/recommend/hmm_study.py"
+      - "src/vnsa/risk/hrp.py"
+      - "src/vnsa/risk/hrp_study.py"
   workflow_dispatch:
     inputs:
       symbols:
@@ -39,13 +41,16 @@ jobs:
           restore-keys: study-
       - name: Kiểm định VaR
         run: python -m vnsa.cli study-var ${{ inputs.symbols }}
+      - name: Kiểm định HRP
+        if: always()
+        run: python -m vnsa.cli study-hrp --no-fetch ${{ inputs.symbols }}
       - name: Kiểm định HMM
         if: always() && hashFiles('src/vnsa/recommend/hmm_study.py') != ''
         run: python -m vnsa.cli study-hmm --no-fetch ${{ inputs.symbols }}
       - name: Tóm tắt kết quả
         if: always()
         run: |
-          for f in data/study/var_study.txt data/study/hmm_study.txt; do
+          for f in data/study/var_study.txt data/study/hrp_study.txt data/study/hmm_study.txt; do
             [ -f "$f" ] || continue
             { echo '```'; cat "$f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
             msg=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' "$f")

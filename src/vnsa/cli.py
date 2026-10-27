@@ -1054,6 +1054,37 @@ def cmd_study_hmm(args) -> int:
     return 0
 
 
+def cmd_hrp(args) -> int:
+    """Tỷ trọng HRP gợi ý + cặp mã hay cùng giảm mạnh (risk/hrp.py)."""
+    from vnsa import analysis
+    from vnsa.risk.hrp import format_hrp
+
+    try:
+        view = analysis.hrp_view([s.upper() for s in args.symbols])
+    except (analysis.DataMissing, ValueError) as e:
+        print(f"  ✗ {e}")
+        return 1
+    print(format_hrp(view))
+    return 0
+
+
+def cmd_study_hrp(args) -> int:
+    from vnsa import analysis
+    from vnsa.risk.hrp_study import format_hrp_study
+
+    cfg = settings()["study"]
+    syms = _study_symbols(args)
+    try:
+        res = analysis.hrp_study(syms, cfg["split"], cfg["start"])
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    text = format_hrp_study(res)
+    print("\n" + text)
+    _save_study("hrp_study", text, None)
+    return 0
+
+
 def cmd_screen(args) -> int:
     """Sàng lọc toàn thị trường (src/vnsa/screen/): lọc theo tầng, in và lưu kết quả."""
     from vnsa.screen.report import format_industry, format_liquidity, format_picks, format_taxonomy
@@ -1469,6 +1500,15 @@ def main(argv: list[str] | None = None) -> int:
     psh.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
     psh.add_argument("--no-fetch", action="store_true", help="Không tải giá, dùng kho")
     psh.set_defaults(func=cmd_study_hmm)
+
+    phr = sub.add_parser("hrp", help="Tỷ trọng HRP gợi ý cho mã đang giữ + mã nhập thêm (v4)")
+    phr.add_argument("symbols", nargs="*", help="mã thêm vào (ngoài sổ lệnh)")
+    phr.set_defaults(func=cmd_hrp)
+    psr = sub.add_parser("study-hrp", help="Kiểm định HRP vs chia đều vs nghịch biến động (v4)")
+    psr.add_argument("symbols", nargs="*", help="Bỏ trống = [study] universe")
+    psr.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
+    psr.add_argument("--no-fetch", action="store_true", help="Không tải giá, dùng kho")
+    psr.set_defaults(func=cmd_study_hrp)
 
     psc = sub.add_parser("screen", help="Sàng lọc toàn thị trường: nhóm ngành và mã tiềm năng")
     psc.add_argument("--stage", choices=["liquidity", "industry", "pick"], default="pick",

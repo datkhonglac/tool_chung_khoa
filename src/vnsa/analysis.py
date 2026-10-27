@@ -668,6 +668,49 @@ def hmm_study(split: str = "2022-01-01", start: str = "2016-01-01"):
     return study(index, ma, settings().get("hmm", {}), settings()["backtest"], split, start)
 
 
+def hrp_view(symbols: list[str] | None = None, sessions: int = 250):
+    """Tỷ trọng HRP + phụ thuộc đuôi cho các mã đang giữ (sổ lệnh) và `symbols` thêm vào."""
+    from vnsa import portfolio as pf
+    from vnsa.data.store import Store
+    from vnsa.risk.hrp import HrpView, hrp_weights, tail_dependence, top_pairs
+    from vnsa.risk.hrp_study import returns_from_prices
+
+    trades = pf.load()
+    held = {}
+    if len(trades):
+        cal, last_px, _ = pf.market_context(sorted(trades["symbol"].unique()))
+        for s, p in pf.positions(trades, calendar=cal).items():
+            if p.quantity > 0:
+                held[s] = p.quantity * last_px.get(s, p.avg_cost)
+    syms = list(dict.fromkeys([*held, *[x.upper() for x in (symbols or [])]]))
+    if len(syms) < 2:
+        raise ValueError("cần ít nhất 2 mã (mã đang giữ trong sổ lệnh và/hoặc mã nhập thêm)")
+    with Store(path("warehouse")) as store:
+        prices = {s: store.prices(s) for s in syms}
+    missing = [s for s, p in prices.items() if len(p) < sessions // 2]
+    if missing:
+        raise DataMissing(f"thiếu giá: {', '.join(missing)} — chạy analyze {' '.join(missing)} trước")
+    rets = returns_from_prices(prices).tail(sessions)
+    total = sum(held.values())
+    current = pd.Series({s: v / total for s, v in held.items()}) if total > 0 else pd.Series(dtype=float)
+    q = float(settings().get("hrp", {}).get("tail_q", 0.05))
+    return HrpView(hrp_weights(rets), current, top_pairs(tail_dependence(rets, q), 5), len(rets), q)
+
+
+def hrp_study(symbols: list[str], split: str = "2022-01-01", start: str = "2016-01-01"):
+    from vnsa.data.store import Store
+    from vnsa.risk.hrp_study import HrpStudy, returns_from_prices, study
+
+    with Store(path("warehouse")) as store:
+        prices = {s: store.prices(s) for s in symbols}
+    prices = {s: p for s, p in prices.items() if len(p) >= 300}
+    if len(prices) < 5:
+        raise ValueError("cần ít nhất 5 mã đủ dữ liệu giá")
+    table, _ = study(returns_from_prices(prices), settings()["backtest"], split, start,
+                     int(settings().get("hrp", {}).get("sessions", 250)))
+    return HrpStudy(table, sorted(prices))
+
+
 def var_study(symbols: list[str], split: str = "2022-01-01", start: str = "2016-01-01"):
     """Kiểm định VaR 1 ngày: lịch sử, GARCH chuẩn/thực nghiệm, bước nhảy (risk/var_study.py)."""
     from vnsa import market
