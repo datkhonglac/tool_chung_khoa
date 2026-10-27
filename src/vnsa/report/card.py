@@ -414,6 +414,10 @@ def build_card(a) -> Card:
         forecast = [(f"Dải giá: {vn_num(pc[10])} – {vn_num(pc[50])} – {vn_num(pc[90])}đ · "
                      f"Xác suất tăng {vn_pct(r.sim.prob_above(day=h), 0)}"),
                     f"VaR 95% (1 ngày): {vn_pct(-var95, 1)}"]
+        fl = getattr(r, "floor", None)
+        if fl is not None and not pd.isna(fl[1]):
+            forecast.append(f"Xác suất có ít nhất 1 phiên giảm sàn trong 20 phiên: ~{vn_pct(fl[1], 0)} "
+                            "(mô hình bước nhảy, tham khảo)")
 
     # Kế hoạch
     plan_lines = []

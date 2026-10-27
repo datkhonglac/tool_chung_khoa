@@ -625,6 +625,27 @@ def entry_study(symbols: list[str], split: str = "2022-01-01", start: str = "201
     return res
 
 
+def var_study(symbols: list[str], split: str = "2022-01-01", start: str = "2016-01-01"):
+    """Kiểm định VaR 1 ngày: lịch sử, GARCH chuẩn/thực nghiệm, bước nhảy (risk/var_study.py)."""
+    from vnsa import market
+    from vnsa.data.store import Store
+    from vnsa.risk.var_study import study
+
+    cfg = settings()["risk"]
+    data, skipped = {}, []
+    with Store(path("warehouse")) as store:
+        prices = {s: store.prices(s) for s in symbols}
+    for s in symbols:
+        if len(prices[s]) < cfg["var_window"] + 100:
+            skipped.append(s)
+            continue
+        data[s] = prices[s]
+    res = study(data, split, start, window=int(cfg["var_window"]), refit=21,
+                k=float(cfg.get("jump_k", 3.0)), bands={s: market.band(s) for s in data})
+    res.skipped = skipped
+    return res
+
+
 def backtest_config(symbol: str) -> dict:
     """Tham số [backtest] kèm bước giá theo sàn của mã."""
     from vnsa import market
@@ -679,6 +700,8 @@ class RiskReport:
     horizons: list[int]
     plan: object | None            # TradePlan nếu tính được
     first_touch: dict | None       # xác suất chạm cắt lỗ / mục tiêu 1 trong kỳ dài nhất
+    jump: object = None            # risk.jump.JumpFit (v4, tham khảo)
+    floor: tuple | None = None     # (xác suất 1 phiên giảm sàn, xác suất ≥ 1 phiên trong 20 phiên)
 
 
 def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
@@ -692,11 +715,23 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
     fit = fit_garch(log_returns_pct(close.tail(cfg["garch_window"] + 1)))
     p0 = float(close.iloc[-1])
     drift = None if cfg.get("drift", "zero") == "historical" else 0.0
+    from vnsa.risk.jump import fit_jumps, floor_probability, jump_var
+
+    band0 = market.band(prices["symbol"].iloc[-1]) if "symbol" in prices else market.band()
+    try:
+        jf = fit_jumps(log_returns_pct(close.tail(cfg["garch_window"] + 1)), fit.sigma,
+                       float(cfg.get("jump_k", 3.0)), fit.mu)
+    except Exception:  # noqa: BLE001 - bước nhảy chỉ tham khảo
+        jf = None
     var = {}
     for q in cfg["confidence"]:
         hv, cv = historical_var(close, q, cfg["var_window"])
         var[q] = {"hist": hv, "cvar": cv, "garch": garch_var(fit, q, drift=drift),
                   "garch_normal": garch_var(fit, q, empirical=False, drift=drift)}
+        if jf is not None:
+            var[q]["jump"] = jump_var(jf, fit.next_sigma, q, drift if drift is not None else fit.mu,
+                                      band0)
+    floor = floor_probability(jf, fit.next_sigma, band0, 20) if jf is not None else None
     horizons = sorted(horizons or cfg["horizons"])
     band = market.band(prices["symbol"].iloc[-1]) if "symbol" in prices else market.band()
     sim = simulate(fit, p0, max(horizons), n_paths=n_paths or cfg["n_paths"], band=band,
@@ -716,7 +751,7 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
         h = max(horizons)
         touch = Simulation(p0, sim.paths[:, : h + 1]).first_touch(p.stop, p.targets[0].price)
     hist_vol = float(close.pct_change().tail(250).std() * 252 ** 0.5)
-    return RiskReport(p0, fit, hist_vol, var, sim, horizons, p, touch)
+    return RiskReport(p0, fit, hist_vol, var, sim, horizons, p, touch, jf, floor)
 
 
 @dataclass

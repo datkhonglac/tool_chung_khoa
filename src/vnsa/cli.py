@@ -725,7 +725,12 @@ def cmd_risk(args) -> int:
     print("\nVaR 1 ngày (lỗ tối đa với xác suất tin cậy):")
     for q, v in r.var.items():
         print(f"  {q:.0%}: lịch sử {v['hist']:.2%} (CVaR {v['cvar']:.2%}) · GARCH {v['garch']:.2%}"
-              f" (phân phối chuẩn {v['garch_normal']:.2%})")
+              f" (phân phối chuẩn {v['garch_normal']:.2%})"
+              + (f" · có bước nhảy {v['jump']:.2%}" if "jump" in v else ""))
+    if r.jump is not None and r.floor is not None:
+        print(f"  Bước nhảy (|z| > {r.jump.k:g}): {r.jump.n_jumps} lần / {r.jump.n} phiên "
+              f"({r.jump.lam:.1%}/phiên, {r.jump.down_share:.0%} là giảm) · xác suất ≥ 1 phiên giảm "
+              f"sàn trong 20 phiên ~{r.floor[1]:.0%} (tham khảo, study-var)")
     print(f"\nMonte Carlo {sim.paths.shape[0]:,} đường (FHS, chặn biên độ ±{band:.0%}/phiên):")
     for h in r.horizons:
         pc = sim.percentiles(h)
@@ -983,6 +988,48 @@ def cmd_study_entry(args) -> int:
     (out / "entry_study.txt").write_text(text, encoding="utf-8")
     res.rows.to_csv(out / "entry_study.csv", index=False)
     print(f"\nĐã lưu {out / 'entry_study.txt'} và entry_study.csv")
+    return 0
+
+
+def _study_symbols(args) -> list[str]:
+    """Rổ mã kiểm định ([study] universe) + tải đủ năm giá nếu cần."""
+    cfg = settings()["study"]
+    syms = [s.upper() for s in args.symbols] or cfg["universe"]
+    if not args.no_fetch:
+        from vnsa.data.autofetch import Updater
+
+        print(f"Tải giá {args.years or cfg['years']} năm cho {len(syms)} mã + VNINDEX ...")
+        for step in Updater().long_prices(syms, args.years or cfg["years"]):
+            print(step)
+    return syms
+
+
+def _save_study(name: str, text: str, rows) -> None:
+    out = path("warehouse").parent / "study"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{name}.txt").write_text(text, encoding="utf-8")
+    if rows is not None:
+        rows.to_csv(out / f"{name}.csv", index=False)
+    print(f"\nĐã lưu {out / (name + '.txt')}")
+
+
+def cmd_study_var(args) -> int:
+    """Kiểm định VaR 1 ngày quá khứ: lịch sử, GARCH, bước nhảy (risk/var_study.py)."""
+    from vnsa import analysis
+    from vnsa.risk.var_study import format_var_study
+
+    cfg = settings()["study"]
+    syms = _study_symbols(args)
+    try:
+        res = analysis.var_study(syms, cfg["split"], cfg["start"])
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    text = format_var_study(res)
+    if res.skipped:
+        text += f"\nBỏ qua (thiếu giá): {', '.join(res.skipped)}"
+    print("\n" + text)
+    _save_study("var_study", text, None)
     return 0
 
 
@@ -1389,6 +1436,12 @@ def main(argv: list[str] | None = None) -> int:
     pse.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
     pse.add_argument("--no-fetch", action="store_true", help="Không tải, chỉ dùng giá trong kho")
     pse.set_defaults(func=cmd_study_entry)
+
+    psv = sub.add_parser("study-var", help="Kiểm định VaR quá khứ: lịch sử, GARCH, bước nhảy (v4)")
+    psv.add_argument("symbols", nargs="*", help="Bỏ trống = [study] universe")
+    psv.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
+    psv.add_argument("--no-fetch", action="store_true", help="Không tải giá, dùng kho")
+    psv.set_defaults(func=cmd_study_var)
 
     psc = sub.add_parser("screen", help="Sàng lọc toàn thị trường: nhóm ngành và mã tiềm năng")
     psc.add_argument("--stage", choices=["liquidity", "industry", "pick"], default="pick",
