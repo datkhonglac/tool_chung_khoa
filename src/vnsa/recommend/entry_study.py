@@ -4,9 +4,11 @@ Câu hỏi: đặt lệnh mua sâu hơn có tốt hơn không? Mua sâu thì gi�
 mã tăng thẳng. Cách kiểm định (lệnh study-entry, không nhìn trước):
 
 1. Mỗi `step` phiên, với từng mã trong rổ, tại phiên t lập vùng mua CHỈ từ dữ liệu đến phiên t
-   (chỉ báo, hỗ trợ/kháng cự 250 phiên) theo hai cách:
+   (chỉ báo, hỗ trợ/kháng cự 250 phiên) theo ba cách:
      - "Vùng cũ": 2 lệnh LO, ½ ở đỉnh vùng, ½ ở đáy vùng (ta/entry.py, ladder tắt);
-     - "Thang 3 lớp": 3 lệnh LO 30% / 40% / 30% (ladder bật).
+     - "Thang 3 lớp": 3 lệnh LO 30% / 40% / 30% (ladder bật);
+     - "Vùng VA" (v4): như vùng cũ nhưng điểm neo là cận trên vùng giá trị / POC của hồ sơ khối
+       lượng 120 phiên (ta/volume_profile.py, `[entry] anchor_mode = "va"`).
    Không có trần giá trị hợp lý (BCTC miễn phí không lưu theo ngày công bố) — phần đó giống nhau ở
    hai cách nên không làm lệch so sánh.
 2. Lệnh LO khớp nếu trong `fill_sessions` phiên sau (t+1..t+20) có giá thấp nhất ≤ giá đặt; giá khớp
@@ -33,7 +35,7 @@ import pandas as pd
 from vnsa.ta.entry import entry_zone
 from vnsa.ta.levels import support_resistance
 
-VARIANTS = ("Mua ngay", "Vùng cũ", "Thang 3 lớp")
+VARIANTS = ("Mua ngay", "Vùng cũ", "Thang 3 lớp", "Vùng VA")
 
 
 def _orders(ind: pd.DataFrame, t: int, cfg_old: dict, cfg_ladder: dict, ta: dict, ticks
@@ -43,8 +45,10 @@ def _orders(ind: pd.DataFrame, t: int, cfg_old: dict, cfg_ladder: dict, ta: dict
     sup, _ = support_resistance(hist, ta["swing_window"], ta["lookback"], ta["level_tolerance"])
     old = entry_zone(hist, sup, cfg_old, ticks)
     lad = entry_zone(hist, sup, cfg_ladder, ticks)
+    va = entry_zone(hist, sup, {**cfg_old, "anchor_mode": "va"}, ticks)
     return {"Vùng cũ": [(old.high, 0.5, "đỉnh vùng"), (old.low, 0.5, "đáy vùng")],
-            "Thang 3 lớp": [(x.price, x.weight, x.name) for x in lad.tiers]}
+            "Thang 3 lớp": [(x.price, x.weight, x.name) for x in lad.tiers],
+            "Vùng VA": [(va.high, 0.5, "đỉnh vùng VA"), (va.low, 0.5, "đáy vùng VA")]}
 
 
 def evaluate_symbol(ind: pd.DataFrame, cfg_entry: dict, ta: dict, ticks=None, step: int = 5,
@@ -53,8 +57,8 @@ def evaluate_symbol(ind: pd.DataFrame, cfg_entry: dict, ta: dict, ticks=None, st
     """Một dòng cho mỗi (phiên lập vùng, cách, lệnh)."""
     d = ind.reset_index(drop=True)
     o, lo, c = (d[k].to_numpy(float) for k in ("open", "low", "close"))
-    cfg_old = {**cfg_entry, "ladder": False}
-    cfg_lad = {**cfg_entry, "ladder": True}
+    cfg_old = {**cfg_entry, "ladder": False, "anchor_mode": "classic"}
+    cfg_lad = {**cfg_entry, "ladder": True, "anchor_mode": "classic"}
     rows = []
     for t in range(warmup, len(d) - hold_sessions, step):
         if pd.isna(d.at[t, "atr"]) or d.at[t, "atr"] <= 0:
@@ -155,7 +159,8 @@ def format_entry_study(res: EntryStudy) -> str:
         lines.append(f"  {variant:<12} {order:<14} {_p(r['depth']):>7} · khớp {_p(r['fill'], False)}"
                      f" · lãi {_p(r['ret'])}")
     lines += ["", "Đọc kết quả: 'Lãi/tổng vốn' là thước đo chính (gồm cả cái giá của việc lỡ mua). "
-              "Thang 3 lớp đáng dùng khi Lãi/tổng vốn không thấp hơn Vùng cũ ở CẢ HAI giai đoạn.",
+              "Thang 3 lớp / Vùng VA (neo theo hồ sơ khối lượng, v4) đáng dùng khi Lãi/tổng vốn không "
+              "thấp hơn Vùng cũ ở CẢ HAI giai đoạn.",
               "Hạn chế: rổ mã lớn hiện tại (thiên lệch sống sót), không có trần giá trị hợp lý, chưa trừ "
               "phí/thuế, khớp theo giá thấp nhất trong ngày là lạc quan."]
     return "\n".join(lines)

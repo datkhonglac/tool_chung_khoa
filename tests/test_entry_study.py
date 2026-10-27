@@ -27,7 +27,7 @@ def _prices(n=700, seed=5):
 def test_evaluate_symbol_fills_and_no_lookahead():
     ind = add_indicators(_prices())
     rows = evaluate_symbol(ind, ENTRY, TA, step=20)
-    assert set(rows["variant"]) == {"Mua ngay", "Vùng cũ", "Thang 3 lớp"}
+    assert set(rows["variant"]) == {"Mua ngay", "Vùng cũ", "Thang 3 lớp", "Vùng VA"}
     lad = rows[rows["variant"] == "Thang 3 lớp"]
     assert len(lad) % 3 == 0 and (lad.groupby("date")["weight"].sum().round(6) == 1).all()
     # lệnh đã khớp có giá khớp ≤ giá đặt; lệnh không khớp không có lãi

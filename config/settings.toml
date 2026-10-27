@@ -242,6 +242,11 @@ weak_fa_extra = 0.10        # điểm FA < 50: biên an toàn thêm 10%
 # ~43% vốn nên lãi trên TỔNG vốn thấp hơn vùng cũ ở cả hai giai đoạn -> mặc định TẮT, chỉ hiển thị
 # lớp 2, 3 làm mức mua thêm tham khảo. Đặt ladder = true nếu bạn ưu tiên giá vốn thấp hơn số lần mua được.
 ladder = false
+# Điểm neo vùng mua (v4): "classic" = hỗ trợ/VWAP20/SMA20; "va" = cận trên vùng giá trị/POC của hồ
+# sơ khối lượng; "mixed" = cả hai. Chỉ đổi sau khi study-entry cho thấy "Vùng VA" tốt hơn vùng cũ.
+anchor_mode = "classic"
+vp_sessions = 120            # hồ sơ khối lượng 120 phiên
+vp_bins = 50
 ladder_show = true
 ladder_weights = [0.3, 0.4, 0.3]   # lớp 1 thăm dò · lớp 2 chính · lớp 3 sâu
 l2_range_atr = 4.0          # lớp 2 tìm mức đỡ mạnh trong 4 ATR dưới giá

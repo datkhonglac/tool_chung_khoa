@@ -380,6 +380,13 @@ def build_card(a) -> Card:
                     if not pd.isna(squeeze) else ""),
                  (f"Hỗ trợ {vn_num(sup[0].price) + 'đ' if sup else '—'} · "
                   f"Kháng cự {vn_num(res[0].price) + 'đ' if res else '— (vùng đỉnh)'}")]
+    from vnsa.ta.volume_profile import describe, volume_profile
+
+    ec = settings().get("entry", {})
+    vp = describe(volume_profile(a.ind, int(ec.get("vp_sessions", 120)), int(ec.get("vp_bins", 50))),
+                  float(last["close"]))
+    if vp:
+        technical.append(vp)
     from vnsa.analysis import flow_summary
 
     fs = flow_summary(d)
