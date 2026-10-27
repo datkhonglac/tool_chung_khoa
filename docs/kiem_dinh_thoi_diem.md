@@ -154,3 +154,53 @@ Từng lệnh (toàn kỳ, ~18.800 lần lập vùng):
 Hạn chế: rổ là mã lớn hiện tại (thiên lệch sống sót); giá điều chỉnh; chưa trừ phí và thuế (như nhau ở mọi cách); khớp theo giá thấp nhất trong ngày là lạc quan, nhưng lạc quan như nhau cho mọi lệnh LO.
 
 Trục **xếp hạng** (giá trị hợp lý) không kiểm định được theo cách này, vì BCTC miễn phí chỉ có 4 năm. Thay vào đó, workflow hằng ngày lưu khuyến nghị vào nhánh `signals`, và lệnh `review-signals` chấm kết quả thật sau 5/20/60 phiên.
+
+## Bổ sung 28/10/2026: kiểm định các mô-đun v4
+
+Cùng rổ 45 mã `[study] universe`, giá điều chỉnh từ 2016, chia hai giai đoạn 2016–2021 / 2022–nay.
+Workflow `v4.yml` (study-var, study-hrp, study-hmm) và `entry.yml` (study-entry).
+
+**1. Vùng mua neo theo hồ sơ khối lượng (Volume Profile) — KHÔNG ĐẠT.** Lãi 60 phiên trên tổng vốn:
+2016–2021 vùng cũ +5,3%, Vùng VA +4,8%; 2022–nay cùng +1,1%. Giá vốn rẻ hơn ~0,7% nhưng khớp ít hơn
+(77% so với 83% vốn). Giữ `[entry] anchor_mode = "classic"`; POC/vùng giá trị chỉ hiện trên thẻ.
+
+**2. VaR 1 ngày (Kupiec, ~75.000 phiên-mã) — bước nhảy KHÔNG ĐẠT.**
+
+| VaR | Cách | Vượt 2016–21 | Vượt 2022–nay | VaR TB |
+|---|---|---|---|---|
+| 95% | GARCH-N | 5,19% ✓ | 5,03% ✓ | 3,5% |
+| 95% | GARCH-TN (đang dùng) | 5,52% | 5,14% ✓ | 3,5% |
+| 99% | GARCH-TN (đang dùng) | 1,61% | 1,25% | 5,4% |
+| 99% | bước nhảy | 2,12% | 1,67% | 5,0% |
+| 99% | lịch sử 750 phiên | 1,51% | 1,18% | 6,4% |
+
+Mô hình bước nhảy (Merton trên nền GARCH) đánh giá thấp lỗ ở cả 95% và 99% → không thay VaR đang dùng;
+chỉ in ở lệnh `risk` kèm cảnh báo, bỏ khỏi thẻ. Ở 99% không cách nào đạt Kupiec trên dữ liệu gộp;
+GARCH thực nghiệm (đang dùng) gần đúng nhất với VaR bình quân thấp hơn VaR lịch sử.
+
+**3. HRP — ĐẠT.** Cân lại hằng tháng, 250 phiên:
+
+| Giai đoạn | Cách | Lợi suất/năm | Sharpe | Sụt giảm max |
+|---|---|---|---|---|
+| 2016–2021 | Chia đều | +28,7% | 1,29 | −47,8% |
+| 2016–2021 | HRP | +27,5% | 1,42 | −40,4% |
+| 2022–nay | Chia đều | +4,5% | 0,31 | −46,4% |
+| 2022–nay | HRP | +5,5% | 0,37 | −34,3% |
+
+HRP có Sharpe cao hơn và sụt giảm nhỏ hơn chia đều ở cả hai giai đoạn. Lệnh `hrp` gợi ý tỷ trọng cho
+danh mục đang giữ; CHƯA tự động thay trần 30% nhóm ngành / nhiệt danh mục (kiểm định so với chia đều,
+không so với các trần hiện tại).
+
+**4. HMM trạng thái VNINDEX — đạt tiêu chí nhưng sát nút.** Giảm tỷ trọng còn 50% khi P(ngày mai Phân
+phối/Suy thoái) > 70%, so với rào chắn MA200 đang dùng:
+
+| Giai đoạn | Cách | Lợi suất/năm | Sharpe | Sụt giảm max |
+|---|---|---|---|---|
+| 2016–2021 | MA200 | +14,5% | 0,87 | −40,2% |
+| 2016–2021 | HMM | +12,1% | 0,92 | −28,1% |
+| 2022–nay | MA200 | +1,1% | 0,15 | −32,5% |
+| 2022–nay | HMM | +1,3% | 0,16 | −25,9% |
+
+Sụt giảm nhỏ hơn rõ, Sharpe chỉ nhỉnh hơn (0,01–0,05), lợi suất toàn kỳ thấp hơn (6,3% so với 7,2%)
+và ở thế phòng thủ 52% số phiên. Đưa vào cấu hình `[hmm] sizing` (mặc định tắt): bật thì ngân sách rủi
+ro/lệnh theo HMM thay cho MA200 — chọn theo khẩu vị (ít sụt giảm hơn hay lợi suất cao hơn).

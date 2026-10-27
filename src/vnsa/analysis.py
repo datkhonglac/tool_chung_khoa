@@ -1015,6 +1015,14 @@ def assess(symbol: str) -> Assessment:
     t = ta(ind)
     reg = market_regime(d.index)
     scale = settings().get("regime", {}).get("bear_risk_factor", 1.0) if reg.state == "giảm" else 1.0
+    hcfg = settings().get("hmm", {})
+    if hcfg.get("sizing", False):        # v4: ngân sách rủi ro theo HMM thay cho MA200 (study-hmm)
+        hv = hmm_view(d.index)
+        if hv is not None:
+            scale = (float(hcfg.get("risk_factor", 0.5))
+                     if hv.bad_tomorrow > float(hcfg.get("threshold", 0.7)) else 1.0)
+            notes.append(f"ngân sách rủi ro theo HMM: P(ngày mai Phân phối/Suy thoái) "
+                         f"{hv.bad_tomorrow:.0%} → rủi ro/lệnh × {scale:g}")
     notes.append(str(reg))
     try:
         p = plan(ind, fair.value if fair else nan, fa_score, risk_scale=scale)

@@ -293,9 +293,13 @@ min_members = 3              # nhóm cần ≥ 3 mã có giá
 history_weeks = 60
 
 [hmm]
-# Trạng thái ẩn VNINDEX (ta/hmm_regime.py, v4) — chỉ hiển thị; siết rủi ro theo HMM chỉ bật khi
-# study-hmm cho thấy tốt hơn MA200 ở cả hai giai đoạn.
+# Trạng thái ẩn VNINDEX (ta/hmm_regime.py, v4). Kiểm định study-hmm 10/2026 (VNINDEX 2016–nay): HMM
+# giảm tỷ trọng còn 50% khi P(Phân phối/Suy thoái) > 70% có Sharpe nhỉnh hơn MA200 (0,92 vs 0,87;
+# 0,16 vs 0,15) và sụt giảm tối đa nhỏ hơn rõ (−28% vs −40%; −26% vs −33%) nhưng lợi suất thấp hơn
+# (6,3% vs 7,2%/năm toàn kỳ) và ở thế phòng thủ 52% số phiên. sizing = true: ngân sách rủi ro/lệnh theo
+# HMM thay cho MA200 (ngưỡng xếp hạng vẫn theo MA200).
 show = true
+sizing = false
 states = 4                   # Suy thoái / Phân phối / Tích lũy / Tăng tốc
 ret_days = 5                 # quan sát: lợi suất 5 phiên ...
 vol_days = 20                # ... và độ biến động 20 phiên

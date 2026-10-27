@@ -730,7 +730,9 @@ def cmd_risk(args) -> int:
     if r.jump is not None and r.floor is not None:
         print(f"  Bước nhảy (|z| > {r.jump.k:g}): {r.jump.n_jumps} lần / {r.jump.n} phiên "
               f"({r.jump.lam:.1%}/phiên, {r.jump.down_share:.0%} là giảm) · xác suất ≥ 1 phiên giảm "
-              f"sàn trong 20 phiên ~{r.floor[1]:.0%} (tham khảo, study-var)")
+              f"sàn trong 20 phiên ~{r.floor[1]:.0%}")
+        print("  ! Kiểm định 10 năm (study-var): VaR có bước nhảy vượt quá thường xuyên (99%: 1,8% số "
+              "phiên thay vì 1%), kém GARCH thực nghiệm (1,35%) — chỉ tham khảo")
     print(f"\nMonte Carlo {sim.paths.shape[0]:,} đường (FHS, chặn biên độ ±{band:.0%}/phiên):")
     for h in r.horizons:
         pc = sim.percentiles(h)

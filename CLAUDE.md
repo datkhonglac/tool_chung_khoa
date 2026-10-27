@@ -178,7 +178,9 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   so MA200 vs HMM giảm tỷ trọng 50% khi P(Phân phối/Suy thoái) > 70%). `risk/hrp.py` (HRP liên kết đơn,
   phụ thuộc đuôi thực nghiệm; lệnh `hrp`, tab Danh mục) và `risk/hrp_study.py` (`study-hrp`). `ta/spillover.py`
   (VAR(1) OLS + GFEVD Diebold–Yilmaz; lệnh `spillover`, tab Sàng lọc). Không làm "Quantum pricing"
-  (không ước lượng được E, V(x)). Workflow `v4.yml` chạy study-var/hrp/hmm (cache `study-`).
+  (không ước lượng được E, V(x)). Workflow `v4.yml` chạy study-var/hrp/hmm (cache `study-`). Kết quả 28/10:
+  VaR bước nhảy KHÔNG đạt (bỏ khỏi thẻ, chỉ lệnh risk); HRP đạt (gợi ý, chưa thay trần); HMM đạt sát nút
+  → `[hmm] sizing` (mặc định false) thay MA200 cho ngân sách rủi ro/lệnh trong `assess`.
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
 - `python -m vnsa.cli load [--sample]` · `check FPT` · `list` · `chart FPT`
 
