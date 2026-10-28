@@ -625,6 +625,134 @@ def entry_study(symbols: list[str], split: str = "2022-01-01", start: str = "201
     return res
 
 
+_HMM_CACHE: dict = {}
+
+
+def hmm_view(index: pd.DataFrame | None = None):
+    """Trạng thái HMM của VNINDEX (ta/hmm_regime.py) — tính một lần cho mỗi phiên cuối của chỉ số
+    (sàng lọc gọi assess hàng trăm lần). None nếu thiếu dữ liệu hoặc tắt `[hmm] show`."""
+    from vnsa.ta.hmm_regime import current
+
+    cfg = settings().get("hmm", {})
+    if not cfg.get("show", True):
+        return None
+    if index is None:
+        from vnsa.data.store import Store
+
+        with Store(path("warehouse")) as store:
+            index = store.prices(settings()["valuation"]["index"])
+    if index is None or index.empty:
+        return None
+    key = (pd.Timestamp(index["date"].max()), len(index))
+    if key not in _HMM_CACHE:
+        try:
+            _HMM_CACHE[key] = current(index, cfg)
+        except Exception:  # noqa: BLE001 - chỉ tham khảo
+            _HMM_CACHE[key] = None
+    return _HMM_CACHE[key]
+
+
+def hmm_study(split: str = "2022-01-01", start: str = "2016-01-01"):
+    """Kiểm định siết rủi ro theo HMM so với MA200 trên VNINDEX (recommend/hmm_study.py)."""
+    from vnsa.data.store import Store
+    from vnsa.recommend.hmm_study import study
+    from vnsa.ta.regime import regime_series
+
+    with Store(path("warehouse")) as store:
+        index = store.prices(settings()["valuation"]["index"])
+    if len(index) < 1000:
+        raise ValueError("VNINDEX chưa đủ dữ liệu (cần ≥ 1.000 phiên; chạy study-var/study-timing để "
+                         "tải 10 năm)")
+    ma = regime_series(index, settings().get("regime", {}))
+    ma.index = pd.to_datetime(ma.index)
+    return study(index, ma, settings().get("hmm", {}), settings()["backtest"], split, start)
+
+
+def hrp_view(symbols: list[str] | None = None, sessions: int = 250):
+    """Tỷ trọng HRP + phụ thuộc đuôi cho các mã đang giữ (sổ lệnh) và `symbols` thêm vào."""
+    from vnsa import portfolio as pf
+    from vnsa.data.store import Store
+    from vnsa.risk.hrp import HrpView, hrp_weights, tail_dependence, top_pairs
+    from vnsa.risk.hrp_study import returns_from_prices
+
+    trades = pf.load()
+    held = {}
+    if len(trades):
+        cal, last_px, _ = pf.market_context(sorted(trades["symbol"].unique()))
+        for s, p in pf.positions(trades, calendar=cal).items():
+            if p.quantity > 0:
+                held[s] = p.quantity * last_px.get(s, p.avg_cost)
+    syms = list(dict.fromkeys([*held, *[x.upper() for x in (symbols or [])]]))
+    if len(syms) < 2:
+        raise ValueError("cần ít nhất 2 mã (mã đang giữ trong sổ lệnh và/hoặc mã nhập thêm)")
+    with Store(path("warehouse")) as store:
+        prices = {s: store.prices(s) for s in syms}
+    missing = [s for s, p in prices.items() if len(p) < sessions // 2]
+    if missing:
+        raise DataMissing(f"thiếu giá: {', '.join(missing)} — chạy analyze {' '.join(missing)} trước")
+    rets = returns_from_prices(prices).tail(sessions)
+    total = sum(held.values())
+    current = pd.Series({s: v / total for s, v in held.items()}) if total > 0 else pd.Series(dtype=float)
+    q = float(settings().get("hrp", {}).get("tail_q", 0.05))
+    return HrpView(hrp_weights(rets), current, top_pairs(tail_dependence(rets, q), 5), len(rets), q)
+
+
+def spillover_view(symbols: list[str] | None = None):
+    """Lan truyền biến động Diebold–Yilmaz giữa các mã (ta/spillover.py); mặc định [spillover]
+    symbols hoặc [signals] daily."""
+    from vnsa.data.store import Store
+    from vnsa.risk.hrp_study import returns_from_prices
+    from vnsa.ta.spillover import spillover
+
+    cfg = settings().get("spillover", {})
+    syms = [x.upper() for x in (symbols or cfg.get("symbols") or settings()["signals"]["daily"])]
+    n = int(cfg.get("sessions", 250))
+    with Store(path("warehouse")) as store:
+        prices = {s: store.prices(s) for s in syms}
+    have = {s: p for s, p in prices.items() if len(p) >= n // 2}
+    missing = sorted(set(syms) - set(have))
+    if len(have) < 3:
+        raise DataMissing("cần giá của ít nhất 3 mã trong kho — chạy analyze/fetch các mã trước")
+    res = spillover(returns_from_prices(have).tail(n), int(cfg.get("lags", 1)),
+                    int(cfg.get("horizon", 10)))
+    return res, missing
+
+
+def hrp_study(symbols: list[str], split: str = "2022-01-01", start: str = "2016-01-01"):
+    from vnsa.data.store import Store
+    from vnsa.risk.hrp_study import HrpStudy, returns_from_prices, study
+
+    with Store(path("warehouse")) as store:
+        prices = {s: store.prices(s) for s in symbols}
+    prices = {s: p for s, p in prices.items() if len(p) >= 300}
+    if len(prices) < 5:
+        raise ValueError("cần ít nhất 5 mã đủ dữ liệu giá")
+    table, _ = study(returns_from_prices(prices), settings()["backtest"], split, start,
+                     int(settings().get("hrp", {}).get("sessions", 250)))
+    return HrpStudy(table, sorted(prices))
+
+
+def var_study(symbols: list[str], split: str = "2022-01-01", start: str = "2016-01-01"):
+    """Kiểm định VaR 1 ngày: lịch sử, GARCH chuẩn/thực nghiệm, bước nhảy (risk/var_study.py)."""
+    from vnsa import market
+    from vnsa.data.store import Store
+    from vnsa.risk.var_study import study
+
+    cfg = settings()["risk"]
+    data, skipped = {}, []
+    with Store(path("warehouse")) as store:
+        prices = {s: store.prices(s) for s in symbols}
+    for s in symbols:
+        if len(prices[s]) < cfg["var_window"] + 100:
+            skipped.append(s)
+            continue
+        data[s] = prices[s]
+    res = study(data, split, start, window=int(cfg["var_window"]), refit=21,
+                k=float(cfg.get("jump_k", 3.0)), bands={s: market.band(s) for s in data})
+    res.skipped = skipped
+    return res
+
+
 def backtest_config(symbol: str) -> dict:
     """Tham số [backtest] kèm bước giá theo sàn của mã."""
     from vnsa import market
@@ -679,6 +807,8 @@ class RiskReport:
     horizons: list[int]
     plan: object | None            # TradePlan nếu tính được
     first_touch: dict | None       # xác suất chạm cắt lỗ / mục tiêu 1 trong kỳ dài nhất
+    jump: object = None            # risk.jump.JumpFit (v4, tham khảo)
+    floor: tuple | None = None     # (xác suất 1 phiên giảm sàn, xác suất ≥ 1 phiên trong 20 phiên)
 
 
 def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
@@ -692,11 +822,23 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
     fit = fit_garch(log_returns_pct(close.tail(cfg["garch_window"] + 1)))
     p0 = float(close.iloc[-1])
     drift = None if cfg.get("drift", "zero") == "historical" else 0.0
+    from vnsa.risk.jump import fit_jumps, floor_probability, jump_var
+
+    band0 = market.band(prices["symbol"].iloc[-1]) if "symbol" in prices else market.band()
+    try:
+        jf = fit_jumps(log_returns_pct(close.tail(cfg["garch_window"] + 1)), fit.sigma,
+                       float(cfg.get("jump_k", 3.0)), fit.mu)
+    except Exception:  # noqa: BLE001 - bước nhảy chỉ tham khảo
+        jf = None
     var = {}
     for q in cfg["confidence"]:
         hv, cv = historical_var(close, q, cfg["var_window"])
         var[q] = {"hist": hv, "cvar": cv, "garch": garch_var(fit, q, drift=drift),
                   "garch_normal": garch_var(fit, q, empirical=False, drift=drift)}
+        if jf is not None:
+            var[q]["jump"] = jump_var(jf, fit.next_sigma, q, drift if drift is not None else fit.mu,
+                                      band0)
+    floor = floor_probability(jf, fit.next_sigma, band0, 20) if jf is not None else None
     horizons = sorted(horizons or cfg["horizons"])
     band = market.band(prices["symbol"].iloc[-1]) if "symbol" in prices else market.band()
     sim = simulate(fit, p0, max(horizons), n_paths=n_paths or cfg["n_paths"], band=band,
@@ -716,7 +858,7 @@ def risk(prices: pd.DataFrame, horizons: list[int] | None = None,
         h = max(horizons)
         touch = Simulation(p0, sim.paths[:, : h + 1]).first_touch(p.stop, p.targets[0].price)
     hist_vol = float(close.pct_change().tail(250).std() * 252 ** 0.5)
-    return RiskReport(p0, fit, hist_vol, var, sim, horizons, p, touch)
+    return RiskReport(p0, fit, hist_vol, var, sim, horizons, p, touch, jf, floor)
 
 
 @dataclass
@@ -873,6 +1015,14 @@ def assess(symbol: str) -> Assessment:
     t = ta(ind)
     reg = market_regime(d.index)
     scale = settings().get("regime", {}).get("bear_risk_factor", 1.0) if reg.state == "giảm" else 1.0
+    hcfg = settings().get("hmm", {})
+    if hcfg.get("sizing", False):        # v4: ngân sách rủi ro theo HMM thay cho MA200 (study-hmm)
+        hv = hmm_view(d.index)
+        if hv is not None:
+            scale = (float(hcfg.get("risk_factor", 0.5))
+                     if hv.bad_tomorrow > float(hcfg.get("threshold", 0.7)) else 1.0)
+            notes.append(f"ngân sách rủi ro theo HMM: P(ngày mai Phân phối/Suy thoái) "
+                         f"{hv.bad_tomorrow:.0%} → rủi ro/lệnh × {scale:g}")
     notes.append(str(reg))
     try:
         p = plan(ind, fair.value if fair else nan, fa_score, risk_scale=scale)

@@ -616,6 +616,18 @@ with tab_screen:
         else:
             st.plotly_chart(charts.rrg_chart(tails), width="stretch")
             st.text(rrg.format_rrg(tails))
+    with st.expander("Mã dẫn biến động (lan truyền Diebold–Yilmaz, tham khảo)", expanded=False):
+        try:
+            from vnsa.ta.spillover import format_spillover
+
+            sp_res, sp_missing = analysis.spillover_view()
+            net = sp_res.net.rename("Ròng (lan ra − nhận vào)")
+            st.bar_chart(net * 100, height=260)
+            st.text(format_spillover(sp_res))
+            if sp_missing:
+                st.caption("Thiếu giá: " + ", ".join(sp_missing))
+        except Exception as e:  # noqa: BLE001
+            st.caption(f"Chưa tính được: {e}")
 
 with tab_pf:
     from vnsa import portfolio as pf
@@ -683,6 +695,13 @@ with tab_pf:
                         columns={"twr": "Danh mục (TWR)", "vni": "VNINDEX"}) * 100, height=260)
                 with st.expander("Chi tiết nhật ký và kỷ luật"):
                     st.text(journal.format_journal(j))
+            with st.expander("Phân bổ cân bằng rủi ro HRP (gợi ý, v4)"):
+                try:
+                    from vnsa.risk.hrp import format_hrp
+
+                    st.text(format_hrp(analysis.hrp_view()))
+                except Exception as e:  # noqa: BLE001
+                    st.caption(f"Chưa tính được: {e}")
             with st.expander("Sổ lệnh"):
                 st.dataframe(trades.assign(date=trades["date"].dt.strftime("%d/%m/%Y")),
                              hide_index=True, width="stretch")

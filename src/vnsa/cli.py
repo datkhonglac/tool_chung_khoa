@@ -725,7 +725,14 @@ def cmd_risk(args) -> int:
     print("\nVaR 1 ngày (lỗ tối đa với xác suất tin cậy):")
     for q, v in r.var.items():
         print(f"  {q:.0%}: lịch sử {v['hist']:.2%} (CVaR {v['cvar']:.2%}) · GARCH {v['garch']:.2%}"
-              f" (phân phối chuẩn {v['garch_normal']:.2%})")
+              f" (phân phối chuẩn {v['garch_normal']:.2%})"
+              + (f" · có bước nhảy {v['jump']:.2%}" if "jump" in v else ""))
+    if r.jump is not None and r.floor is not None:
+        print(f"  Bước nhảy (|z| > {r.jump.k:g}): {r.jump.n_jumps} lần / {r.jump.n} phiên "
+              f"({r.jump.lam:.1%}/phiên, {r.jump.down_share:.0%} là giảm) · xác suất ≥ 1 phiên giảm "
+              f"sàn trong 20 phiên ~{r.floor[1]:.0%}")
+        print("  ! Kiểm định 10 năm (study-var): VaR có bước nhảy vượt quá thường xuyên (99%: 1,8% số "
+              "phiên thay vì 1%), kém GARCH thực nghiệm (1,35%) — chỉ tham khảo")
     print(f"\nMonte Carlo {sim.paths.shape[0]:,} đường (FHS, chặn biên độ ±{band:.0%}/phiên):")
     for h in r.horizons:
         pc = sim.percentiles(h)
@@ -983,6 +990,116 @@ def cmd_study_entry(args) -> int:
     (out / "entry_study.txt").write_text(text, encoding="utf-8")
     res.rows.to_csv(out / "entry_study.csv", index=False)
     print(f"\nĐã lưu {out / 'entry_study.txt'} và entry_study.csv")
+    return 0
+
+
+def _study_symbols(args) -> list[str]:
+    """Rổ mã kiểm định ([study] universe) + tải đủ năm giá nếu cần."""
+    cfg = settings()["study"]
+    syms = [s.upper() for s in args.symbols] or cfg["universe"]
+    if not args.no_fetch:
+        from vnsa.data.autofetch import Updater
+
+        print(f"Tải giá {args.years or cfg['years']} năm cho {len(syms)} mã + VNINDEX ...")
+        for step in Updater().long_prices(syms, args.years or cfg["years"]):
+            print(step)
+    return syms
+
+
+def _save_study(name: str, text: str, rows) -> None:
+    out = path("warehouse").parent / "study"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{name}.txt").write_text(text, encoding="utf-8")
+    if rows is not None:
+        rows.to_csv(out / f"{name}.csv", index=False)
+    print(f"\nĐã lưu {out / (name + '.txt')}")
+
+
+def cmd_study_var(args) -> int:
+    """Kiểm định VaR 1 ngày quá khứ: lịch sử, GARCH, bước nhảy (risk/var_study.py)."""
+    from vnsa import analysis
+    from vnsa.risk.var_study import format_var_study
+
+    cfg = settings()["study"]
+    syms = _study_symbols(args)
+    try:
+        res = analysis.var_study(syms, cfg["split"], cfg["start"])
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    text = format_var_study(res)
+    if res.skipped:
+        text += f"\nBỏ qua (thiếu giá): {', '.join(res.skipped)}"
+    print("\n" + text)
+    _save_study("var_study", text, None)
+    return 0
+
+
+def cmd_study_hmm(args) -> int:
+    """Kiểm định siết rủi ro theo HMM trạng thái VNINDEX (recommend/hmm_study.py)."""
+    from vnsa import analysis
+    from vnsa.recommend.hmm_study import format_hmm_study
+
+    cfg = settings()["study"]
+    _study_symbols(args)
+    try:
+        res = analysis.hmm_study(cfg["split"], cfg["start"])
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    text = format_hmm_study(res, settings().get("hmm", {}))
+    view = analysis.hmm_view()
+    if view is not None:
+        text += f"\n\nHiện tại: {view}"
+    print("\n" + text)
+    _save_study("hmm_study", text, None)
+    return 0
+
+
+def cmd_hrp(args) -> int:
+    """Tỷ trọng HRP gợi ý + cặp mã hay cùng giảm mạnh (risk/hrp.py)."""
+    from vnsa import analysis
+    from vnsa.risk.hrp import format_hrp
+
+    try:
+        view = analysis.hrp_view([s.upper() for s in args.symbols])
+    except (analysis.DataMissing, ValueError) as e:
+        print(f"  ✗ {e}")
+        return 1
+    print(format_hrp(view))
+    return 0
+
+
+def cmd_spillover(args) -> int:
+    """Lan truyền biến động giữa các mã (Diebold–Yilmaz) — tham khảo."""
+    from vnsa import analysis
+    from vnsa.ta.spillover import format_spillover
+
+    try:
+        res, missing = analysis.spillover_view([s.upper() for s in args.symbols])
+    except (analysis.DataMissing, ValueError) as e:
+        print(f"  ✗ {e}")
+        return 1
+    print(format_spillover(res))
+    if missing:
+        print(f"\nBỏ qua (thiếu giá trong kho): {', '.join(missing)}")
+    return 0
+
+
+def cmd_study_hrp(args) -> int:
+    from vnsa import analysis
+    from vnsa.risk.hrp_study import format_hrp_study
+
+    cfg = settings()["study"]
+    syms = _study_symbols(args)
+    try:
+        res = analysis.hrp_study(syms, cfg["split"], cfg["start"])
+    except ValueError as e:
+        print(f"  ✗ {e}")
+        return 1
+    text = format_hrp_study(res)
+    print("\n" + text)
+    _save_study("hrp_study", text, None)
     return 0
 
 
@@ -1389,6 +1506,30 @@ def main(argv: list[str] | None = None) -> int:
     pse.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
     pse.add_argument("--no-fetch", action="store_true", help="Không tải, chỉ dùng giá trong kho")
     pse.set_defaults(func=cmd_study_entry)
+
+    psv = sub.add_parser("study-var", help="Kiểm định VaR quá khứ: lịch sử, GARCH, bước nhảy (v4)")
+    psv.add_argument("symbols", nargs="*", help="Bỏ trống = [study] universe")
+    psv.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
+    psv.add_argument("--no-fetch", action="store_true", help="Không tải giá, dùng kho")
+    psv.set_defaults(func=cmd_study_var)
+
+    psh = sub.add_parser("study-hmm", help="Kiểm định siết rủi ro theo HMM trạng thái VNINDEX (v4)")
+    psh.add_argument("symbols", nargs="*", help="Mã tải kèm (bỏ trống = [study] universe)")
+    psh.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
+    psh.add_argument("--no-fetch", action="store_true", help="Không tải giá, dùng kho")
+    psh.set_defaults(func=cmd_study_hmm)
+
+    phr = sub.add_parser("hrp", help="Tỷ trọng HRP gợi ý cho mã đang giữ + mã nhập thêm (v4)")
+    phr.add_argument("symbols", nargs="*", help="mã thêm vào (ngoài sổ lệnh)")
+    phr.set_defaults(func=cmd_hrp)
+    psp = sub.add_parser("spillover", help="Mã nào dẫn biến động của nhóm (Diebold–Yilmaz, v4)")
+    psp.add_argument("symbols", nargs="*", help="Bỏ trống = [spillover] symbols / [signals] daily")
+    psp.set_defaults(func=cmd_spillover)
+    psr = sub.add_parser("study-hrp", help="Kiểm định HRP vs chia đều vs nghịch biến động (v4)")
+    psr.add_argument("symbols", nargs="*", help="Bỏ trống = [study] universe")
+    psr.add_argument("--years", type=int, help="Số năm giá (mặc định [study] years)")
+    psr.add_argument("--no-fetch", action="store_true", help="Không tải giá, dùng kho")
+    psr.set_defaults(func=cmd_study_hrp)
 
     psc = sub.add_parser("screen", help="Sàng lọc toàn thị trường: nhóm ngành và mã tiềm năng")
     psc.add_argument("--stage", choices=["liquidity", "industry", "pick"], default="pick",

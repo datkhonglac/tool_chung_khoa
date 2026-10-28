@@ -167,6 +167,20 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   → workflow chạy `bot --update update.json` (`run_update`, không gửi "Đang phân tích").
   Dò nguồn: `scripts/probe_vnstock.py --board MÃ...` (bảng giá), `--grep REGEX MÃ...` (khoản mục BCTC),
   `--news MÃ...` (tiêu đề tin).
+- Nâng cấp v4.0 (nhánh `nang-cap-v4`, thuần numpy/scipy — không thêm hmmlearn/networkx/copulas):
+  `ta/volume_profile.py` (khối lượng rải đều [low, high] mỗi phiên → POC, vùng giá trị 70%; thẻ báo cáo;
+  `[entry] anchor_mode` classic|va|mixed — "va" là biến thể "Vùng VA" của study-entry, KHÔNG đạt nên giữ
+  classic). `risk/jump.py` (Merton trên nền GARCH: |z| > `[risk] jump_k` là bước nhảy, VaR chặn biên độ,
+  xác suất phiên giảm sàn 20 phiên → `RiskReport.jump/floor`, thẻ + lệnh risk) và `risk/var_study.py`
+  (`study-var`: lịch sử / GARCH-N / GARCH-TN / bước nhảy, Kupiec). `ta/hmm_regime.py` (HMM Gauss 2 chiều
+  lợi suất 5 phiên + biến động 20 phiên, Baum–Welch có chuẩn hoá, Viterbi, `analysis.hmm_view` cache theo
+  phiên cuối; dòng HMM trên thẻ; `[hmm]`) và `recommend/hmm_study.py` (`study-hmm`: walk-forward tháng,
+  so MA200 vs HMM giảm tỷ trọng 50% khi P(Phân phối/Suy thoái) > 70%). `risk/hrp.py` (HRP liên kết đơn,
+  phụ thuộc đuôi thực nghiệm; lệnh `hrp`, tab Danh mục) và `risk/hrp_study.py` (`study-hrp`). `ta/spillover.py`
+  (VAR(1) OLS + GFEVD Diebold–Yilmaz; lệnh `spillover`, tab Sàng lọc). Không làm "Quantum pricing"
+  (không ước lượng được E, V(x)). Workflow `v4.yml` chạy study-var/hrp/hmm (cache `study-`). Kết quả 28/10:
+  VaR bước nhảy KHÔNG đạt (bỏ khỏi thẻ, chỉ lệnh risk); HRP đạt (gợi ý, chưa thay trần); HMM đạt sát nút
+  → `[hmm] sizing` (mặc định false) thay MA200 cho ngân sách rủi ro/lệnh trong `assess`.
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
 - `python -m vnsa.cli load [--sample]` · `check FPT` · `list` · `chart FPT`
 

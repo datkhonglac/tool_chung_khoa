@@ -242,6 +242,11 @@ weak_fa_extra = 0.10        # điểm FA < 50: biên an toàn thêm 10%
 # ~43% vốn nên lãi trên TỔNG vốn thấp hơn vùng cũ ở cả hai giai đoạn -> mặc định TẮT, chỉ hiển thị
 # lớp 2, 3 làm mức mua thêm tham khảo. Đặt ladder = true nếu bạn ưu tiên giá vốn thấp hơn số lần mua được.
 ladder = false
+# Điểm neo vùng mua (v4): "classic" = hỗ trợ/VWAP20/SMA20; "va" = cận trên vùng giá trị/POC của hồ
+# sơ khối lượng; "mixed" = cả hai. Chỉ đổi sau khi study-entry cho thấy "Vùng VA" tốt hơn vùng cũ.
+anchor_mode = "classic"
+vp_sessions = 120            # hồ sơ khối lượng 120 phiên
+vp_bins = 50
 ladder_show = true
 ladder_weights = [0.3, 0.4, 0.3]   # lớp 1 thăm dò · lớp 2 chính · lớp 3 sâu
 l2_range_atr = 4.0          # lớp 2 tìm mức đỡ mạnh trong 4 ATR dưới giá
@@ -286,6 +291,34 @@ mom_weeks = 4                # RS-Momentum = 100 × RS-Ratio / RS-Ratio 4 tuần
 tail = 8                     # số tuần vẽ đuôi
 min_members = 3              # nhóm cần ≥ 3 mã có giá
 history_weeks = 60
+
+[hmm]
+# Trạng thái ẩn VNINDEX (ta/hmm_regime.py, v4). Kiểm định study-hmm 10/2026 (VNINDEX 2016–nay): HMM
+# giảm tỷ trọng còn 50% khi P(Phân phối/Suy thoái) > 70% có Sharpe nhỉnh hơn MA200 (0,92 vs 0,87;
+# 0,16 vs 0,15) và sụt giảm tối đa nhỏ hơn rõ (−28% vs −40%; −26% vs −33%) nhưng lợi suất thấp hơn
+# (6,3% vs 7,2%/năm toàn kỳ) và ở thế phòng thủ 52% số phiên. sizing = true: ngân sách rủi ro/lệnh theo
+# HMM thay cho MA200 (ngưỡng xếp hạng vẫn theo MA200).
+show = true
+sizing = false
+states = 4                   # Suy thoái / Phân phối / Tích lũy / Tăng tốc
+ret_days = 5                 # quan sát: lợi suất 5 phiên ...
+vol_days = 20                # ... và độ biến động 20 phiên
+train_sessions = 1500        # ước lượng trên 1.500 phiên gần nhất (~6 năm)
+seeds = 3
+threshold = 0.70             # kiểm định: P(ngày mai Phân phối/Suy thoái) > 70% ...
+risk_factor = 0.5            # ... thì giảm tỷ trọng còn 50% (như rào chắn MA200 hiện tại)
+
+[hrp]
+# Phân bổ cân bằng rủi ro HRP (lệnh hrp, risk/hrp.py, v4) — gợi ý, chưa thay trần [portfolio]
+sessions = 250               # lợi suất ngày 250 phiên gần nhất
+tail_q = 0.05                # phụ thuộc đuôi: 5% ngày tệ nhất của mỗi mã
+
+[spillover]
+# Lan truyền biến động Diebold–Yilmaz (lệnh spillover, ta/spillover.py, v4) — tham khảo
+symbols = []                 # bỏ trống = [signals] daily
+sessions = 250
+lags = 1                     # VAR(1)
+horizon = 10                 # phân rã phương sai dự báo 10 phiên
 
 [monitor]
 # Theo dõi trong phiên + cảnh báo Telegram (lệnh monitor, workflow monitor.yml ~9:47 và ~13:47 giờ VN).
@@ -350,6 +383,7 @@ atr_grid = [2.5, 3.0, 4.0]  # hệ số cắt lỗ động thử ở giai đoạ
 [risk]
 garch_window = 1000         # số phiên gần nhất dùng ước lượng GARCH
 var_window = 750            # số phiên cho VaR lịch sử
+jump_k = 3.0                # v4: phiên có |lợi suất / σ GARCH| > 3 là "bước nhảy" (risk/jump.py)
 confidence = [0.95, 0.99]
 horizons = [20, 60]         # số phiên mô phỏng (≈ 1 tháng, 3 tháng)
 n_paths = 10000

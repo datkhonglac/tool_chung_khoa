@@ -156,6 +156,13 @@ def entry_zone(ind: pd.DataFrame, supports: list[Level], cfg: dict,
     floor = close - cfg["max_pullback_atr"] * atr
     candidates = [(s.price, "hỗ trợ") for s in supports[:1]]
     candidates += [(vw, "VWAP20"), (sma20, "SMA20")]
+    mode = cfg.get("anchor_mode", "classic")
+    if mode in ("va", "mixed"):             # v4: neo theo hồ sơ khối lượng (kiểm định: study-entry)
+        from vnsa.ta.volume_profile import volume_profile
+
+        prof = volume_profile(ind, int(cfg.get("vp_sessions", 120)), int(cfg.get("vp_bins", 50)))
+        va = [] if prof is None else [(prof.va_high, "cận trên vùng giá trị"), (prof.poc, "POC")]
+        candidates = va if mode == "va" else candidates + va
     near = [(p, src) for p, src in candidates if not pd.isna(p) and floor <= p <= close]
     notes = []
     if near:

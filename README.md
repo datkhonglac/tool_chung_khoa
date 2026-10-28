@@ -140,6 +140,29 @@ Repo công khai nên nhật ký Actions ai cũng xem được: workflow chạy `
 mã đang giữ** (chỉ gửi qua Telegram). GitHub hay chạy lịch trễ 5–30 phút, nên đây là nhắc việc chứ
 không thay lệnh dừng lỗ đặt sẵn trên app công ty chứng khoán.
 
+## Nâng cấp v4.0 (10/2026) — mô hình định lượng nâng cao
+
+Mọi mô-đun viết bằng numpy/scipy, đọc kho DuckDB; kiểm định 45 mã × 10 năm trước khi dùng
+(chi tiết: `docs/kiem_dinh_thoi_diem.md`, mục 28/10/2026).
+
+| Mô-đun | Kiểm định | Dùng thế nào |
+|---|---|---|
+| Hồ sơ khối lượng (POC, vùng giá trị 70%) | Vùng mua neo theo vùng giá trị **không hơn** vùng cũ → giữ vùng cũ | dòng trên thẻ báo cáo |
+| Bước nhảy Merton (VaR đuôi, xác suất phiên giảm sàn) | VaR **đánh giá thấp** lỗ so với GARCH đang dùng → không thay | lệnh `risk` (tham khảo) |
+| HRP + phụ thuộc đuôi | **Đạt**: Sharpe cao hơn, sụt giảm nhỏ hơn chia đều cả hai giai đoạn | lệnh `hrp`, tab Danh mục (gợi ý tỷ trọng) |
+| HMM trạng thái VNINDEX (4 trạng thái) | **Đạt sát nút**: sụt giảm −28% thay vì −40% nhưng lợi suất thấp hơn | dòng HMM trên thẻ; `[hmm] sizing = true` để dùng cho ngân sách rủi ro |
+| Lan truyền biến động Diebold–Yilmaz | chưa kiểm định (không ra tín hiệu) | lệnh `spillover`, tab Sàng lọc |
+
+Không làm "Mật độ xác suất lượng tử" (Schrödinger): không có cách ước lượng E, V(x) từ dữ liệu để
+kiểm chứng; phần dùng được (mật độ thanh khoản theo giá) là hồ sơ khối lượng.
+
+```bash
+python -m vnsa.cli hrp                      # tỷ trọng HRP cho mã đang giữ (thêm mã: hrp FPT HPG)
+python -m vnsa.cli spillover                # mã nào dẫn biến động nhóm [signals] daily
+python -m vnsa.cli risk FPT                 # VaR lịch sử / GARCH / bước nhảy
+python -m vnsa.cli study-hmm                # kiểm định lại HMM; study-var, study-hrp tương tự
+```
+
 ## Phân tích một mã bất kỳ (tự lấy dữ liệu)
 
 ```bash

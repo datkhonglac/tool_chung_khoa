@@ -1,0 +1,70 @@
+name: Kiểm định v4
+
+# Kiểm định các mô-đun v4 trên rổ [study] universe, 10 năm: VaR (lịch sử / GARCH / bước nhảy) và
+# trạng thái VNINDEX bằng HMM. Dùng lại kho giá 10 năm của các workflow kiểm định khác (cache study-).
+on:
+  push:
+    paths:
+      - ".github/workflows/v4.yml"
+      - "src/vnsa/risk/jump.py"
+      - "src/vnsa/risk/var_study.py"
+      - "src/vnsa/ta/hmm_regime.py"
+      - "src/vnsa/recommend/hmm_study.py"
+      - "src/vnsa/risk/hrp.py"
+      - "src/vnsa/risk/hrp_study.py"
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Các mã (bỏ trống = [study] universe trong settings)"
+        required: false
+        default: ""
+
+jobs:
+  v4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      PYTHONUNBUFFERED: "1"
+      VNSTOCK_TELEMETRY: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+      - name: Lấy kho giá của lần kiểm định trước
+        uses: actions/cache/restore@v4
+        with:
+          path: data/warehouse.duckdb
+          key: study-${{ github.run_id }}
+          restore-keys: study-
+      - name: Kiểm định VaR
+        run: python -m vnsa.cli study-var ${{ inputs.symbols }}
+      - name: Kiểm định HRP
+        if: always()
+        run: python -m vnsa.cli study-hrp --no-fetch ${{ inputs.symbols }}
+      - name: Kiểm định HMM
+        if: always() && hashFiles('src/vnsa/recommend/hmm_study.py') != ''
+        run: python -m vnsa.cli study-hmm --no-fetch ${{ inputs.symbols }}
+      - name: Tóm tắt kết quả
+        if: always()
+        run: |
+          for f in data/study/var_study.txt data/study/hrp_study.txt data/study/hmm_study.txt; do
+            [ -f "$f" ] || continue
+            { echo '```'; cat "$f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            msg=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' "$f")
+            echo "::notice title=Kết quả $(basename $f .txt)::$msg"
+          done
+      - name: Lưu kho giá cho lần sau
+        if: always() && hashFiles('data/warehouse.duckdb') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/warehouse.duckdb
+          key: study-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kiem-dinh-v4
+          path: data/study/
+          if-no-files-found: ignore
