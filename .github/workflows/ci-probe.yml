@@ -18,9 +18,10 @@ jobs:
       - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - run: |
           set +e
-          python -m vnsa.cli analyze DGC > out.txt 2>&1
-          python -m vnsa.cli monitor --public --force FPT >> out.txt 2>&1
-          python -m vnsa.cli fetch-bctc FPT >> out.txt 2>&1
+          python -m vnsa.cli analyze HPG SHS --brief 2>&1 | grep -E "^  [✓✗·!]|giao diện|Xếp hạng" > out.txt
+          python -m vnsa.cli monitor --public --force FPT 2>&1 | grep -E "giao diện|theo dõi|CHÚ Ý|KHẨN|-" >> out.txt
+          python -m vnsa.cli screen --stage liquidity --limit 30 --exchanges HNX 2>&1 | grep -E "giao diện|trạng thái|mã" | head -20 >> out.txt
+          echo "--- xong" >> out.txt
           true
       - run: |
           python - <<'PY'

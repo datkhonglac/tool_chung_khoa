@@ -356,8 +356,12 @@ def _api() -> str:
         else "old"
 
 
+_WARNED: set[str] = set()
+
+
 def _either(new: Callable, old: Callable):
-    """Gọi cách mới; bản cũ hoặc cách mới lỗi (không phải hết hạn mức) thì gọi cách cũ."""
+    """Gọi cách mới; bản cũ hoặc cách mới lỗi (không phải hết hạn mức) thì gọi cách cũ (báo một lần
+    mỗi loại dữ liệu ra stderr — lớp cũ ngừng hoạt động từ 10/11/2026)."""
     if _api() == "new":
         try:
             return _call(new)
@@ -367,6 +371,12 @@ def _either(new: Callable, old: Callable):
             first = e
         except Exception as e:  # noqa: BLE001
             first = e
+        key = getattr(new, "__qualname__", "?").split(".<locals>")[0]
+        if key not in _WARNED:
+            _WARNED.add(key)
+            print(f"  ! vnstock giao diện mới lỗi ở {key} ({type(first).__name__}: "
+                  f"{str(first)[:120]}); tạm dùng lớp cũ — lớp cũ ngừng hoạt động từ 10/11/2026",
+                  file=sys.stderr)
         try:
             return _call(old)
         except ImportError:
