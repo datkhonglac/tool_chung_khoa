@@ -332,24 +332,90 @@ def _call(fn: Callable, *args, **kwargs):
     return None
 
 
-def _vnstock_company(symbol: str, method: str) -> pd.DataFrame:
-    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
-    from vnstock import Company
+# ---- Cách gọi vnstock -------------------------------------------------------------------------
+# Từ 11/2026 vnstock khuyến nghị giao diện thống nhất (Market / Reference / Fundamental — "cách viết
+# thế hệ 5", thế hệ 6 giữ nguyên); lớp cũ theo nguồn (Company/Finance/Quote/Trading/Listing) ngừng
+# hoạt động từ 10/11/2026. Đã dò thật (scripts/probe_v5.py, vnstock 4.0.9): giao diện mới với
+# source="vci" trả ĐÚNG cấu trúc bảng như lớp cũ nên các hàm standardize_* giữ nguyên. Nguồn mặc
+# định của giao diện mới là "kbs" — BCTC KBS bị ĐẢO nhãn năm (2025 ↔ 2022) nên luôn truyền
+# source="vci". Mỗi hàm dưới đây gọi giao diện mới trước, lỗi thì dùng lớp cũ (để bản cài cũ vẫn chạy).
+SOURCE = "vci"
+INSTALL_HINT = ("Chưa cài vnstock. Chạy: pip install -U --extra-index-url "
+                "https://vnstocks.com/api/simple vnstock vnai")
+COMPANY_METHODS = {"overview": "info", "events": "events", "news": "news"}   # cũ -> mới
 
-    return _call(lambda: getattr(Company(source="VCI", symbol=symbol.upper()), method)())
+
+def _api() -> str:
+    """'new' nếu bản vnstock có giao diện thống nhất, 'old' nếu chỉ có lớp cũ."""
+    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
+    try:
+        import vnstock
+    except ImportError as e:
+        raise RuntimeError(INSTALL_HINT) from e
+    return "new" if all(hasattr(vnstock, n) for n in ("Market", "Reference", "Fundamental")) \
+        else "old"
+
+
+_WARNED: set[str] = set()
+
+
+def _either(new: Callable, old: Callable):
+    """Gọi cách mới; bản cũ hoặc cách mới lỗi (không phải hết hạn mức) thì gọi cách cũ (báo một lần
+    mỗi loại dữ liệu ra stderr — lớp cũ ngừng hoạt động từ 10/11/2026)."""
+    if _api() == "new":
+        try:
+            return _call(new)
+        except RuntimeError as e:
+            if "hạn mức" in str(e):
+                raise
+            first = e
+        except Exception as e:  # noqa: BLE001
+            first = e
+        key = getattr(new, "__qualname__", "?").split(".<locals>")[0]
+        if key not in _WARNED:
+            _WARNED.add(key)
+            print(f"  ! vnstock giao diện mới lỗi ở {key} ({type(first).__name__}: "
+                  f"{str(first)[:120]}); tạm dùng lớp cũ — lớp cũ ngừng hoạt động từ 10/11/2026",
+                  file=sys.stderr)
+        try:
+            return _call(old)
+        except ImportError:
+            raise first from None
+    return _call(old)
+
+
+def _vnstock_company(symbol: str, method: str) -> pd.DataFrame:
+    sym = symbol.upper()
+
+    def new():
+        from vnstock import Reference
+
+        return getattr(Reference().company(sym), COMPANY_METHODS.get(method, method))(source=SOURCE)
+
+    def old():
+        from vnstock import Company
+
+        return getattr(Company(source="VCI", symbol=sym), method)()
+
+    return _either(new, old)
 
 
 def _vnstock_statements(symbol: str, period: str = "year") -> dict[str, pd.DataFrame]:
-    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
-    try:
-        from vnstock import Finance
-    except ImportError as e:
-        raise RuntimeError(
-            "Chưa cài vnstock. Chạy: pip install -U --extra-index-url "
-            "https://vnstocks.com/api/simple vnstock vnai"
-        ) from e
-    fin = Finance(source="VCI", symbol=symbol.upper())
-    return {name: _call(getattr(fin, name), period=period) for name in STATEMENTS}
+    sym = symbol.upper()
+    out = {}
+    for name in STATEMENTS:
+        def new(name=name):
+            from vnstock import Fundamental
+
+            return getattr(Fundamental().equity(sym), name)(period=period, source=SOURCE)
+
+        def old(name=name):
+            from vnstock import Finance
+
+            return getattr(Finance(source="VCI", symbol=sym), name)(period=period)
+
+        out[name] = _either(new, old)
+    return out
 
 
 # Sàn trong danh sách niêm yết VCI -> tên chuẩn của tool
@@ -423,47 +489,76 @@ def standardize_listing(by_exchange: pd.DataFrame,
 
 
 def _vnstock_listing() -> pd.DataFrame:
-    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
-    try:
+    def new_exchange():
+        from vnstock import Reference
+
+        return Reference().equity().list_by_exchange(source=SOURCE)
+
+    def new_industry():
+        from vnstock import Reference
+
+        return Reference().equity().list_by_industry(source=SOURCE)
+
+    def old_exchange():
         from vnstock import Listing
-    except ImportError as e:
-        raise RuntimeError(
-            "Chưa cài vnstock. Chạy: pip install -U --extra-index-url "
-            "https://vnstocks.com/api/simple vnstock vnai"
-        ) from e
-    ls = Listing(source="VCI")
+
+        return Listing(source="VCI").symbols_by_exchange()
+
+    def old_industry():
+        from vnstock import Listing
+
+        return Listing(source="VCI").symbols_by_industries()
+
     try:
-        by_industry = _call(ls.symbols_by_industries)
+        by_industry = _either(new_industry, old_industry)
     except Exception:  # noqa: BLE001 - thiếu ngành vẫn dùng được sàn
         by_industry = None
-    return standardize_listing(_call(ls.symbols_by_exchange), by_industry)
+    return standardize_listing(_either(new_exchange, old_exchange), by_industry)
+
+
+def _sessions_back(start: str) -> int:
+    """Số phiên cần lấy để phủ từ `start` tới hôm nay (giao diện mới với VCI lấy theo SỐ PHIÊN gần
+    nhất `count`, không theo ngày bắt đầu — đã dò thật)."""
+    import numpy as np
+
+    days = np.busday_count(pd.Timestamp(start).date(), (pd.Timestamp.today() + pd.Timedelta(days=1)).date())
+    return int(days) + 20
 
 
 def _vnstock_history(symbol: str, start: str, end: str) -> pd.DataFrame:
-    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
-    try:
+    sym = symbol.upper()
+
+    def new():
+        from vnstock import Market
+
+        obj = Market().index(sym) if sym in INDEX_SYMBOLS else Market().equity(sym)
+        df = obj.ohlcv(start=start, end=end, interval="1D", count=_sessions_back(start),
+                       source=SOURCE)
+        if df is not None and len(df) and "time" in df.columns:
+            t = pd.to_datetime(df["time"])
+            df = df[(t >= pd.Timestamp(start)) & (t <= pd.Timestamp(end) + pd.Timedelta(days=1))]
+        return df
+
+    def old():
         from vnstock import Quote
-    except ImportError as e:
-        raise RuntimeError(
-            "Chưa cài vnstock. Chạy: pip install -U --extra-index-url "
-            "https://vnstocks.com/api/simple vnstock vnai"
-        ) from e
-    return _call(lambda: Quote(symbol=symbol.upper(), source="VCI").history(
-        start=start, end=end, interval="1D"))
+
+        return Quote(symbol=sym, source="VCI").history(start=start, end=end, interval="1D")
+
+    return _either(new, old)
 
 
 # Bảng giá trong phiên (Trading.price_board, nguồn VCI; đã dò thật: cột MultiIndex
 # (listing|match|bid_ask, tên), giá tính bằng đồng) — dùng cho lệnh monitor.
 BOARD_COLUMNS = {
     "symbol": [("listing", "symbol")],
-    "price": [("match", "match_price")],
-    "ref": [("listing", "ref_price"), ("match", "reference_price")],
-    "ceiling": [("listing", "ceiling"), ("match", "ceiling_price")],
-    "floor": [("listing", "floor"), ("match", "floor_price")],
-    "open": [("match", "open_price")],
-    "high": [("match", "highest")],
-    "low": [("match", "lowest")],
-    "volume": [("match", "accumulated_volume")],
+    "price": [("match", "match_price"), "close_price"],
+    "ref": [("listing", "ref_price"), ("match", "reference_price"), "reference_price"],
+    "ceiling": [("listing", "ceiling"), ("match", "ceiling_price"), "ceiling_price"],
+    "floor": [("listing", "floor"), ("match", "floor_price"), "floor_price"],
+    "open": [("match", "open_price"), "open_price"],
+    "high": [("match", "highest"), "high_price"],
+    "low": [("match", "lowest"), "low_price"],
+    "volume": [("match", "accumulated_volume"), "volume_accumulated"],
     "exchange": [("listing", "exchange")],
     "trading_status": [("listing", "trading_status")],
     "security_status": [("listing", "security_status")],
@@ -479,9 +574,10 @@ def standardize_board(raw: pd.DataFrame) -> pd.DataFrame:
     flat = {(c[-1] if isinstance(c, tuple) else c): c for c in raw.columns}
     out = {}
     for name, keys in BOARD_COLUMNS.items():
-        col = next((k for k in keys if k in raw.columns), None)
-        if col is None:
-            col = next((flat[k[1]] for k in keys if k[1] in flat), None)
+        col = next((k for k in keys if isinstance(k, tuple) and k in raw.columns), None)
+        if col is None:    # cột phẳng (giao diện mới / nguồn khác): so theo tên cuối hoặc tên phẳng
+            names = [k[1] if isinstance(k, tuple) else k for k in keys]
+            col = next((flat[n] for n in names if n in flat), None)
         out[name] = raw[col].to_numpy() if col is not None else [None] * len(raw)
     df = pd.DataFrame(out)
     for c in ("price", "ref", "ceiling", "floor", "open", "high", "low", "volume"):
@@ -490,14 +586,38 @@ def standardize_board(raw: pd.DataFrame) -> pd.DataFrame:
     # chưa khớp lệnh nào trong phiên: giá khớp = 0 -> dùng giá tham chiếu
     df["price"] = df["price"].where(df["price"] > 0, df["ref"])
     df["trading_date"] = pd.to_datetime(df["trading_date"], errors="coerce")
+    if df["trading_date"].isna().all() and "time" in flat:      # bảng phẳng: thời điểm (mili giây)
+        t = pd.to_numeric(raw[flat["time"]], errors="coerce")
+        df["trading_date"] = (pd.to_datetime(t, unit="ms", utc=True, errors="coerce")
+                              .dt.tz_convert("Asia/Ho_Chi_Minh").dt.tz_localize(None)
+                              .dt.normalize().to_numpy())
     return df
 
 
 def _vnstock_board(symbols: list[str]) -> pd.DataFrame:
-    os.environ.setdefault("VNSTOCK_TELEMETRY", "off")
-    from vnstock import Trading
+    syms = [s.upper() for s in symbols]
 
-    return _call(lambda: Trading(source="VCI").price_board([s.upper() for s in symbols]))
+    def new():
+        from vnstock import Market
+
+        return Market().quote(syms, source=SOURCE)
+
+    def old():
+        from vnstock import Trading
+
+        return Trading(source="VCI").price_board(syms)
+
+    raw = _either(new, old)
+    # bảng của giao diện mới có thể thiếu trạng thái giao dịch (hạn chế/tạm ngừng — dùng để chặn mua):
+    # còn lớp cũ thì lấy bảng đủ cột
+    if raw is not None and ("listing", "trading_status") not in getattr(raw, "columns", []):
+        try:
+            full = _call(old)
+            if full is not None and len(full):
+                return full
+        except Exception:  # noqa: BLE001
+            pass
+    return raw
 
 
 def price_board(symbols: list[str], fetch: Callable[[list[str]], pd.DataFrame] = _vnstock_board,

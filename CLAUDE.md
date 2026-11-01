@@ -181,6 +181,10 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
   (không ước lượng được E, V(x)). Workflow `v4.yml` chạy study-var/hrp/hmm (cache `study-`). Kết quả 28/10:
   VaR bước nhảy KHÔNG đạt (bỏ khỏi thẻ, chỉ lệnh risk); HRP đạt (gợi ý, chưa thay trần); HMM đạt sát nút
   → `[hmm] sizing` (mặc định false) thay MA200 cho ngân sách rủi ro/lệnh trong `assess`.
+- vnstock 11/2026: lớp cũ theo nguồn (Company/Finance/Quote/Trading/Listing) ngừng từ 10/11/2026 →
+  `vnstock_provider` gọi giao diện thống nhất `Market/Reference/Fundamental` với `source="vci"` (cùng cấu
+  trúc bảng như cũ; `_either` lùi về lớp cũ nếu lỗi). KHÔNG để nguồn mặc định "kbs" (BCTC đảo nhãn năm).
+  Với VCI, `ohlcv` lấy theo `count` phiên gần nhất (bỏ qua start) → `_sessions_back`. Dò: `scripts/probe_v5.py`.
 - `python -m vnsa.cli import-excel FPT` — ghép `data/raw/excel/FPT/*.xlsx` (CafeF) → CSV → kho
 - `python -m vnsa.cli load [--sample]` · `check FPT` · `list` · `chart FPT`
 
