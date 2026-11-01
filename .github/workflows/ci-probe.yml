@@ -1,0 +1,31 @@
+name: tam-do-vnstock5
+on:
+  push:
+    branches: [vnstock-v5]
+    paths: [".github/workflows/ci-probe.yml", "scripts/probe_v5.py"]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: "1"
+      VNSTOCK_TELEMETRY: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+      - run: |
+          set +e
+          pip index versions vnstock --extra-index-url https://vnstocks.com/api/simple > out.txt 2>&1
+          python scripts/probe_v5.py FPT >> out.txt 2>&1
+          true
+      - run: |
+          python - <<'PY'
+          t = open("out.txt", encoding="utf-8", errors="ignore").read()
+          n = 3500
+          for i in range(0, min(len(t), n * 14), n):
+              m = t[i:i + n].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::notice title=log {i // n:02d}::{m}")
+          PY
