@@ -2,7 +2,7 @@ name: tam-do-vnstock5
 on:
   push:
     branches: [vnstock-v5]
-    paths: [".github/workflows/ci-probe.yml", "scripts/probe_v5.py"]
+    paths: [".github/workflows/ci-probe.yml", "src/vnsa/data/providers/vnstock_provider.py"]
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -18,8 +18,9 @@ jobs:
       - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - run: |
           set +e
-          pip index versions vnstock --extra-index-url https://vnstocks.com/api/simple > out.txt 2>&1
-          python scripts/probe_v5.py FPT >> out.txt 2>&1
+          python -m vnsa.cli analyze DGC > out.txt 2>&1
+          python -m vnsa.cli monitor --public --force FPT >> out.txt 2>&1
+          python -m vnsa.cli fetch-bctc FPT >> out.txt 2>&1
           true
       - run: |
           python - <<'PY'
