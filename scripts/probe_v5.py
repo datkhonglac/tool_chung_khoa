@@ -74,39 +74,33 @@ def main() -> int:
     m, r, f = Market(), Reference(), Fundamental()
     for obj, name in ((m, "Market()"), (r, "Reference()"), (f, "Fundamental()")):
         members(obj, name)
-    objs = {"Market().equity(sym)": m.equity(sym), "Market().index('VNINDEX')": m.index("VNINDEX"),
-            "Reference().company(sym)": r.company(sym), "Reference().equity()": r.equity(),
-            "Reference().events(sym)": r.events(sym), "Reference().industry()": r.industry(),
-            "Reference().market()": r.market(), "Fundamental().equity(sym)": f.equity(sym)}
-    for name, obj in objs.items():
-        members(obj, name)
-    eq, co, ev, fe = objs["Market().equity(sym)"], objs["Reference().company(sym)"], \
-        objs["Reference().events(sym)"], objs["Fundamental().equity(sym)"]
-
-    def call(obj, meth, *a, **k):
-        return lambda: getattr(obj, meth)(*a, **k)
-
-    tries = [("equity.ohlcv", eq, "ohlcv", (), {"start": "2026-10-01", "end": "2026-10-31"}),
-             ("equity.ohlcv default", eq, "ohlcv", (), {}),
-             ("equity.trades/intraday", eq, "intraday", (), {}),
-             ("index.ohlcv", objs["Market().index('VNINDEX')"], "ohlcv", (),
-              {"start": "2026-10-01", "end": "2026-10-31"})]
-    for meth in ("info", "overview", "profile", "shareholders", "news", "events", "dividends",
-                 "officers", "ratio", "ratios"):
-        tries.append((f"company.{meth}", co, meth, (), {}))
-    for meth in ("dividends", "list", "events", "all"):
-        tries.append((f"events.{meth}", ev, meth, (), {}))
-    for meth in ("list", "symbols", "listing", "all_symbols", "by_exchange", "by_industries"):
-        tries.append((f"Reference.equity.{meth}", objs["Reference().equity()"], meth, (), {}))
-    for meth in ("balance_sheet", "income_statement", "cash_flow", "ratio"):
-        tries.append((f"fundamental.{meth} year", fe, meth, (), {"period": "year"}))
-    tries.append(("fundamental.income_statement quarter", fe, "income_statement", (),
-                  {"period": "quarter"}))
-    for meth in ("price_board", "board", "quote", "depth"):
-        tries.append((f"Market.equity.{meth}", eq, meth, (), {}))
-    for title, obj, meth, a, k in tries:
-        if hasattr(obj, meth):
-            show(title, call(obj, meth, *a, **k))
+    eq, co, fe = m.equity(sym), r.company(sym), f.equity(sym)
+    import inspect as _i
+    for name, fn in (("equity.ohlcv", eq.ohlcv), ("fundamental.income_statement", fe.income_statement),
+                     ("company.info", co.info)):
+        try:
+            print(f"{name} source: {_i.getsource(fn)[:1500]}")
+        except Exception as e:  # noqa: BLE001
+            print(f"{name}: {e}")
+    for src in ("vci", "VCI"):
+        show(f"fundamental.balance_sheet year source={src}",
+             lambda src=src: fe.balance_sheet(period="year", source=src))
+        show(f"fundamental.income_statement year source={src}",
+             lambda src=src: fe.income_statement(period="year", source=src))
+    show("fundamental.income_statement year (mặc định) dòng doanh thu",
+         lambda: fe.income_statement(period="year").query("item_id.str.contains('revenue')"))
+    show("company.info vci", lambda: co.info(source="vci"))
+    show("company.events vci", lambda: co.events(source="vci"))
+    show("company.news vci", lambda: co.news(source="vci"))
+    show("Reference.events(sym).calendar", lambda: r.events(sym).calendar(start="2025-01-01"))
+    show("Reference.events(sym).calendar vci", lambda: r.events(sym).calendar(start="2025-01-01",
+                                                                             source="vci"))
+    show("equity.list_by_exchange vci", lambda: r.equity().list_by_exchange(source="vci"))
+    show("equity.list_by_industry", lambda: r.equity().list_by_industry())
+    show("equity.ohlcv vci", lambda: eq.ohlcv(start="2026-10-20", end="2026-10-31", source="vci"))
+    show("equity.quote vci", lambda: eq.quote(source="vci"))
+    show("Market.quote(list)", lambda: m.quote(["FPT", "DGC", "HPG"]))
+    show("Reference.market.status", lambda: r.market().status())
     return 0
 
 
