@@ -140,6 +140,14 @@ Repo công khai nên nhật ký Actions ai cũng xem được: workflow chạy `
 mã đang giữ** (chỉ gửi qua Telegram). GitHub hay chạy lịch trễ 5–30 phút, nên đây là nhắc việc chứ
 không thay lệnh dừng lỗ đặt sẵn trên app công ty chứng khoán.
 
+## Cập nhật vnstock (11/2026)
+
+vnstock ngừng lớp cũ (Company/Finance/Quote/Trading/Listing theo nguồn) từ 10/11/2026. Tool đã chuyển
+sang giao diện thống nhất `Market / Reference / Fundamental` (cách viết thế hệ 5, thế hệ 6 giữ nguyên),
+luôn chọn nguồn VCI — nguồn mặc định mới là KBS, mà BCTC KBS bị đảo nhãn năm. Nếu giao diện mới lỗi,
+tool tạm dùng lớp cũ và in cảnh báo `! vnstock giao diện mới lỗi ...`. Giá ngày vẫn lấy từ CafeF như cũ.
+Kiểm tra lại bằng `python scripts/probe_v5.py FPT`.
+
 ## Nâng cấp v4.0 (10/2026) — mô hình định lượng nâng cao
 
 Mọi mô-đun viết bằng numpy/scipy, đọc kho DuckDB; kiểm định 45 mã × 10 năm trước khi dùng
