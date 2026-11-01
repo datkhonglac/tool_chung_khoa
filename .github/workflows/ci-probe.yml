@@ -25,7 +25,7 @@ jobs:
           python - <<'PY'
           t = open("out.txt", encoding="utf-8", errors="ignore").read()
           n = 3500
-          for i in range(0, min(len(t), n * 14), n):
+          for i in range(0, min(len(t), n * 40), n):
               m = t[i:i + n].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
               print(f"::notice title=log {i // n:02d}::{m}")
           PY
