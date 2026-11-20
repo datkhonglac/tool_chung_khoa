@@ -1305,9 +1305,14 @@ def cmd_portfolio(args) -> int:
 def cmd_monitor(args) -> int:
     """Theo dõi trong phiên: cắt lỗ, vùng mua, mục tiêu -> in ra và gửi Telegram (monitor.py)."""
     from vnsa import monitor, notify
+    from vnsa.data.providers.vnstock_provider import SourceUnavailable
 
     try:
         res = monitor.run(extra_watch=[s.upper() for s in args.symbols], force=args.force)
+    except SourceUnavailable as e:
+        # chưa có nguồn bảng giá trong phiên (vnstock VCI ngừng 11/11/2026): bỏ qua, không báo lỗi
+        print(f"Bỏ qua theo dõi trong phiên: {e}.")
+        return 0
     except Exception as e:  # noqa: BLE001
         print(f"Không theo dõi được: {type(e).__name__}: {e}")
         return 1

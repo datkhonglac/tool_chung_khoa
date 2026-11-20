@@ -49,7 +49,6 @@ jobs:
       - if: github.event_name == 'repository_dispatch' || steps.check.outputs.pending != '0'
         run: |
           pip install -q -e .
-          pip install -q -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - name: Lấy kho dữ liệu lần trước
         if: github.event_name == 'repository_dispatch' || steps.check.outputs.pending != '0'
         uses: actions/cache/restore@v4

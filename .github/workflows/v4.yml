@@ -32,7 +32,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e .
-      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - name: Lấy kho giá của lần kiểm định trước
         uses: actions/cache/restore@v4
         with:

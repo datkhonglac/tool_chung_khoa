@@ -11,8 +11,10 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 - Cài/cập nhật: `pip install -e ".[dev,mcp,dashboard]"`. Test: `pytest`.
 - `data/raw/` và `*.duckdb` không đưa lên Git (xem `.gitignore`): dữ liệu thật phải tải lại trong
   từng môi trường (`python -m vnsa.cli fetch`, hoặc vnstock: `python scripts/fetch_vnstock.py FPT HPG MWG VNM DGC --years 5`).
-- vnstock cài từ kho gói của nhà phát triển (PyPI đang cách ly gói này):
-  `pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai`.
+- vnstock: thế hệ 4–5 bị TẮT từ 11/11/2026, thế hệ 6 (kho `https://vnstocks.com/api/packages`) KHÔNG
+  còn nguồn VCI miễn phí (chỉ ssi/dnse/tcbs/fhsc/fmp, cần khoá API công ty chứng khoán). Workflow không
+  cài vnstock; `vnstock_provider._api` báo `SourceUnavailable` (cả khi cài thế hệ 6) → autofetch chạy bằng
+  giá CafeF + BCTC đã lưu, `monitor` bỏ qua. Chưa nối nguồn có khoá (chờ người dùng chọn CTCK).
 
 ## Kiến trúc (giữ nguyên nguyên tắc)
 - Mọi nguồn dữ liệu là lớp con của `DataProvider` (`src/vnsa/data/providers/base.py`).

@@ -3,8 +3,12 @@
 Giá: CafeF là nguồn chính, nhưng API của CafeF không trả dữ liệu cho một số mã HNX/UPCoM (đã thấy
 khi chạy thật với SHS, ACV); khi đó dùng lịch sử giá VCI qua vnstock (có đủ 3 sàn).
 
-vnstock không có trên PyPI, cài riêng:
-    pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
+CẬP NHẬT 20/11/2026 (dò thật trên GitHub Actions): vnstock thế hệ 4–5 bị TẮT từ 11/11/2026 (mọi lượt
+gọi báo "Bản vnstock ... đã bị tắt"), gói cũ và vnai bị gỡ khỏi kho gói. Thế hệ 6 (6.0.x, kho
+https://vnstocks.com/api/packages) KHÔNG còn nguồn VCI miễn phí: chỉ có binance, dnse, fhsc, fmp, ssi,
+tcbs — mỗi nguồn cần tài khoản/khoá API riêng tại công ty chứng khoán. Vì vậy module này báo
+`SourceUnavailable` (không cài vnstock, hoặc cài thế hệ 6) và tool chạy tiếp bằng giá CafeF + BCTC đã
+lưu (kho, nhánh signals) cho tới khi nối nguồn có khoá.
 
 Bản miễn phí (Cộng đồng) chỉ trả 4 kỳ gần nhất. Đã kiểm tra: nguồn KBS gắn nhãn năm bị đảo
 ngược (cột "2025" chứa số năm 2022), nên dùng VCI.
@@ -340,8 +344,19 @@ def _call(fn: Callable, *args, **kwargs):
 # định của giao diện mới là "kbs" — BCTC KBS bị ĐẢO nhãn năm (2025 ↔ 2022) nên luôn truyền
 # source="vci". Mỗi hàm dưới đây gọi giao diện mới trước, lỗi thì dùng lớp cũ (để bản cài cũ vẫn chạy).
 SOURCE = "vci"
-INSTALL_HINT = ("Chưa cài vnstock. Chạy: pip install -U --extra-index-url "
-                "https://vnstocks.com/api/simple vnstock vnai")
+INSTALL_HINT = ("vnstock: nguồn VCI miễn phí đã ngừng từ 11/11/2026 (thế hệ 4–5 bị tắt) — tạm thời "
+                "không tải được BCTC/hồ sơ/bảng giá; giá ngày vẫn lấy từ CafeF")
+GEN6_HINT = ("vnstock thế hệ 6 không còn nguồn VCI miễn phí (chỉ ssi, dnse, tcbs, fhsc, fmp — cần "
+             "khoá API của công ty chứng khoán); tool chưa nối nguồn này — giá ngày vẫn lấy từ CafeF")
+
+
+class SourceUnavailable(RuntimeError):
+    """Không có nguồn vnstock dùng được (chưa cài, hoặc thế hệ 6 chưa nối nguồn có khoá)."""
+
+
+def _major(version) -> int:
+    m = re.match(r"\s*(\d+)", str(version or ""))
+    return int(m.group(1)) if m else 0
 COMPANY_METHODS = {"overview": "info", "events": "events", "news": "news"}   # cũ -> mới
 
 
@@ -351,7 +366,9 @@ def _api() -> str:
     try:
         import vnstock
     except ImportError as e:
-        raise RuntimeError(INSTALL_HINT) from e
+        raise SourceUnavailable(INSTALL_HINT) from e
+    if _major(getattr(vnstock, "__version__", "")) >= 6:
+        raise SourceUnavailable(GEN6_HINT)
     return "new" if all(hasattr(vnstock, n) for n in ("Market", "Reference", "Fundamental")) \
         else "old"
 

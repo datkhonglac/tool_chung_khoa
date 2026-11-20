@@ -35,7 +35,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - name: Dò nguồn vĩ mô
         if: inputs.probe
         continue-on-error: true
