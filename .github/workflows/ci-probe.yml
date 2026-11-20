@@ -1,0 +1,16 @@
+name: ci-probe
+on:
+  push:
+    branches: [telegram-sangloc]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -q -e .
+      - run: |
+          git fetch -q origin signals:refs/remotes/origin/signals
+          python -c "from vnsa import telegram_bot as t; x=t.screen_text(); print(len(x)); print(x)" > o.txt 2>&1; echo "::notice::log exit $?"
+          head -c 3500 o.txt | tr '\n' '|' | sed 's/^/::notice::log /'; echo
