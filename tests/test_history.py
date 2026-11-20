@@ -42,7 +42,7 @@ def test_export_import_roundtrip_adds_only_missing(warehouse, tmp_path):
         store.con.execute("UPDATE fundamentals SET net_income_parent = 99 WHERE symbol = 'HIST' AND year = 2025")
     added = history.import_history(tmp_path)
     assert added == {"signals": 1, "fundamentals": 1, "fundamentals_q": 0,
-                     "screen": 0, "screen_industry": 0}
+                     "screen": 0, "screen_industry": 0, "companies": 0}
     with Store(warehouse) as store:
         f = store.fundamentals("HIST")
         assert f.loc[f["year"] == 2025, "net_income_parent"].iloc[0] == 99   # không ghi đè số mới
@@ -53,4 +53,33 @@ def test_export_import_roundtrip_adds_only_missing(warehouse, tmp_path):
 
 def test_import_from_missing_git_ref_is_harmless(warehouse):
     assert history.import_history(git_ref="origin/khong-co-nhanh-nay") == {
-        "signals": 0, "fundamentals": 0, "fundamentals_q": 0, "screen": 0, "screen_industry": 0}
+        "signals": 0, "fundamentals": 0, "fundamentals_q": 0, "screen": 0, "screen_industry": 0,
+        "companies": 0}
+
+
+def test_companies_saved_and_seeded_from_screen(warehouse, tmp_path):
+    """vnstock tắt VCI (11/2026): danh sách niêm yết đi theo lịch sử; thiếu companies.csv thì lấy
+    sàn/ngành từ lượt sàng lọc gần nhất của mỗi mã."""
+    with Store(warehouse) as store:
+        store.write_companies(pd.DataFrame({"symbol": ["AAA", "BBB"], "exchange": ["HOSE", "HNX"],
+                                            "industry": ["Hóa chất", "Xây dựng"],
+                                            "model": "general"}), "vci")
+        store.write_profile("AAA", {"shares_out": 382e6})
+        store.write_profile("ZZZ", {"shares_out": 1e6})          # dòng chưa có sàn: không lưu
+    history.export_history(tmp_path)
+    comp = pd.read_csv(tmp_path / "companies.csv")
+    assert list(comp["symbol"]) == ["AAA", "BBB"] and comp["shares_out"].iloc[0] == 382e6
+    scr = pd.DataFrame({"as_of": ["2026-10-12", "2026-11-06", "2026-11-06"],
+                        "symbol": ["CCC", "CCC", "BBB"], "exchange": ["UPCOM", "HOSE", "HNX"],
+                        "industry": ["Cũ", "Mới", "X"], "model": "general", "stage": 1})
+    scr.to_csv(tmp_path / "screen.csv", index=False)
+    with Store(warehouse) as store:
+        store.con.execute("DELETE FROM companies")
+    added = history.import_history(tmp_path)
+    assert added["companies"] == 3
+    with Store(warehouse) as store:
+        c = store.companies().set_index("symbol")
+        assert c.loc["CCC", "exchange"] == "HOSE" and c.loc["CCC", "industry"] == "Mới"
+        assert c.loc["BBB", "industry"] == "Xây dựng"               # companies.csv ưu tiên
+        assert store.company("AAA")["shares_out"] == 382e6
+    assert history.import_history(tmp_path)["companies"] == 0       # lần hai: đã có

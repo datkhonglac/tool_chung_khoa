@@ -10,7 +10,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - run: pip install -q -e .
-      - run: git fetch -q origin signals:refs/remotes/origin/signals && python -m vnsa.cli history import --git origin/signals 2>&1 | tail -3 | sed 's/^/::notice::log /'
-      - run: python -m vnsa.cli analyze FPT HPG 2>&1 | head -80 | sed 's/^/::notice::log /'
-      - run: python -m vnsa.cli monitor --send --public; echo "::notice::log monitor exit $?"
+      - run: pip install -q -e ".[dev]"
+      - run: pytest -q -x 2>&1 | tail -15 | sed 's/^/::notice::log /'
+      - run: python -m vnsa.cli history import --git origin/signals 2>&1 | tail -2 | sed 's/^/::notice::log /'
+      - run: python -m vnsa.cli screen --stage liquidity --limit 40 2>&1 | tail -25 | sed 's/^/::notice::log /'
+      - run: python -m vnsa.cli history export h && wc -l h/*.csv | sed 's/^/::notice::log /'
