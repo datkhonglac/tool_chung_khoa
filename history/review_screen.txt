@@ -1,1 +1,7 @@
-Chấm lại sàng lọc: 5 lượt đã lưu, chưa lượt nào đủ phiên để chấm (cần ≥ 20 phiên sau ngày sàng lọc).
+CHẤM LẠI SÀNG LỌC — 6 lượt đã lưu (lãi/lỗ đã gồm cổ tức, bình quân theo lượt)
+     Kỳ  Tầng              Lượt   Mẫu   Lãi/lỗ  Vượt VNINDEX  Lượt thắng rổ
+     20  Được chọn            3    37    −4,5%         −5,6%             0%
+     20  Nhóm dẫn đầu         3    73    −5,5%         −6,6%             0%
+     20  Qua thanh khoản      3   426    −0,6%         −1,7%              —
+  Lượt thắng rổ = tỷ lệ lượt mà nhóm này lãi hơn bình quân mọi mã qua thanh khoản.
+  Dưới 10 lượt: chỉ để tham khảo, chưa đủ để kết luận bộ lọc có ích.
