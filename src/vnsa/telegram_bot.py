@@ -2,7 +2,8 @@
 
 Nhắn mã cổ phiếu (vd "FPT" hoặc "fpt hpg") cho bot -> bot trả THẺ BÁO CÁO như lệnh `analyze`.
 Lệnh khác: /canhbao (theo dõi trong phiên), /danhmuc (danh mục), /nhatky (nhật ký giao dịch),
-/help. Chỉ trả lời các chat trong TELEGRAM_CHAT_ID (nhiều chat cách nhau bằng dấu phẩy); tin từ
+/sangloc (kết quả sàng lọc toàn thị trường đã lưu), /sangloc moi (chạy lượt sàng lọc mới trên GitHub
+Actions — 1–3 giờ, xong tự gửi kết quả qua Telegram), /help. Chỉ trả lời các chat trong TELEGRAM_CHAT_ID (nhiều chat cách nhau bằng dấu phẩy); tin từ
 người lạ bị bỏ qua.
 
 Ba cách chạy:
@@ -24,7 +25,10 @@ import json
 import os
 import re
 import time
+import urllib.error
 import urllib.request
+
+import pandas as pd
 
 from vnsa import notify
 
@@ -40,6 +44,8 @@ HELP = (
     "• /canhbao — theo dõi trong phiên (cắt lỗ, vùng mua, mục tiêu)\n"
     "• /danhmuc — danh mục đang giữ (cần sổ lệnh)\n"
     "• /nhatky — nhật ký giao dịch: lợi suất, thắng/thua, điểm kỷ luật\n"
+    "• /sangloc — nhóm ngành và mã tiềm năng của lượt sàng lọc toàn thị trường gần nhất\n"
+    "• /sangloc moi — chạy lượt sàng lọc mới (1–3 giờ), xong bot tự gửi kết quả\n"
     "Mỗi mã mất khoảng 1–2 phút (tải giá, BCTC). Không phải lời khuyên đầu tư."
 )
 
@@ -127,11 +133,72 @@ def _cli_text(*argv: str) -> str:
     return out or "(không có kết quả)"
 
 
+def screen_text(import_history: bool = True) -> str:
+    """Kết quả lượt sàng lọc toàn thị trường mới nhất (bảng screen trong kho; kho trống thì nạp
+    lịch sử từ nhánh origin/signals do workflow screen.yml ghi)."""
+    from vnsa.screen.report import format_picks
+    from vnsa.screen.run import ScreenResult, latest, outside_picks
+
+    table, ind = latest()
+    if import_history:
+        from vnsa import history
+
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                history.import_history(git_ref="origin/signals")
+            table, ind = latest()
+        except Exception:  # noqa: BLE001 - không nạp được thì dùng kho hiện có
+            pass
+    if table.empty:
+        return ("Chưa có lượt sàng lọc nào được lưu. Nhắn /sangloc moi để chạy lượt mới "
+                "(1–3 giờ, xong bot tự gửi kết quả).")
+    res = ScreenResult(pd.Timestamp(table["as_of"].max()), table, industry=ind,
+                       outside=outside_picks(table), stage="pick")
+    text = format_picks(res)
+    text = text.split("\nĐã lưu bảng screen")[0]
+    return text + "\n\nNhắn mã (vd FPT) để xem thẻ đầy đủ; /sangloc moi để chạy lượt mới."
+
+
+def start_screen(opener=urllib.request.urlopen) -> str:
+    """Chạy workflow screen.yml (workflow_dispatch, notify=true) bằng GITHUB_TOKEN của lượt chạy
+    bot; workflow xong sẽ gửi kết quả qua Telegram."""
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    ref = os.environ.get("GITHUB_REF_NAME", "").strip() or "main"
+    if not token or not repo:
+        return ("Lệnh này chỉ chạy được khi bot chạy trên GitHub Actions (cần GITHUB_TOKEN). "
+                "Trên máy: python -m vnsa.cli screen")
+    url = f"https://api.github.com/repos/{repo}/actions/workflows/screen.yml/dispatches"
+    body = json.dumps({"ref": ref, "inputs": {"notify": "true"}}).encode()
+    req = urllib.request.Request(url, data=body, method="POST", headers={
+        "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json", "User-Agent": "vnsa-bot"})
+    try:
+        with opener(req, timeout=30) as resp:
+            code = getattr(resp, "status", 204)
+    except urllib.error.HTTPError as e:
+        code = e.code
+    except OSError as e:
+        return f"Không gọi được GitHub: {type(e).__name__}"
+    if code not in (200, 201, 204):
+        hint = (" — workflow Bot Telegram cần quyền actions: write" if code in (403, 404) else "")
+        return f"GitHub từ chối chạy sàng lọc (HTTP {code}){hint}."
+    return ("Đã bắt đầu lượt sàng lọc toàn thị trường trên GitHub Actions (thường 1–3 giờ). "
+            "Xong bot sẽ tự gửi kết quả; xem tiến độ ở tab Actions → Sàng lọc thị trường.")
+
+
+def _screen_cmd(*args: str) -> str:
+    if args and args[0].lower().strip(".!") in {"moi", "mới", "chay", "chạy", "run", "new"}:
+        return start_screen()
+    return screen_text()
+
+
 COMMANDS = {
-    "/start": lambda: HELP, "/help": lambda: HELP,
-    "/canhbao": _monitor_text, "/monitor": _monitor_text,
-    "/danhmuc": lambda: _cli_text("portfolio"), "/portfolio": lambda: _cli_text("portfolio"),
-    "/nhatky": lambda: _cli_text("portfolio", "report"),
+    "/start": lambda *a: HELP, "/help": lambda *a: HELP,
+    "/canhbao": lambda *a: _monitor_text(), "/monitor": lambda *a: _monitor_text(),
+    "/danhmuc": lambda *a: _cli_text("portfolio"), "/portfolio": lambda *a: _cli_text("portfolio"),
+    "/nhatky": lambda *a: _cli_text("portfolio", "report"),
+    "/sangloc": _screen_cmd, "/screen": _screen_cmd,
 }
 
 
@@ -140,7 +207,7 @@ def plan(text: str) -> tuple[str, list[str]]:
     t = (text or "").strip()
     first = t.split()[0].lower().split("@")[0] if t else ""
     if first in COMMANDS:
-        return "command", [first]
+        return "command", [first, *t.split()[1:]]
     syms = symbols_in(t.lstrip("/"))
     return ("symbols", syms) if syms else ("help", [])
 
@@ -151,7 +218,7 @@ def handle(text: str, send, analyze=analyze_text, announce: bool = True) -> int:
     kind, items = plan(text)
     if kind == "command":
         try:
-            reply = COMMANDS[items[0]]()
+            reply = COMMANDS[items[0]](*items[1:])
         except Exception as e:  # noqa: BLE001
             reply = f"Không chạy được {items[0]}: {type(e).__name__}: {e}"
         send(reply)
