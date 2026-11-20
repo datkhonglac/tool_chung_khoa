@@ -32,6 +32,10 @@ on:
         description: "Chạy thêm kiểm định quá khứ 10 năm phần giá (study-screen, thêm ~30 phút)"
         type: boolean
         default: false
+      notify:
+        description: "Gửi kết quả qua Telegram khi xong (lệnh /sangloc moi của bot đặt true)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -48,6 +52,8 @@ jobs:
       PYTHONUNBUFFERED: "1"
       VNSTOCK_TELEMETRY: "off"
       VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -64,6 +70,7 @@ jobs:
         continue-on-error: true
         run: python -m vnsa.cli history import --git origin/signals
       - name: Sàng lọc
+        id: screen
         run: >-
           python -m vnsa.cli screen --stage ${{ inputs.stage || 'pick' }} --top 40
           ${{ github.event_name == 'push' && '--deep-minutes 120' || '' }}
@@ -98,6 +105,18 @@ jobs:
             git commit -q -m "Sàng lọc thị trường ngày $(TZ=Asia/Ho_Chi_Minh date +%d/%m/%Y)"
             git push -q origin signals || (git pull -q --rebase origin signals && git push -q origin signals)
           fi
+      # Lịch thứ Bảy và lệnh /sangloc moi: gửi kết quả qua Telegram (không có mã đang giữ trong tin)
+      - name: Gửi kết quả qua Telegram
+        if: always() && (inputs.notify || github.event_name == 'schedule') && env.TELEGRAM_BOT_TOKEN != ''
+        continue-on-error: true
+        run: |
+          python - <<'PY'
+          from vnsa import notify, telegram_bot as tb
+          ok = "${{ steps.screen.outcome }}" == "success"
+          text = tb.screen_text(import_history=False) if ok else (
+              "Lượt sàng lọc toàn thị trường bị lỗi — xem tab Actions → Sàng lọc thị trường.")
+          print(f"Đã gửi {notify.send_telegram(text)} tin.")
+          PY
       # Sau khi đã ghi lịch sử: lần đầu (chưa có giá 10 năm trong kho) mất ~100 phút, không được làm
       # mất kết quả sàng lọc nếu job hết giờ; tự dừng sau 120 phút
       - name: Kiểm định quá khứ phần giá (10 năm)

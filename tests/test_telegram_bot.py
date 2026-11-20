@@ -120,3 +120,51 @@ def test_webhook_conflict_explains(monkeypatch):
     logs = []
     assert tb.run(once=True, log=logs.append, opener=opener) == 0
     assert "deleteWebhook" in logs[-1] and "123:ABC" not in logs[-1]
+
+
+def test_sangloc_plan_and_dispatch(monkeypatch):
+    """/sangloc: đọc lượt đã lưu; /sangloc moi: gọi workflow_dispatch screen.yml (notify=true)."""
+    assert tb.plan("/sangloc") == ("command", ["/sangloc"])
+    assert tb.plan("/sangloc@ba_be111bot moi") == ("command", ["/sangloc", "moi"])
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    assert "GITHUB_TOKEN" in tb.start_screen()
+    monkeypatch.setenv("GITHUB_TOKEN", "ghs_x")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "me/repo")
+    monkeypatch.setenv("GITHUB_REF_NAME", "main")
+    seen = []
+
+    class Ok(_Resp):
+        status = 204
+
+    def opener(req, timeout):
+        seen.append(req)
+        return Ok(b"")
+
+    assert "Đã bắt đầu" in tb.start_screen(opener=opener)
+    req = seen[0]
+    assert req.get_method() == "POST" and req.full_url.endswith(
+        "/repos/me/repo/actions/workflows/screen.yml/dispatches")
+    assert json.loads(req.data) == {"ref": "main", "inputs": {"notify": "true"}}
+    assert req.get_header("Authorization") == "Bearer ghs_x"
+
+    def denied(req, timeout):
+        raise tb.urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, io.BytesIO(b""))
+
+    msg = tb.start_screen(opener=denied)
+    assert "403" in msg and "actions: write" in msg and "ghs_x" not in msg
+
+
+def test_sangloc_routes_and_formats(monkeypatch):
+    import pandas as pd
+
+    from vnsa.screen import run as sr
+
+    monkeypatch.setattr(tb, "start_screen", lambda: "chạy")
+    monkeypatch.setattr(tb, "screen_text", lambda: "kết quả")
+    sent = []
+    tb.handle("/sangloc mới", sent.append)
+    tb.handle("/sangloc", sent.append)
+    assert sent == ["chạy", "kết quả"]
+    monkeypatch.undo()
+    monkeypatch.setattr(sr, "latest", lambda as_of=None: (pd.DataFrame(), pd.DataFrame()))
+    assert "/sangloc moi" in tb.screen_text(import_history=False)

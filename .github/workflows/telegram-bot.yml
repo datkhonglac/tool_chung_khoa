@@ -13,6 +13,11 @@ on:
     - cron: "*/10 0-16 * * *"
   workflow_dispatch:
 
+# actions: write để lệnh /sangloc moi chạy được workflow screen.yml (GITHUB_TOKEN của lượt chạy này)
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   bot:
     runs-on: ubuntu-latest
@@ -25,6 +30,7 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       VNSA_BACKUP_REPO: ${{ secrets.VNSA_BACKUP_REPO }}
       VNSA_BACKUP_TOKEN: ${{ secrets.VNSA_BACKUP_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       # Lưu ý: bước này bị bỏ qua khi chạy từ Worker; output rỗng (null) so với '0' trong biểu thức
       # GitHub bị đổi thành số 0 = 0 -> các bước sau sẽ bị bỏ qua, nên mọi điều kiện phải kiểm tra

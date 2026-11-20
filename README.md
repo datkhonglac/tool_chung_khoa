@@ -115,7 +115,7 @@ python -m vnsa.cli rrg                     # xoay vòng ngành (cần chạy scr
 ### Hỏi tool qua Telegram (v3.1)
 
 Nhắn mã cổ phiếu cho bot (vd `FPT` hoặc `fpt hpg dgc`, tối đa 3 mã/tin) → bot trả **thẻ báo cáo**
-như lệnh `analyze`. Lệnh: `/canhbao` (theo dõi trong phiên), `/danhmuc`, `/nhatky`, `/help`. Bot chỉ
+như lệnh `analyze`. Lệnh: `/canhbao` (theo dõi trong phiên), `/danhmuc`, `/nhatky`, `/sangloc` (kết quả sàng lọc toàn thị trường gần nhất), `/sangloc moi` (chạy lượt sàng lọc mới trên GitHub Actions, 1–3 giờ, xong bot tự gửi kết quả; lượt thứ Bảy cũng tự gửi), `/help`. Bot chỉ
 trả lời chat id trong `TELEGRAM_CHAT_ID` (nhiều người: cách nhau bằng dấu phẩy).
 
 **Trả lời nhanh 24/7 (v3.2, khuyên dùng):** lịch chạy định kỳ của GitHub Actions không tin được
