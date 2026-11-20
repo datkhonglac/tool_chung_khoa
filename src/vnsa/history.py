@@ -9,6 +9,11 @@ toàn thị trường: screen — chỉ mã qua lọc thanh khoản —, screen_
 nạp lại (từ thư mục hoặc từ một nhánh Git, ví dụ `origin/signals` do workflow hằng ngày
 `.github/workflows/daily.yml` cập nhật). Nạp chỉ THÊM/ghi đè theo khoá (mã, ngày | năm | quý), không
 xoá dữ liệu đang có trong kho.
+
+Danh sách niêm yết (companies: sàn, ngành, loại DN, số cp lưu hành) cũng được lưu từ 20/11/2026 vì
+vnstock tắt nguồn VCI miễn phí (11/11/2026) nên kho mới (máy Windows, GitHub Actions không còn cache)
+không tự tải được nữa. Nạp chỉ thêm mã kho chưa có; chưa có companies.csv thì lấy sàn/ngành từ lượt
+sàng lọc gần nhất của mỗi mã trong screen.csv (các mã đã qua lọc thanh khoản — đủ cho lệnh `screen`).
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from vnsa.config import PROJECT_ROOT, path
 
 FILES = {"signals": "signals.csv", "fundamentals": "fundamentals.csv",
          "fundamentals_q": "fundamentals_q.csv", "screen": "screen.csv",
-         "screen_industry": "screen_industry.csv"}
+         "screen_industry": "screen_industry.csv", "companies": "companies.csv"}
 
 
 def export_history(out_dir: str | Path) -> dict[str, int]:
@@ -38,7 +43,8 @@ def export_history(out_dir: str | Path) -> dict[str, int]:
                   "fundamentals": store.all_fundamentals(),
                   "fundamentals_q": store.all_quarterly(),
                   "screen": store.screen_history(min_stage=1),
-                  "screen_industry": store.screen_industry_history()}
+                  "screen_industry": store.screen_industry_history(),
+                  "companies": _companies(store)}
     for name, df in tables.items():
         for c in ("as_of", "last_date"):
             if c in df:
@@ -46,6 +52,26 @@ def export_history(out_dir: str | Path) -> dict[str, int]:
         df.to_csv(out / FILES[name], index=False)
         counts[name] = len(df)
     return counts
+
+
+def _companies(store) -> pd.DataFrame:
+    """Danh sách niêm yết có sàn (kèm số cp lưu hành) để lưu ra lịch sử."""
+    from vnsa.data.store import COMPANY_COLUMNS
+
+    df = store.con.execute(f"SELECT {', '.join(COMPANY_COLUMNS)}, shares_out FROM companies "
+                           "WHERE exchange IS NOT NULL ORDER BY symbol").df()
+    return df
+
+
+def companies_from_screen(scr: pd.DataFrame | None) -> pd.DataFrame:
+    """Sàn/ngành/loại DN của mỗi mã theo lượt sàng lọc gần nhất có mã đó."""
+    from vnsa.data.store import COMPANY_COLUMNS
+
+    if scr is None or scr.empty or "exchange" not in scr:
+        return pd.DataFrame(columns=COMPANY_COLUMNS)
+    last = (scr.assign(as_of=pd.to_datetime(scr["as_of"])).sort_values("as_of")
+            .dropna(subset=["exchange"]).groupby("symbol").tail(1))
+    return last.reindex(columns=COMPANY_COLUMNS).reset_index(drop=True)
 
 
 def _read_git(ref: str, name: str) -> pd.DataFrame | None:
@@ -101,6 +127,21 @@ def import_history(src: str | Path | None = None, git_ref: str | None = None) ->
                 write(part, str(src_name))
             store.mark_stale(name, new[keys])
             counts[name] = len(new)
+        # danh sách niêm yết: companies.csv trước, bổ sung từ screen.csv; chỉ thêm mã kho chưa có sàn
+        parts = [x for x in (frames["companies"], companies_from_screen(frames["screen"]))
+                 if x is not None and len(x) and "exchange" in x]
+        comp = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+        if len(comp):
+            comp = comp.dropna(subset=["exchange"]).drop_duplicates("symbol")
+            have = store.companies()
+            have = set(have.loc[have["exchange"].notna(), "symbol"]) if len(have) else set()
+            new = comp[~comp["symbol"].str.upper().isin(have)]
+            if len(new):
+                counts["companies"] = store.write_companies(new, "lịch sử")
+                if "shares_out" in new:
+                    for sym, n in new.dropna(subset=["shares_out"])[["symbol", "shares_out"]] \
+                            .itertuples(index=False):
+                        store.write_profile(sym, {"shares_out": float(n)}, stamp=False)
         # lượt sàng lọc: nạp nguyên lượt (ngày) kho chưa có, hoặc thay lượt cùng ngày nhưng chạy
         # nông hơn (vd. máy chỉ chạy --stage liquidity, GitHub chạy đủ 4 tầng cùng phiên)
         depth = store.screen_depth()

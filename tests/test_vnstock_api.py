@@ -149,3 +149,33 @@ def test_flat_board_standardized_with_date_from_time():
     assert b.loc[0, "price"] == 52700 and b.loc[0, "floor"] == 49050
     assert b.loc[0, "volume"] == 5661600 and b.loc[0, "high"] == 53700
     assert b.loc[0, "trading_date"] == pd.Timestamp("2026-10-30")
+
+
+def test_gen6_or_missing_vnstock_is_source_unavailable(monkeypatch):
+    """20/11/2026: thế hệ 6 không còn VCI miễn phí, thế hệ 4–5 bị tắt -> báo SourceUnavailable rõ ràng
+    (autofetch bắt lỗi và chạy tiếp bằng giá CafeF + BCTC đã lưu)."""
+    mod = _fake_vnstock()
+    mod.__version__ = "6.0.1"
+    monkeypatch.setitem(sys.modules, "vnstock", mod)
+    with pytest.raises(vp.SourceUnavailable, match="thế hệ 6"):
+        vp._vnstock_statements("FPT")
+    with pytest.raises(vp.SourceUnavailable):
+        vp.price_board(["FPT"])
+    monkeypatch.setitem(sys.modules, "vnstock", None)          # import vnstock -> ImportError
+    with pytest.raises(vp.SourceUnavailable, match="11/11/2026"):
+        vp._vnstock_listing()
+    assert vp._major("6.0.1") == 6 and vp._major("5.2.2") == 5 and vp._major(None) == 0
+
+
+def test_monitor_skips_quietly_without_source(monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    from vnsa import cli, monitor
+
+    def boom(**k):
+        raise vp.SourceUnavailable(vp.GEN6_HINT)
+
+    monkeypatch.setattr(monitor, "run", boom)
+    args = SimpleNamespace(symbols=[], force=False, public=True, send=True, always=False)
+    assert cli.cmd_monitor(args) == 0
+    assert "Bỏ qua theo dõi" in capsys.readouterr().out

@@ -43,7 +43,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e .
-      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - name: Lấy khuyến nghị gần nhất (nhánh signals)
         run: git fetch --depth=1 origin signals:refs/remotes/origin/signals || echo "chưa có nhánh signals"
       - name: Lấy sổ lệnh từ repo sao lưu riêng tư

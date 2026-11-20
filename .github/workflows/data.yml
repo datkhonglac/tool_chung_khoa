@@ -51,7 +51,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
       - name: Thử kết nối CafeF
         if: ${{ !inputs.skip_prices }}
         continue-on-error: true
@@ -69,7 +68,8 @@ jobs:
         if: ${{ inputs.probe != '' }}
         continue-on-error: true
         run: python scripts/probe_vnstock.py ${{ inputs.probe }}
-      - name: Tải BCTC năm (vnstock/VCI)
+      - name: Tải BCTC năm (vnstock/VCI — nguồn miễn phí ngừng từ 11/11/2026)
+        continue-on-error: true
         run: python -m vnsa.cli fetch-bctc ${{ inputs.symbols }}
       - name: Chỉ số tài chính từng mã
         run: for s in ${{ inputs.symbols || 'FPT HPG MWG VNM DGC' }}; do python -m vnsa.cli ratios $s; echo; done

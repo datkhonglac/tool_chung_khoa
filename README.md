@@ -148,6 +148,22 @@ luôn chọn nguồn VCI — nguồn mặc định mới là KBS, mà BCTC KBS b
 tool tạm dùng lớp cũ và in cảnh báo `! vnstock giao diện mới lỗi ...`. Giá ngày vẫn lấy từ CafeF như cũ.
 Kiểm tra lại bằng `python scripts/probe_v5.py FPT`.
 
+**Cập nhật 20/11/2026 — vnstock tắt nguồn miễn phí.** Đã dò thật trên GitHub Actions: mọi bản thế hệ
+4–5 báo "đã bị tắt" từ 11/11/2026 và bị gỡ khỏi kho gói (cùng `vnai`); thế hệ 6 (`vnstock 6.0.1`, kho
+`https://vnstocks.com/api/packages`) **không còn nguồn VCI**, chỉ còn `ssi`, `dnse`, `tcbs`, `fhsc`,
+`fmp` (mỗi nguồn cần khoá API của công ty chứng khoán đó) và `binance`. Tool tạm thời:
+
+| Phần | Trạng thái |
+|---|---|
+| Giá ngày, VNINDEX (CafeF) | chạy bình thường |
+| BCTC, hồ sơ, sàn/ngành, cổ tức | dùng bản đã lưu (kho, nhánh `signals` qua `history import`); mã mới chưa có thì thiếu FA |
+| Bảng giá trong phiên (`monitor`), trạng thái giao dịch, tin tức | tạm ngừng (`monitor` in "Bỏ qua") |
+
+Không cần cài vnstock nữa (workflow đã bỏ bước cài). Danh sách niêm yết (sàn, ngành, số cp) giờ được
+lưu vào nhánh `signals` (`history/companies.csv`); máy mới chạy `python -m vnsa.cli history import --git
+origin/signals` là có đủ mã cho lệnh `screen`. Khi có khoá API của một công ty chứng khoán, tool
+sẽ nối thêm nguồn đó.
+
 ## Nâng cấp v4.0 (10/2026) — mô hình định lượng nâng cao
 
 Mọi mô-đun viết bằng numpy/scipy, đọc kho DuckDB; kiểm định 45 mã × 10 năm trước khi dùng
@@ -487,8 +503,9 @@ python -m vnsa.cli fetch-bctc          # BCTC năm hợp nhất của 5 mã (vns
 python -m vnsa.cli ratios FPT          # ROE, ROA, biên gộp/ròng, vay/VCSH, CFO/LNST, tăng trưởng
 ```
 
-Cần vnstock (Codespace đã cài sẵn; máy khác: `pip install -U --extra-index-url
-https://vnstocks.com/api/simple vnstock vnai`). Bản miễn phí của vnstock chỉ trả 4 năm gần nhất.
+**Lưu ý 20/11/2026:** vnstock đã tắt nguồn VCI miễn phí (thế hệ 4–5 ngừng từ 11/11/2026; thế hệ 6
+chỉ có nguồn cần khoá API của công ty chứng khoán: SSI, DNSE, TCBS, FHSC, FMP). Lệnh này tạm thời không
+tải được BCTC mới; tool dùng BCTC đã lưu (nhánh `signals`, `history import`) và giá CafeF.
 Cách tính từng chỉ số ghi ở đầu file `src/vnsa/fa/ratios.py` (ROE dùng vốn chủ công ty mẹ bình quân).
 
 ## 5. Định giá (ngày 3)
@@ -553,7 +570,6 @@ cd "C:\Users\admin\Documents\tool chứng khoan\vn-stock-analyzer\vn-stock-analy
 git pull
 .venv\Scripts\activate
 pip install -e ".[dev,mcp]"
-pip install -U --extra-index-url https://vnstocks.com/api/simple vnstock vnai
 python -m vnsa.cli fetch
 python -m vnsa.cli fetch-bctc
 ```
