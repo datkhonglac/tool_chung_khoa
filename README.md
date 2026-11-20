@@ -159,7 +159,9 @@ Kiểm tra lại bằng `python scripts/probe_v5.py FPT`.
 | BCTC, hồ sơ, sàn/ngành, cổ tức | dùng bản đã lưu (kho, nhánh `signals` qua `history import`); mã mới chưa có thì thiếu FA |
 | Bảng giá trong phiên (`monitor`), trạng thái giao dịch, tin tức | tạm ngừng (`monitor` in "Bỏ qua") |
 
-Không cần cài vnstock nữa (workflow đã bỏ bước cài). Khi có khoá API của một công ty chứng khoán, tool
+Không cần cài vnstock nữa (workflow đã bỏ bước cài). Danh sách niêm yết (sàn, ngành, số cp) giờ được
+lưu vào nhánh `signals` (`history/companies.csv`); máy mới chạy `python -m vnsa.cli history import --git
+origin/signals` là có đủ mã cho lệnh `screen`. Khi có khoá API của một công ty chứng khoán, tool
 sẽ nối thêm nguồn đó.
 
 ## Nâng cấp v4.0 (10/2026) — mô hình định lượng nâng cao

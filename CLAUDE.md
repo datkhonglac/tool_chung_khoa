@@ -14,7 +14,8 @@ mới làm quen Python/VS Code: giải thích ngắn gọn bằng tiếng Việt
 - vnstock: thế hệ 4–5 bị TẮT từ 11/11/2026, thế hệ 6 (kho `https://vnstocks.com/api/packages`) KHÔNG
   còn nguồn VCI miễn phí (chỉ ssi/dnse/tcbs/fhsc/fmp, cần khoá API công ty chứng khoán). Workflow không
   cài vnstock; `vnstock_provider._api` báo `SourceUnavailable` (cả khi cài thế hệ 6) → autofetch chạy bằng
-  giá CafeF + BCTC đã lưu, `monitor` bỏ qua. Chưa nối nguồn có khoá (chờ người dùng chọn CTCK).
+  giá CafeF + BCTC đã lưu, `monitor` bỏ qua. `history` lưu/nạp thêm `companies.csv` (sàn/ngành/số cp; thiếu thì
+  lấy từ lượt sàng lọc gần nhất trong `screen.csv`) để kho mới vẫn có vũ trụ cho `screen`. Chưa nối nguồn có khoá (chờ người dùng chọn CTCK).
 
 ## Kiến trúc (giữ nguyên nguyên tắc)
 - Mọi nguồn dữ liệu là lớp con của `DataProvider` (`src/vnsa/data/providers/base.py`).
